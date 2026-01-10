@@ -201,5 +201,26 @@ reflect status  # Aktuellen Status anzeigen
 ## Gelernte Lektionen
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
+## Gelernte Lektionen
+
+### 2026-01-11 - Setup-Session
+
+**GitHub-Authentifizierung:**
+- GitHub erlaubt keine Passwörter mehr → Personal Access Token (PAT) nutzen
+- Fine-grained Tokens brauchen "Contents: Read and write" Berechtigung
+
+**Diana's GitHub:**
+- Organisation: `jahcoozi92-collab` (nicht persönlicher Account)
+- Repository: `github.com/jahcoozi92-collab/claude-skills`
+
+**Systeme:**
+- Yoga7: `~/claude-skills` (Original) + Symlink `~/.claude/skills`
+- Windows: `$HOME\.claude\skills`
+- NAS: `/home/Jahcoozi/.claude/skills`
+
+**Workarounds:**
+- GNOME Keyring umgehen: `GIT_ASKPASS="" git push`
+- Windows hat kein nano → `notepad` nutzen
+
 
 *Noch keine Learnings erfasst. Führe `/reflect` nach einer Session aus!*
