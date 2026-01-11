@@ -400,6 +400,54 @@ docker-compose.level3.yml  → Produktionsreif (alle Features)
 - `cp -f` funktioniert nicht immer → nutze `yes | cp` für automatische Bestätigung
 - Nach Level-Wechsel: `docker compose down && docker compose up -d`
 
+### 2026-01-11 - Open WebUI Fehlerbehebung & Best Practices
+
+**Functions/Tools bei Fehlern - NIEMALS nur deaktivieren:**
+```sql
+-- FALSCH: Nur deaktivieren (wird trotzdem geladen!)
+UPDATE function SET is_active=0, meta=json_set(meta,'$.enabled',false) WHERE id='...';
+
+-- RICHTIG: Komplett löschen
+DELETE FROM function WHERE id='elasticsearch_forensik_rag';
+DELETE FROM tool WHERE id='elasticsearch_forensik_rag';
+```
+
+**DALL-E Bildgenerierung - korrekte Model-Namen:**
+```
+❌ FALSCH: gpt-image-1 (existiert nicht)
+✅ RICHTIG: dall-e-2 oder dall-e-3
+```
+
+**RAM/OOM Management:**
+- Modelle >10GB NIEMALS als Default wenn <20GB RAM frei
+- `free -h` vor Modell-Konfiguration prüfen
+- Swap voll = System überlastet → kleinere Modelle wählen
+- qwen2.5:32b (19GB) → qwen2.5:7b (4.7GB)
+
+**Custom Models/Assistants:**
+- `base_model_id` muss auf lauffähiges Modell zeigen
+- Prüfen: `SELECT id, base_model_id FROM model WHERE id LIKE '%assistant%';`
+- Bei OOM-Fehlern: base_model_id auf kleineres Modell ändern
+
+**Modell-Anzeige in Open WebUI:**
+- Benchmarks ins NAME-Feld setzen (nicht DESCRIPTION)
+- Format: `Kategorie • Name | ≈XX% ≈Vergleichsmodell`
+- Beispiel: `Lokal • Qwen 2.5 7B | ≈78% ≈GPT-4o Mini`
+
+**'NoneType' Fehler debuggen:**
+1. `docker logs open-webui | grep -E "(Error|NoneType)"`
+2. Meist: Function/Tool mit fehlerhafter externer Verbindung
+3. Lösung: Function komplett löschen (nicht nur deaktivieren)
+
+**Container-Neustart bei DB-Änderungen:**
+```bash
+# FALSCH: restart lädt DB-Änderungen nicht immer
+docker restart open-webui
+
+# RICHTIG: down/up erzwingt komplettes Neuladen
+docker compose down open-webui && docker compose up -d open-webui
+```
+
 ---
 
 ## Quick Reference Card
