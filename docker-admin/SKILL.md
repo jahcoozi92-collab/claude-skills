@@ -32,12 +32,15 @@ Docker ist wie ein Schuhkarton-System:
 | Container | Port | Zweck |
 |-----------|------|-------|
 | **n8n** | 5678 | Workflow-Automatisierung |
-| **Open-WebUI** | 3000 | KI-Chat-Interface |
-| **Ollama** | 11434 | Lokale LLMs |
+| **Open-WebUI** | 8080 | KI-Chat-Interface |
+| **Ollama** | 11436 | Lokale LLMs |
 | **Home Assistant** | 8123 | Smart Home |
 | **LiveKit** | 7880 | Video/Audio-Kommunikation |
 | **Portainer** | 9000 | Docker-Management-UI |
-| **NextCloud** | - | Dateispeicher |
+| **NextCloud** | 8282 | Dateispeicher |
+| **Cloudflared** | - | Cloudflare Tunnel |
+| **SearXNG** | 8081 | Suchmaschine für RAG |
+| **Vaultwarden** | 8083 | Passwort-Manager |
 
 ---
 
@@ -227,6 +230,8 @@ networks:
 1. Diana nutzt Portainer für visuelles Management
 2. NAS-Pfade beginnen mit `/volume1/` oder ähnlich
 3. Bei UGREEN: Web-UI unter http://192.168.22.90
+4. **Cloudflare Tunnel:** Nach Container-Restart auch `docker restart cloudflared`
+5. **Docker-Netzwerke:** `webui-network` und `shared-services` sind externe Bridge-Netzwerke
 
 ---
 
@@ -324,9 +329,30 @@ cp -r /path/to/compose-files /backup/docker-compose-$(date +%Y%m%d)
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
 
-### Session-Learnings:
+### 2026-01-11 - Open WebUI Modell-Konfiguration
 
-*Noch keine Learnings erfasst. Führe `/reflect docker-admin` nach einer Session aus!*
+**Open WebUI Datenbank-Manipulation:**
+- Modelle werden in SQLite gespeichert: `/volume1/docker/open-webui/webui.db`
+- Tabelle `model` enthält: id, name, meta (JSON mit icon, description, tags)
+- Nach DB-Änderungen IMMER: `docker restart open-webui`
+- Python-Skripte für Updates unter `/volume1/docker/open-webui/*.py`
+
+**SVG-Icons in Web-Interfaces:**
+- SVG-Gradient-IDs müssen eindeutig sein wenn mehrere Icons auf einer Seite
+- Lösung: Hash des Model-IDs als Suffix (z.B. `id='g{uid}'`)
+- Base64-Encoding: `data:image/svg+xml;base64,...`
+
+**Cloudflare Tunnel Troubleshooting:**
+- 502/530 Fehler = Origin nicht erreichbar
+- Nach Container-Restart: `docker restart cloudflared`
+- Logs prüfen: `docker logs cloudflared --tail 20`
+- Tunnel-Config liegt in `/volume1/docker/cloudflared/config.yml`
+
+**Open WebUI Modell-Kategorisierung:**
+- Lokal (grün): Ollama-Modelle, offline nutzbar
+- Extern (blau): API-Modelle (OpenAI, Anthropic, Google, Mistral, MiniMax)
+- Custom (lila): Eigene Personas/Assistenten
+- Integration (orange): Workflow-Router (n8n)
 
 ---
 
