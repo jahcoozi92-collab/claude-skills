@@ -354,6 +354,52 @@ cp -r /path/to/compose-files /backup/docker-compose-$(date +%Y%m%d)
 - Custom (lila): Eigene Personas/Assistenten
 - Integration (orange): Workflow-Router (n8n)
 
+### 2026-01-11 - Open WebUI Level 3 Optimierung
+
+**API-Verbindungen - NIEMALS:**
+- NIEMALS Anthropic als OpenAI-kompatiblen Endpoint konfigurieren (nutzt eigenes API-Format)
+- NIEMALS MiniMax ohne korrekten Endpoint (`/v1/models` existiert nicht bei allen Providern)
+- Fehlerhafte Verbindungen verursachen `500 Internal Server Error` bei `/openai/models/X`
+
+**Datenbank-Reparatur bei API-Fehlern:**
+```bash
+# API-Verbindungen prüfen
+sqlite3 webui.db "SELECT data FROM config WHERE id=1;" | python3 -c "
+import sys,json
+d=json.loads(sys.stdin.read())
+print(json.dumps(d.get('openai',{}), indent=2))"
+
+# Fehlerhafte Verbindungen entfernen (nur OpenAI behalten)
+# → Python-Skript zum Bereinigen der api_base_urls Liste
+```
+
+**Docker-Compose YAML-Syntax:**
+- NIEMALS Prompt-Templates mit Sonderzeichen direkt in environment-Liste
+- Führt zu: `unexpected type map[string]interface {}`
+- Lösung: Templates über Admin-UI konfigurieren, nicht YAML
+
+**Level-basierte Konfiguration:**
+```
+docker-compose.level1.yml  → Basis + DALL-E + TTS/STT
+docker-compose.level2.yml  → + Code Interpreter + Autocomplete
+docker-compose.level3.yml  → Produktionsreif (alle Features)
+```
+
+**Wichtige Level 3 Environment-Variablen:**
+```yaml
+- ENABLE_CODE_INTERPRETER=true      # Pyodide Sandbox
+- ENABLE_AUTOCOMPLETE_GENERATION=true
+- TASK_MODEL=qwen2.5:7b             # Schnelle lokale Tasks
+- TASK_MODEL_EXTERNAL=gpt-4o-mini   # Externe Tasks
+- WHISPER_LANGUAGE=de               # Deutsche Spracherkennung
+- PDF_EXTRACT_IMAGES=true           # OCR für PDFs
+- YOUTUBE_LOADER_LANGUAGE=de,en     # YouTube-Transkripte
+```
+
+**NAS-spezifisch:**
+- `cp -f` funktioniert nicht immer → nutze `yes | cp` für automatische Bestätigung
+- Nach Level-Wechsel: `docker compose down && docker compose up -d`
+
 ---
 
 ## Quick Reference Card
