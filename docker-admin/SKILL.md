@@ -448,6 +448,35 @@ docker restart open-webui
 docker compose down open-webui && docker compose up -d open-webui
 ```
 
+### 2026-01-12 - npm ci vs npm install in Docker
+
+**Problem:** Docker-Build schlägt fehl mit `npm ci` Fehler:
+```
+npm error `npm ci` can only install packages when your package.json
+and package-lock.json are in sync
+npm error Invalid: lock file's picomatch@2.3.1 does not satisfy picomatch@4.0.3
+```
+
+**Ursache:**
+- `npm ci` ist strikt - Lock-File muss exakt zur npm-Version passen
+- Host-System hat andere npm-Version als Container (node:20-alpine)
+- Lock-File wurde mit Host-npm generiert, Container-npm lehnt ab
+
+**Lösung im Dockerfile:**
+```dockerfile
+# ❌ FALSCH - Strikt, bricht bei Versions-Mismatch
+RUN npm ci
+
+# ✅ RICHTIG - Tolerant, aktualisiert Lock-File bei Bedarf
+RUN npm install
+```
+
+**Vite allowedHosts - Nur für Dev-Server:**
+- Fehler "This host is not allowed" kommt nur vom Vite Dev-Server
+- Production-Build mit nginx hat KEINE Host-Restriktionen
+- `vite.config.ts` → `server.allowedHosts` nur für `npm run dev` relevant
+- Bei Docker mit nginx: Problem liegt woanders (Container läuft nicht, Port-Mapping, etc.)
+
 ---
 
 ## Quick Reference Card
