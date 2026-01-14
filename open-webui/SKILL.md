@@ -169,12 +169,52 @@ EOF
 
 ---
 
+## Tool-Aktivierung im Chat
+
+So aktivierst du Tools für einen Chat:
+
+1. Öffne einen **neuen Chat**
+2. Klicke auf das **⚙️ Zahnrad-Symbol** neben dem Eingabefeld
+3. Scrolle zu **Tools**
+4. Aktiviere die gewünschten Tools (z.B. "MCP Custom Tools")
+5. Wähle ein geeignetes Modell (gpt-4o-mini empfohlen)
+
+**Hinweis:** Tools müssen pro Chat aktiviert werden!
+
+---
+
 ## Verfügbare MCP-Server
 
 | Port | Service | Endpunkt |
 |------|---------|----------|
 | 8012 | mcp-proxy-custom | `/mcp` - Custom Tools (Zeit, Rechner, Netzwerk) |
 | 8000 | mcp-proxy-server | `/mcp` - Time Server |
+
+---
+
+## Lokale Audio-Services (TTS/STT)
+
+Diese Services können in Open WebUI als Alternative zu Cloud-Diensten genutzt werden:
+
+| Port | Service | Beschreibung | API |
+|------|---------|--------------|-----|
+| 8006 | openapi-speechreader | Multi-Provider TTS/STT (Edge, OpenAI, ElevenLabs) | `/api/v2/tts/synthesize` |
+| 8007 | faster-whisper | Lokales Whisper large-v3 (STT) | `/v1/audio/transcriptions` |
+| 10201 | coqui-tts (piper) | Deutsches TTS (Thorsten) | `/api/tts?text=...` |
+
+### Konfiguration in Open WebUI
+
+**Speech-to-Text (lokal):**
+```
+Admin Settings → Audio → STT Engine: OpenAI
+STT Base URL: http://192.168.22.90:8007/v1
+```
+
+**Text-to-Speech (lokal):**
+```
+Admin Settings → Audio → TTS Engine: OpenAI
+TTS Base URL: http://192.168.22.90:8006/api/v2
+```
 
 ---
 
