@@ -448,6 +448,77 @@ docker restart open-webui
 docker compose down open-webui && docker compose up -d open-webui
 ```
 
+### 2026-01-15 - Container-Updates & Synology-Spezifika
+
+**Container-Update-Workflow:**
+```bash
+# 1. Update-Check für alle wichtigen Images
+docker pull [image] && docker inspect --format '{{.Id}}' [image]
+
+# 2. Vergleich: Laufender Container vs. neues Image
+docker inspect --format '{{.Image}}' [container]
+
+# 3. Bei Update verfügbar: down/up (nicht restart!)
+docker compose down [service] && docker compose up -d [service]
+
+# 4. Aufräumen - alte Images entfernen
+docker image prune -a
+```
+
+**Synology BTRFS Berechtigungsprobleme:**
+- Mosquitto kann `passwordfile` nicht lesen trotz korrekter chmod/chown
+- Exit code 13 = Permission denied bei Bind-Mounts
+- Versuche wie `chmod 777`, `chown 1883:1883` helfen NICHT
+- **Workarounds:**
+  - `allow_anonymous=true` (für internen MQTT)
+  - Docker Named Volume statt Bind-Mount verwenden
+  - File im Container erstellen: `docker exec mosquitto mosquitto_passwd -c ...`
+
+**Port-Binding für externe Erreichbarkeit:**
+```yaml
+# ❌ FALSCH - Nur localhost, nicht von außen erreichbar
+ports:
+  - "127.0.0.1:8081:8080"
+
+# ✅ RICHTIG - Alle Interfaces
+ports:
+  - "8081:8080"
+  # oder explizit:
+  - "0.0.0.0:8081:8080"
+```
+
+**Container-Namen ändern sich:**
+- Docker Compose v2 nutzt andere Namenskonvention
+- Alt: `projectname_servicename_1` (Compose v1)
+- Neu: `projectname-servicename-1` oder einfach `servicename` (Compose v2)
+- **Prüfen:** `docker ps --format "{{.Names}}"`
+- Home Assistant Sensor-Commands anpassen!
+
+**Home Assistant Docker-Sensor Optimierung:**
+- Scan Intervals von 300s auf 600s erhöhen (weniger Last)
+- Container-Status-Checks sind ressourcenintensiv
+- Nur kritische Container überwachen
+
+**Defekte Container identifizieren:**
+```bash
+# Restart-Loops finden
+docker ps -a --filter "status=restarting"
+
+# Unhealthy Container
+docker ps --filter "health=unhealthy"
+
+# Exit-Codes prüfen
+docker inspect --format '{{.State.ExitCode}}' [container]
+# Exit 13 = Permission denied
+# Exit 137 = OOM Killed
+# Exit 1 = Allgemeiner Fehler
+```
+
+**SearXNG + Open WebUI Integration:**
+- Open WebUI hat bereits RAG_WEB_SEARCH_ENGINE Umgebungsvariable
+- SearXNG muss im gleichen Docker-Netzwerk sein
+- URL-Format: `http://searxng:8080` (Container-Name, interner Port)
+
 ### 2026-01-12 - npm ci vs npm install in Docker
 
 **Problem:** Docker-Build schlägt fehl mit `npm ci` Fehler:
@@ -476,6 +547,103 @@ RUN npm install
 - Production-Build mit nginx hat KEINE Host-Restriktionen
 - `vite.config.ts` → `server.allowedHosts` nur für `npm run dev` relevant
 - Bei Docker mit nginx: Problem liegt woanders (Container läuft nicht, Port-Mapping, etc.)
+
+### 2026-01-16 - AI Container Stack & Cloudflare Automation
+
+**AI Container Installation:**
+| Container | Port | Besonderheiten |
+|-----------|------|----------------|
+| Dify | 3100 | Nach Start: `docker exec dify-api flask db upgrade` |
+| OpenHands | 3200 | SANDBOX_USER_ID=0, FILE_STORE_PATH Volume nötig |
+| Langflow | 7860 | `user: root` in docker-compose.yml |
+| CrewAI | 3400 | Kein offizielles Image → Custom Dockerfile |
+| AutoGPT | 8100 | Braucht OPENAI_API_KEY (kein Ollama-Support) |
+| vLLM | - | ❌ Benötigt GPU - auf CPU nicht nutzbar |
+
+**Dify Setup-Workflow:**
+```bash
+# 1. Stack starten
+cd /volume1/docker/dify && docker compose up -d
+
+# 2. Warten bis DB healthy
+docker ps --filter "name=dify-db" --format "{{.Status}}"
+
+# 3. Migration ausführen (WICHTIG!)
+docker exec dify-api flask db upgrade
+
+# 4. API neustarten
+docker restart dify-api dify-worker
+```
+
+**CrewAI Custom Build:**
+```dockerfile
+FROM python:3.11-slim
+RUN pip install crewai crewai-tools langchain-ollama fastapi uvicorn
+COPY app.py /app/
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+**Container Permission Fixes:**
+```yaml
+# Langflow - Permission denied für /app/data
+services:
+  langflow:
+    user: root  # Löst Permission-Problem
+
+# OpenHands - JWT Secret schreiben
+services:
+  openhands:
+    environment:
+      - SANDBOX_USER_ID=0
+      - FILE_STORE_PATH=/opt/openhands
+    volumes:
+      - openhands-data:/opt/openhands
+```
+
+**Cloudflare Tunnel API (Token-basiert):**
+```bash
+# Token-basierte Tunnel ignorieren lokale config.yml!
+# Routes nur via API änderbar:
+
+# 1. Aktuelle Config abrufen
+curl -X GET "https://api.cloudflare.com/client/v4/accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations" \
+  -H "Authorization: Bearer $CF_TUNNEL_TOKEN"
+
+# 2. Neue Routes hochladen
+curl -X PUT "https://api.cloudflare.com/client/v4/accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations" \
+  -H "Authorization: Bearer $CF_TUNNEL_TOKEN" \
+  -d '{"config":{"ingress":[...]}}'
+```
+
+**Cloudflare DNS via API:**
+```bash
+# Separater Token mit "Zone DNS:Edit" nötig!
+ZONE_ID=$(curl -s "https://api.cloudflare.com/client/v4/zones?name=domain.com" \
+  -H "Authorization: Bearer $CF_DNS_TOKEN" | jq -r '.result[0].id')
+
+# CNAME erstellen
+curl -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records" \
+  -H "Authorization: Bearer $CF_DNS_TOKEN" \
+  -d '{"type":"CNAME","name":"subdomain","content":"tunnel-id.cfargotunnel.com","proxied":true}'
+```
+
+**Zwei Cloudflare Tokens benötigt:**
+| Zweck | Template | Berechtigung |
+|-------|----------|--------------|
+| Tunnel Routes | Custom | Account → Cloudflare Tunnel → Edit |
+| DNS Records | Edit zone DNS | Zone → DNS → Edit |
+
+**Port-Kollisionen vermeiden:**
+```bash
+# VOR Installation prüfen
+docker ps --format "{{.Ports}}" | tr ',' '\n' | grep -oE ':[0-9]+' | sort -u
+```
+
+**DNS-Cache auf NAS umgehen:**
+```bash
+# Lokaler DNS cached alte Einträge - Test mit direkter IP:
+curl --resolve "host.domain.com:443:104.21.30.51" https://host.domain.com
+```
 
 ---
 
