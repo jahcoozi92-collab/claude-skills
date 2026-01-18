@@ -77,12 +77,17 @@ src/
 - Emojis für visuelle Orientierung in Schritt-für-Schritt-Anleitungen
 - TypeScript strict mode beachten (keine unused variables)
 - Tests laufen lassen vor Container-Update
+- **SSRF-Erkennung:** Trusted Domains berücksichtigen (api.mistral.ai, api.openai.com, *.supabase.co, etc.)
+- **SQL-Injection:** `.replace()` Sanitization als gültige Absicherung erkennen
+- **Supabase-Operatoren:** `=eq.`, `=is.`, `=in.` als sichere Operatoren erkennen (keine Wildcards)
 
 ### NIEMALS
 - Englische UI-Texte in der Hauptansicht
 - Technische Begriffe ohne Kontext für Laien
 - Container updaten ohne Build-Verifizierung
 - `docker-compose` (v1) verwenden → `docker compose` (v2) nutzen
+- SSRF-Warnung für bekannte API-Domains (OpenAI, Anthropic, Mistral, Supabase) ausgeben
+- SQL-Injection melden wenn `.replace()` oder prepared statements verwendet werden
 
 ---
 
@@ -151,3 +156,33 @@ Im Verzeichnis `test-workflows/` befinden sich 8 Test-Dateien:
 - UI-Sektion "Einfach erklärt" mit aufklappbaren technischen Details
 
 **Docker-Hinweis:** `docker-compose` (v1.29.2) hat Kompatibilitätsprobleme mit neueren Docker-Versionen. Workaround: Container manuell stoppen/entfernen, dann `docker compose up -d`.
+
+### 2026-01-19 - SSRF & SQL Injection False Positives
+
+**Problem:** Audit-Tool meldete False Positives für:
+1. SSRF bei bekannten API-Domains (api.mistral.ai, *.supabase.co)
+2. SQL-Injection obwohl `.replace()` Sanitization vorhanden
+
+**Lösung SSRF:**
+- `trustedDomains` Array in `analysisService.ts` eingeführt
+- n8n-URL-Syntax berücksichtigen: URLs beginnen mit `=` und `={{`
+- Normalisierung: `='https://api.mistral.ai...'` → `https://api.mistral.ai...`
+
+**Lösung SQL-Injection:**
+- `.replace()` Pattern als Sanitization erkennen
+- Supabase `=eq.`, `=is.` als sichere Operatoren (keine Wildcards)
+
+**Docker-Deployment:**
+- Multi-Stage-Build durch Volume-Mount ersetzt für schnelle Iteration:
+  ```yaml
+  volumes:
+    - ./dist:/usr/share/nginx/html:ro
+  ```
+- Build lokal mit `npm run build`, Container liefert sofort neue Version
+
+**n8n-Direktzugriff:**
+- CLI-Import (`n8n import:workflow`) persistiert manchmal nicht in SQLite
+- Workaround: Direkt in `data/database.sqlite` mit Python/SQL updaten
+
+**Diana's Credentials:**
+- Supabase-Credentials heißen `supabase-prod`
