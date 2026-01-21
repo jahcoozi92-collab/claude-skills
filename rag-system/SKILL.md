@@ -283,6 +283,19 @@ ANTWORT:
 4. **NIEMALS** zu kleine Chunks ohne Overlap
    - Kontext geht sonst verloren
 
+5. **NIEMALS** pgvector HNSW/IVFFlat Index für >2000 Dimensionen
+   ```
+   ❌ CREATE INDEX ON docs USING hnsw (embedding vector_cosine_ops)
+      -- Fehler bei 3072 dims!
+   ✅ Text-Vorfilterung nutzen, dann Vektor-Vergleich auf Subset
+   ```
+
+6. **NIEMALS** Embedding als JSON Array an Supabase RPC übergeben
+   ```
+   ❌ supabase.rpc('search', { embedding: [0.1, 0.2, ...] })
+   ✅ supabase.rpc('search', { embedding_text: '[0.1,0.2,...]' })
+   ```
+
 ### 🟡 BEVORZUGT
 
 1. **Chunk-Größe:** 500-1000 Tokens
@@ -300,13 +313,100 @@ ANTWORT:
 
 ## Embedding-Modelle im Vergleich
 
-| Modell | Dimensionen | Qualität | Geschwindigkeit |
-|--------|-------------|----------|-----------------|
-| **nomic-embed-text** | 768 | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
-| **mxbai-embed-large** | 1024 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ |
-| **all-minilm** | 384 | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
+| Modell | Dimensionen | Qualität | Geschwindigkeit | pgvector Index |
+|--------|-------------|----------|-----------------|----------------|
+| **nomic-embed-text** | 768 | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ✅ Ja |
+| **mxbai-embed-large** | 1024 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ✅ Ja |
+| **all-minilm** | 384 | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ✅ Ja |
+| **text-embedding-3-small** | 1536 | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ✅ Ja |
+| **text-embedding-3-large** | 3072 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ❌ Nein! |
 
-**Diana's Wahl:** nomic-embed-text (guter Kompromiss)
+**Diana's Setup:**
+- **n8n Workflow:** text-embedding-3-large (3072 dims) - beste Qualität
+- **LightRAG:** text-embedding-3-small (1536 dims) - mit Index möglich
+
+⚠️ **WICHTIG:** Bei >2000 Dimensionen ist kein pgvector HNSW/IVFFlat Index möglich!
+Workaround: Text-Vorfilterung vor Vektor-Vergleich (siehe `fast_search_text`)
+
+---
+
+## LightRAG Integration
+
+Diana nutzt **LightRAG** für Knowledge-Graph-basierte RAG zusätzlich zu reiner Vektor-Suche.
+
+### LightRAG vs. Standard RAG
+
+| Aspekt | Standard RAG | LightRAG |
+|--------|--------------|----------|
+| Suche | Nur Vektoren | Vektoren + Knowledge Graph |
+| Kontext | Chunks | Entitäten + Relationen |
+| Ergebnis | Ähnliche Texte | Vernetzte Informationen |
+
+### LightRAG Authentifizierung
+
+```bash
+# WICHTIG: LightRAG nutzt JWT Token, NICHT API Key!
+TOKEN=$(curl -s -X POST "http://localhost:9621/login" \
+  -d "username=admin&password=PASSWORT" | jq -r '.access_token')
+
+# Dann für Anfragen:
+curl -H "Authorization: Bearer $TOKEN" http://localhost:9621/query
+```
+
+### LightRAG Endpoints
+
+| Endpoint | Methode | Beschreibung |
+|----------|---------|--------------|
+| `/login` | POST | JWT Token holen (Form-Data!) |
+| `/query` | POST | RAG-Anfrage stellen |
+| `/documents/scan` | POST | Dokumente indexieren |
+| `/documents/pipeline_status` | GET | Indexierungs-Status |
+| `/health` | GET | Status + pipeline_busy |
+
+---
+
+## SQL: fast_search_text (für große Embeddings)
+
+Bei >2000 Dimensionen kein Index möglich. Diese Funktion nutzt Text-Vorfilterung:
+
+```sql
+CREATE OR REPLACE FUNCTION fast_search_text(
+  query_text text,
+  query_embedding_text text,  -- STRING Format: '[0.1,0.2,...]'
+  match_count integer DEFAULT 10
+)
+RETURNS TABLE (id bigint, content text, metadata jsonb, similarity double precision)
+LANGUAGE plpgsql STABLE
+AS $$
+DECLARE
+  query_vec vector(3072);
+BEGIN
+  -- String zu Vector konvertieren
+  query_vec := query_embedding_text::vector(3072);
+
+  RETURN QUERY
+  WITH text_filtered AS (
+    -- Erst Text-Suche (schnell via GIN Index)
+    SELECT d.id, d.content, d.metadata, d.embedding
+    FROM documents d
+    WHERE d.embedding IS NOT NULL
+      AND d.content IS NOT NULL
+      AND length(d.content) > 150
+      AND (
+        to_tsvector('german', d.content) @@ websearch_to_tsquery('german', query_text)
+        OR d.content ILIKE '%' || split_part(query_text, ' ', 1) || '%'
+      )
+    LIMIT 200  -- Maximal 200 Kandidaten
+  )
+  -- Dann Vektor-Vergleich nur auf gefilterte Menge
+  SELECT tf.id, tf.content, tf.metadata,
+         1 - (tf.embedding <=> query_vec) as similarity
+  FROM text_filtered tf
+  ORDER BY tf.embedding <=> query_vec
+  LIMIT match_count;
+END;
+$$;
+```
 
 ---
 
@@ -326,12 +426,30 @@ ANTWORT:
 2. Zu viele irrelevante Dokumente → Metadaten-Filter nutzen
 3. Schlechte Chunk-Grenzen → Auf Absätze/Kapitel achten
 
-### Problem: Langsame Suche
+### Problem: Langsame Suche / Statement Timeout
 
 **Optimierungen:**
-1. IVFFlat-Index erstellen (siehe SQL oben)
-2. Anzahl der Listen im Index erhöhen
-3. Weniger Dimensionen (kleineres Modell)
+1. IVFFlat-Index erstellen (NUR bei ≤2000 Dimensionen!)
+2. Bei >2000 dims: `fast_search_text` mit Text-Vorfilterung nutzen
+3. Anzahl der Listen im Index erhöhen
+4. Weniger Dimensionen (kleineres Modell)
+
+### Problem: Supabase RPC gibt leere Ergebnisse
+
+**Ursache:** Embedding als JSON Array statt String übergeben
+
+```javascript
+// ❌ FALSCH - gibt leere Ergebnisse!
+const { data } = await supabase.rpc('search', {
+  query_embedding: embedding  // Array [0.1, 0.2, ...]
+});
+
+// ✅ RICHTIG - zu String konvertieren
+const embeddingString = '[' + embedding.join(',') + ']';
+const { data } = await supabase.rpc('fast_search_text', {
+  query_embedding_text: embeddingString
+});
+```
 
 ---
 
@@ -339,9 +457,32 @@ ANTWORT:
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
 
-### Session-Learnings:
+### 2026-01-21 - Supabase Hybrid Search + LightRAG Indexierung
 
-*Noch keine Learnings erfasst. Führe `/reflect rag-system` nach einer Session aus!*
+**Probleme gelöst:**
+
+1. **Edge Function gab leere Ergebnisse zurück**
+   - Ursache: Supabase RPC erwartet vector als String, nicht JSON Array
+   - Lösung: `'[0.1,0.2,...]'` statt `[0.1, 0.2, ...]`
+
+2. **Statement Timeout bei 20.000+ Dokumenten**
+   - Ursache: 3072-dim Vektoren können kein HNSW/IVFFlat Index haben
+   - Lösung: `fast_search_text` mit Text-Vorfilterung (GIN Index)
+
+3. **LightRAG API "Invalid token"**
+   - Ursache: LightRAG erwartet JWT Token, nicht API Key
+   - Lösung: Erst `/login` mit Form-Data, dann Bearer Token nutzen
+
+**Erfolge:**
+- n8n-hybrid Edge Function v11 funktioniert
+- LightRAG indexierte 252 Dokumente erfolgreich
+- Knowledge Graph: 4000+ Nodes, 6600+ Edges
+
+**Technische Details:**
+- pgvector Index max: 2000 Dimensionen
+- text-embedding-3-large: 3072 dims (kein Index!)
+- text-embedding-3-small: 1536 dims (Index möglich)
+- Deutsche Textsuche: `to_tsvector('german', content)`
 
 ---
 
