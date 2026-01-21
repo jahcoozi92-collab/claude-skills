@@ -31,9 +31,29 @@ Das ist langweilig und du könntest Fehler machen. n8n ist wie ein Roboter, der 
 
 | System | Credential-Name | Zweck |
 |--------|-----------------|-------|
-| **Supabase** | `supabase-prod` | Datenbank + Vektoren |
-| **NextCloud** | `nextcloud-nas` | Dateispeicher |
-| **OpenAI/Ollama** | `ollama-local` | KI-Verarbeitung |
+| **Supabase** | `supabaseApi` | Datenbank + Vektoren |
+| **NextCloud** | `nextCloudApi` | Dateispeicher |
+| **OpenAI** | `openAiApi` | Embeddings + Chat |
+| **Anthropic** | `anthropicApi` | Claude LLMs |
+| **Cohere** | `cohereApi` | Reranking |
+| **Mistral** | `mistralCloudApi` | OCR + LLM |
+| **PostgreSQL** | `postgres` | Direkter DB-Zugriff |
+
+### n8n API-Zugriff
+
+```bash
+# API-Anfragen an n8n
+curl -H "X-N8N-API-KEY: <jwt-token>" \
+  "http://localhost:5678/api/v1/workflows"
+
+# Workflow-Details abrufen
+curl -H "X-N8N-API-KEY: <jwt-token>" \
+  "http://localhost:5678/api/v1/workflows/<workflow-id>"
+
+# Executions abfragen
+curl -H "X-N8N-API-KEY: <jwt-token>" \
+  "http://localhost:5678/api/v1/executions?workflowId=<id>&limit=10"
+```
 
 ---
 
@@ -102,6 +122,80 @@ Wie ein Wecker. Jeden Tag um 8 Uhr morgens startet der Workflow.
          ↓
     [Verarbeitung]
 ```
+
+### 4. Chat-Trigger (für KI-Agenten)
+
+```
+┌─────────────────┐
+│  Chat Trigger   │ ← Benutzer sendet Nachricht
+│  (LangChain)    │
+└────────┬────────┘
+         ↓
+    [KI-Agent]
+```
+
+### 5. Webhook mit HTML-UI Response
+
+**Pattern:** Webhook liefert vollständige Chat-Oberfläche
+
+```
+┌─────────────────┐     ┌─────────────────┐
+│     Webhook     │────▶│ Respond to      │
+│ responseMode:   │     │ Webhook (HTML)  │
+│ responseNode    │     │                 │
+└─────────────────┘     └─────────────────┘
+```
+
+**Beispiel:** `/webhook/medifox-chat` liefert komplette Chat-UI
+
+---
+
+## KI-Agent Pattern (LangChain)
+
+### Architektur eines KI-Agenten in n8n
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                      KI-AGENT                           │
+│  ┌─────────────┐                                        │
+│  │ Chat Model  │ (GPT-4o, Claude Sonnet, etc.)          │
+│  └──────┬──────┘                                        │
+│         │                                               │
+│  ┌──────┴──────┐                                        │
+│  │    Agent    │◀──────────────────────────┐            │
+│  └──────┬──────┘                           │            │
+│         │                                  │            │
+│  ┌──────┴──────────────────────────────────┴──────┐     │
+│  │                    TOOLS                        │     │
+│  │  ┌─────────┐ ┌─────────┐ ┌─────────────────┐   │     │
+│  │  │Postgres │ │HTTP Req │ │Vector Store     │   │     │
+│  │  │Tool     │ │Tool     │ │(retrieve-as-tool)│  │     │
+│  │  └─────────┘ └─────────┘ └────────┬────────┘   │     │
+│  └───────────────────────────────────┼────────────┘     │
+│                                      │                  │
+│                               ┌──────┴──────┐           │
+│                               │  Reranker   │           │
+│                               │  (Cohere)   │           │
+│                               └──────┬──────┘           │
+│                                      │                  │
+│                               ┌──────┴──────┐           │
+│                               │  Embeddings │           │
+│                               │  (OpenAI)   │           │
+│                               └─────────────┘           │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Komponenten
+
+| Komponente | Node-Typ | Funktion |
+|------------|----------|----------|
+| **Chat Model** | lmChatOpenAi / lmChatAnthropic | LLM für Antworten |
+| **Agent** | agent (LangChain) | Orchestriert Tools |
+| **Tools** | postgresTool, httpRequestTool | Aktionen ausführen |
+| **Vector Store** | vectorStoreSupabase | RAG-Retrieval |
+| **Reranker** | rerankerCohere | Ergebnisse sortieren |
+| **Embeddings** | embeddingsOpenAi | Text → Vektoren |
+| **Memory** | memoryBufferWindow | Konversations-History |
 
 ---
 
@@ -199,6 +293,46 @@ Wie ein Wecker. Jeden Tag um 8 Uhr morgens startet der Workflow.
 
 ---
 
+## Form-Security Best Practices
+
+### Input-Validierung bei File-Uploads
+
+```javascript
+// In einem Code Node nach Form Trigger
+const input = $input.item.json;
+
+// 1. Path Traversal blockieren
+if (input.Dokument && input.Dokument[0]) {
+  const filename = input.Dokument[0].filename || '';
+
+  // Blockiere gefährliche Zeichen
+  if (filename.includes('..') ||
+      filename.includes('/') ||
+      filename.includes('\\')) {
+    throw new Error('Ungültiger Dateiname: Path Traversal erkannt');
+  }
+
+  // 2. Nur erlaubte Zeichen (Sanitization)
+  const sanitized = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+  input.Dokument[0].filename = sanitized;
+}
+
+return input;
+```
+
+### Security-Checkliste für Forms
+
+| Check | Schutz vor |
+|-------|------------|
+| `..` blockieren | Path Traversal |
+| `/` blockieren | Directory Escape (Unix) |
+| `\\` blockieren | Directory Escape (Windows) |
+| Regex Sanitization | Injection-Angriffe |
+| Dateityp validieren | Malicious Uploads |
+| Größenlimit setzen | DoS-Angriffe |
+
+---
+
 ## Debugging-Checkliste
 
 Wenn ein Workflow nicht funktioniert:
@@ -290,9 +424,35 @@ return [{
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
 
-### Session-Learnings:
+### 2026-01-21 - RAG_Masterclass_Chat_hybrid Analyse
 
-*Noch keine Learnings erfasst. Führe `/reflect n8n-workflow` nach einer Session aus!*
+**Workflow-Struktur analysiert:**
+- 73 Nodes, 5 Trigger (Chat, Form, Webhook, Schedule, Manual)
+- Schedule Trigger: alle 6 Stunden
+- 20/20 Executions erfolgreich
+
+**Neue Patterns entdeckt:**
+
+1. **Chat-UI via Webhook**
+   - `/webhook/medifox-chat` liefert vollständige HTML-Chat-Oberfläche
+   - responseMode: responseNode für HTML-Response
+
+2. **KI-Agent Architektur**
+   - Supabase KI-Agent: GPT-4o + 4889 Zeichen System Prompt
+   - Lightrag KI-Agent: Claude Sonnet 4.5 + 879 Zeichen System Prompt
+   - Tools: Datei_inhalt, Query_tabellen_daten, Alle_dateien
+
+3. **Reranker-Integration**
+   - Cohere Reranker zwischen Vector Store und Agent
+   - Verbessert RAG-Ergebnisqualität
+
+4. **File-Routing via Switch**
+   - 4 Outputs: CSV, Excel_neu, Excel_alt, PDF
+   - Mistral OCR für PDF-Verarbeitung (mistral-ocr-latest)
+
+**API-Zugriff:**
+- Header: `X-N8N-API-KEY: <jwt-token>`
+- Endpoints: `/api/v1/workflows`, `/api/v1/executions`
 
 ---
 
