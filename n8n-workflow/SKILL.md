@@ -475,6 +475,110 @@ PROBLEMATISCH verwaist (entfernen):
 
 ---
 
+### 2026-01-24 - Deduplication & OCR Pipeline
+
+**🔴 Deduplication Pattern:**
+```
+Schedule Trigger ──┬──→ NextCloud List ──→ Merge ──→ Filter ──→ Process
+                   └──→ Get Existing IDs ────────↗
+                        (Supabase RPC)
+```
+
+**Merge Node Modes:**
+| Mode | Verwendung |
+|------|------------|
+| `append` | Zwei Listen zusammenführen (unabhängige Items) |
+| `combine` | Items matchen nach Feld (erfordert `fieldsToMatch`) |
+
+**🔴 Filter Code für Deduplication:**
+```javascript
+const allItems = $input.all();
+const existingFileIds = new Set();
+const newFiles = [];
+
+for (const item of allItems) {
+  const json = item.json;
+  // Supabase rows: haben file_id aber KEIN path
+  if (json.file_id && !json.path) {
+    existingFileIds.add(json.file_id);
+  }
+  // NextCloud files: haben path UND contentType
+  else if (json.path && json.contentType) {
+    newFiles.push(item);
+  }
+}
+
+return newFiles.filter(item => !existingFileIds.has(item.json.path));
+```
+
+**🔴 Download Node nach PostgreSQL:**
+- Nach PostgreSQL-Nodes ändert sich die Datenstruktur
+- `$json.field` funktioniert NICHT mehr
+- ✅ Richtig: `$('NodeName').item.json.field`
+- Für URL-encodierte Pfade: `decodeURIComponent()`
+
+```
+path = {{ '/' + decodeURIComponent($('Überblick').item.json.file_id) }}
+```
+
+**🔴 LangChain AI Nodes (Audit False Positives):**
+- AI-Subkomponenten haben KEINE `main` Connections
+- Nutzen spezielle `ai_*` Connection-Typen
+- NICHT als "unconnected" entfernen!
+
+| Node-Typ | Connection-Type |
+|----------|-----------------|
+| Embeddings | `ai_embedding` |
+| Chat Model | `ai_languageModel` |
+| Memory | `ai_memory` |
+| Tool | `ai_tool` |
+| Reranker | `ai_retriever` |
+| Vector Store | `ai_vectorStore` |
+
+**🟡 Mistral OCR API (aktuell 2026):**
+```
+Endpoint: POST /v1/ocr/process
+Content-Type: application/json
+
+Body:
+{
+  "model": "mistral-ocr-latest",
+  "document": {
+    "type": "document_url",
+    "document_url": "https://..."
+  },
+  "include_image_base64": false
+}
+```
+
+**🔴 NICHT mehr funktional:**
+- ~~`/v1/ocr`~~ (alter Endpoint)
+- ~~`multipart/form-data`~~ (alte Format)
+
+**Supabase Deduplication Functions:**
+```sql
+-- Alle existierenden file_ids abrufen
+CREATE OR REPLACE FUNCTION get_existing_file_ids()
+RETURNS TABLE (file_id TEXT)
+LANGUAGE sql STABLE AS $$
+  SELECT DISTINCT metadata->>'file_id' as file_id
+  FROM documents
+  WHERE metadata->>'file_id' IS NOT NULL;
+$$;
+
+-- Einzeldatei prüfen (mit optionalem Löschen)
+CREATE OR REPLACE FUNCTION check_file_exists(
+  p_file_id TEXT,
+  p_delete_if_exists BOOLEAN DEFAULT FALSE
+) RETURNS TABLE (
+  exists_in_db BOOLEAN,
+  chunk_count INT,
+  action_taken TEXT
+);
+```
+
+---
+
 ### 2026-01-21 - RAG_Masterclass_Chat_hybrid Analyse
 
 **Workflow-Struktur analysiert:**
