@@ -424,6 +424,57 @@ return [{
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
 
+### 2026-01-24 - Workflow Audit Session
+
+**Audit-Workflow Pattern:**
+```
+Export → Analyze → Backup → Fix → Import → Verify
+
+# Export
+docker exec n8n-n8n-1 n8n export:workflow --id=<ID> --output=/workflows/backup.json
+
+# Import (aus Verzeichnis, nicht Datei!)
+docker exec n8n-n8n-1 n8n import:workflow --separate --input=/workflows/import_dir/
+
+# Aktivieren nach Import
+docker exec n8n-n8n-1 n8n update:workflow --active=true --id=<ID>
+docker restart n8n-n8n-1  # Änderungen werden erst nach Restart aktiv!
+```
+
+**🔴 KRITISCH: Trigger-Verbindungen prüfen**
+- Schedule Trigger MUSS Ausgangsverbindung haben
+- Ohne Verbindung läuft der Trigger, tut aber NICHTS
+- Symptom: Workflow "erfolgreich" mit nur 1 Node executed
+
+**🔴 Error Handling Standard:**
+- HTTP Request Nodes: `onError: continueErrorOutput`
+- Database Nodes: `onError: continueErrorOutput`
+- Verhindert Workflow-Abbruch bei transienten Fehlern
+
+**🟡 Orphaned Node Detection:**
+```
+LEGITIM verwaist (AI-Subkomponenten):
+- Embeddings Nodes → verbunden via ai_embedding
+- Chat Models → verbunden via ai_languageModel
+- Memory Nodes → verbunden via ai_memory
+- Tool Nodes → verbunden via ai_tool
+- Reranker → verbunden via ai_reranker
+
+PROBLEMATISCH verwaist (entfernen):
+- Nodes OHNE jegliche Verbindung UND leere Parameter
+- Beispiele: leere Function Nodes, leere PostgreSQL Queries
+```
+
+**🟡 CLI Import Limitationen:**
+- `retryOnFail`, `maxTries`, `waitBetweenTries` persistieren NICHT
+- Muss via n8n UI konfiguriert werden
+
+**Embedding Konsistenz:**
+- Alle Embedding-Nodes: `text-embedding-3-large`, `dimensions: 3072`
+- Inkonsistente Modelle → Dimension Mismatch Fehler
+
+---
+
 ### 2026-01-21 - RAG_Masterclass_Chat_hybrid Analyse
 
 **Workflow-Struktur analysiert:**
