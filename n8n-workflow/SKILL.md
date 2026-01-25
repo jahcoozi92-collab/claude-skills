@@ -611,6 +611,106 @@ CREATE OR REPLACE FUNCTION check_file_exists(
 
 ---
 
+### 2026-01-25 - Vision Integration & Workflow Fixes
+
+**🔴 Expression-Syntax KRITISCH:**
+```javascript
+// ❌ FALSCH - doppelte Anführungszeichen
+"value": "=\"={{ $('Node').item.json.field }}\""
+
+// ✅ RICHTIG - einfache Expression
+"value": "={{ $('Node').item.json.field }}"
+```
+
+**🔴 Filter/Switch für optionale Arrays:**
+```javascript
+// ❌ FALSCH - crasht wenn $json.files leerer String ist
+$json.files → notEmpty (type: array)
+
+// ✅ RICHTIG - explizite Array-Prüfung
+Array.isArray($json.files) && $json.files.length > 0 → equals true
+```
+
+**🔴 Filter für null-Werte (z.B. base64):**
+```javascript
+// ❌ UNZUVERLÄSSIG
+$json.base_64 → isNotEmpty / notEmpty
+
+// ✅ ZUVERLÄSSIG - Präfix-Check (JPEG beginnt mit "/")
+$json.base_64 → startsWith "/" (type: string)
+```
+
+**🔴 Workflow-Versionierung nach Import:**
+```
+PROBLEM: "Active version not found for workflow"
+URSACHE: Import erstellt keine "publizierte Version"
+LÖSUNG:
+  1. Workflow in UI öffnen
+  2. Kleine Änderung machen (Node verschieben)
+  3. Ctrl+S (Speichern)
+  → Erstellt neue aktive Version
+```
+
+**🔴 Import deaktiviert IMMER Workflows:**
+```bash
+# Nach jedem Import:
+docker exec n8n-n8n-1 n8n import:workflow --input=/path/
+# → "Deactivating workflow... Remember to activate later."
+
+# Lösung: Manuell in UI aktivieren (Toggle)
+# CLI-Aktivierung funktioniert NICHT zuverlässig
+```
+
+**🟡 Mistral OCR - include_image_base64:**
+```javascript
+// Wenn Bilder verarbeitet werden sollen:
+{
+  "model": "mistral-ocr-latest",
+  "document": { "file_id": "..." },
+  "include_image_base64": true  // ← WICHTIG!
+}
+// Sonst: alle image_base64 Felder = null
+```
+
+**🟡 Node-Referenzen nach Workflow-Umbau:**
+```javascript
+// Nach Entfernen/Umgehen eines Nodes:
+// ALLE $('OldNode') Referenzen suchen und ersetzen!
+
+// Beispiel: OCR_results umgangen → Upload_Mistral direkt
+$('OCR_results').item.json.pages  // ❌ Fehler
+$('Upload_Mistral').item.json.pages  // ✅ Korrekt
+```
+
+**🔵 Audit-Tool False Positives:**
+```
+Workflow-Auditor prüft nur 'main' Connections.
+'ai_*' Connections werden IGNORIERT:
+  - ai_languageModel (LLM → Agent)
+  - ai_memory (Memory → Agent)
+  - ai_tool (Tool → Agent)
+  - ai_embedding (Embeddings → VectorStore)
+  - ai_reranker (Reranker → VectorStore)
+
+→ "Unverbundene Nodes" können FALSE POSITIVES sein!
+```
+
+**🔵 Vision-Integration Pattern:**
+```
+Chat-Trigger (allowFileUploads: true)
+      │
+      ▼
+Switch: Array.isArray($json.files) && length > 0
+      │
+   ┌──┴──┐
+   │     │
+   ▼     ▼
+Vision  RAG
+(GPT-4o) (Agent)
+```
+
+---
+
 ## Nützliche Links
 
 - n8n Dokumentation: https://docs.n8n.io
