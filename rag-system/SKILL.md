@@ -296,20 +296,29 @@ ANTWORT:
    ❌ "Ich denke, es könnte so sein..." (erfunden)
    ```
 
-3. **NIEMALS** sensible Patientendaten in Embeddings speichern
+3. **NIEMALS** Menüpfade ohne Quellenangabe erfinden!
+   ```
+   ❌ "Menüpfad: Verwaltung → Bewohnerverwaltung → Bewohnercode"
+      (OHNE [Quelle:Seite] = HALLUZINIERT = VERBOTEN!)
+   ✅ "Menüpfad: Pflege/Betreuung → Dokumentation [Handbuch:S.45]"
+   ✅ "Für diese Funktion habe ich keinen dokumentierten Menüpfad gefunden."
+   ```
+   → Bei fehlender Dokumentation: `Wissensluecke_melden` Tool nutzen!
+
+4. **NIEMALS** sensible Patientendaten in Embeddings speichern
    - Anonymisieren BEVOR Embedding erstellt wird
 
-4. **NIEMALS** zu kleine Chunks ohne Overlap
+5. **NIEMALS** zu kleine Chunks ohne Overlap
    - Kontext geht sonst verloren
 
-5. **NIEMALS** pgvector HNSW/IVFFlat Index für >2000 Dimensionen
+6. **NIEMALS** pgvector HNSW/IVFFlat Index für >2000 Dimensionen
    ```
    ❌ CREATE INDEX ON docs USING hnsw (embedding vector_cosine_ops)
       -- Fehler bei 3072 dims!
    ✅ Text-Vorfilterung nutzen, dann Vektor-Vergleich auf Subset
    ```
 
-6. **NIEMALS** Embedding als JSON Array an Supabase RPC übergeben
+7. **NIEMALS** Embedding als JSON Array an Supabase RPC übergeben
    ```
    ❌ supabase.rpc('search', { embedding: [0.1, 0.2, ...] })
    ✅ supabase.rpc('search', { embedding_text: '[0.1,0.2,...]' })
@@ -350,6 +359,66 @@ END AS quality_boost
 | `match_documents` | n8n Supabase Vector Store | ✅ Ja |
 | `fast_search_text` | n8n-hybrid Edge Function | ✅ Ja |
 | `hybrid_search_v2` | Direkter RPC-Aufruf | ✅ Ja |
+
+---
+
+## Feedback-System (Benutzer-Korrekturen & Wissenslücken)
+
+### Tabellen
+
+| Tabelle | Zweck |
+|---------|-------|
+| `term_synonyms` | Begriffszuordnungen (z.B. Pseudonym → Bewohnercode) |
+| `knowledge_gaps` | Unbeantwortete Fragen zur Nachbearbeitung |
+| `user_corrections` | Audit-Trail für Benutzer-Korrekturen |
+
+### SQL-Funktionen
+
+```sql
+-- Synonym-Lookup (automatisch in Suchfunktionen)
+SELECT resolve_synonym('Pseudonymisierungsliste');  -- → 'Bewohnercode'
+
+-- Query-Transformation (ersetzt alle bekannten Synonyme)
+SELECT transform_query_with_synonyms('Pseudonymisierungsliste drucken');
+-- → 'Bewohnercode drucken'
+
+-- Benutzer-Synonym hinzufügen
+SELECT add_user_synonym('Pseudonym', 'Bewohnercode', 'QPR', 'chat_user');
+
+-- Wissenslücke melden
+SELECT report_knowledge_gap('Wie drucke ich Bewohnercode-Liste?', 0.0, 0, 'Keine Doku');
+```
+
+### Edge Function: `feedback-processor`
+
+**URL:** `https://wfklkrgeblwdzyhuyjrv.supabase.co/functions/v1/feedback-processor`
+
+| Action | Beschreibung |
+|--------|--------------|
+| `process_message` | Analysiert Chat-Nachricht auf Korrekturen |
+| `add_synonym` | Synonym manuell hinzufügen |
+| `report_gap` | Wissenslücke melden |
+| `get_synonyms` | Alle Synonyme abrufen |
+
+### Workflow-Tools
+
+| Tool | Wann nutzen |
+|------|-------------|
+| `Feedback_Tool` | Wenn Benutzer sagt "Das heißt X, nicht Y" |
+| `Wissensluecke_melden` | Wenn keine passende Antwort gefunden |
+
+### Admin-Abfragen
+
+```sql
+-- Offene Wissenslücken (nach Priorität)
+SELECT query, occurrence_count, priority, user_feedback
+FROM knowledge_gaps WHERE status = 'open'
+ORDER BY priority DESC;
+
+-- Meistgenutzte Synonyme
+SELECT user_term, canonical_term, usage_count
+FROM term_synonyms ORDER BY usage_count DESC;
+```
 
 ---
 
@@ -529,6 +598,48 @@ const { data } = await supabase.rpc('fast_search_text', {
 ## Gelernte Lektionen
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
+
+### 2026-01-27 - Feedback-System & Anti-Halluzination
+
+**🔴 KRITISCH: Bot halluzinierte Menüpfad!**
+
+Benutzer fragte: "Wie drucke ich eine Pseudonymisierungsliste?"
+Bot antwortete mit ERFUNDENEM Pfad: "Verwaltung → Bewohnerverwaltung → Bewohnercode"
+→ Dieser Pfad existiert NICHT in der Dokumentation!
+
+**Ursache:**
+- Kein Dokument zum Drucken von Bewohnercode-Listen vorhanden
+- System-Prompt war nicht streng genug gegen Halluzinationen
+
+**Lösung:**
+1. Anti-Halluzinations-Regeln im System-Prompt verschärft
+2. `Wissensluecke_melden` Tool hinzugefügt
+3. Bei fehlendem Content: Ehrlich antworten statt erfinden
+
+**Feedback-System implementiert:**
+
+```
+Benutzer: "Das heißt Bewohnercode, nicht Pseudonym"
+         ↓
+feedback-processor Edge Function
+         ↓
+term_synonyms: Pseudonym → Bewohnercode
+         ↓
+Nächste Suche nutzt automatisch "Bewohnercode"
+```
+
+**Neue Komponenten:**
+- `term_synonyms` Tabelle (Begriffszuordnungen)
+- `knowledge_gaps` Tabelle (Wissenslücken-Tracking)
+- `feedback-processor` Edge Function
+- `Feedback_Tool` + `Wissensluecke_melden` im Workflow
+
+**Erste Synonyme eingetragen:**
+- Pseudonymisierungsliste → Bewohnercode
+- Pseudonymisierung → Bewohnercode
+- Pseudonym → Bewohnercode
+
+---
 
 ### 2026-01-26 - Batch Re-Indexing 503 URL-only Dokumente
 
