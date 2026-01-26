@@ -424,6 +424,60 @@ return [{
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
 
+### 2026-01-26 - n8n CLI Import NICHT ZUVERLÄSSIG
+
+**🔴 KRITISCH: n8n CLI Import funktioniert oft NICHT!**
+
+Symptome:
+- `n8n import:workflow` gibt "Success" aber Änderungen fehlen
+- EISDIR Fehler bei Datei-Import
+- UI-Import zeigt keine Änderungen
+
+**✅ LÖSUNG: Direkt in SQLite-Datenbank schreiben**
+
+```bash
+# Workflow aus SQLite exportieren
+docker exec n8n-n8n-1 sqlite3 /home/node/.n8n/database.sqlite \
+  "SELECT nodes FROM workflow_entity WHERE id='SJ47UX9mv8wh1Wwy'" > nodes.json
+
+# Workflow in SQLite updaten (Python-Beispiel)
+import sqlite3
+import json
+
+conn = sqlite3.connect('/volume1/docker/n8n/data/database.sqlite')
+cursor = conn.cursor()
+
+# Nodes JSON modifizieren
+cursor.execute("SELECT nodes FROM workflow_entity WHERE id=?", (workflow_id,))
+nodes = json.loads(cursor.fetchone()[0])
+
+# Änderungen anwenden...
+nodes_json = json.dumps(nodes)
+cursor.execute("UPDATE workflow_entity SET nodes=? WHERE id=?", (nodes_json, workflow_id))
+
+conn.commit()
+conn.close()
+```
+
+**🔴 NACH DATENBANK-UPDATE IMMER:**
+```bash
+docker restart n8n-n8n-1
+```
+Ohne Restart werden Änderungen NICHT geladen!
+
+**Wichtige Pfade:**
+- SQLite: `/volume1/docker/n8n/data/database.sqlite`
+- Im Container: `/home/node/.n8n/database.sqlite`
+- Workflows-Tabelle: `workflow_entity`
+- Spalten: `id`, `name`, `active`, `nodes`, `connections`, `settings`
+
+**RAG_Masterclass_Chat_hybrid:**
+- Workflow ID: `SJ47UX9mv8wh1Wwy`
+- 74+ Nodes
+- Supabase KI-Agent mit erweitertem System Prompt
+
+---
+
 ### 2026-01-24 - Workflow Audit Session
 
 **Audit-Workflow Pattern:**

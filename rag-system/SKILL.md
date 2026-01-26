@@ -265,6 +265,25 @@ ANTWORT:
 
 ### 🔴 NIEMALS
 
+0. **NIEMALS** nur eine Suchfunktion optimieren!
+   ```
+   ❌ Nur fast_search_text optimiert → match_documents vergessen
+   ✅ ALLE Suchfunktionen prüfen: match_documents, fast_search_text,
+      hybrid_search_v2, hybrid_search
+   ```
+
+0b. **NIEMALS** hardcoded Werte in n8n AI-Tools
+   ```
+   ❌ "value": "KI für Medifox stationär"  // Statisch!
+   ✅ "value": "={{ $fromAI('searchQuery', 'Suchanfrage', 'string') }}"
+   ```
+
+0c. **NIEMALS** annehmen welcher Workflow aktiv ist
+   ```
+   ❌ "Ich optimiere RAG_enhanced_v3.json"
+   ✅ "Welcher Workflow wird aktiv genutzt?" → Benutzer fragen!
+   ```
+
 1. **NIEMALS** Antworten ohne Quellenangabe bei wichtigen Fakten
    ```
    ✅ "Laut dem Medifox-Handbuch (S. 42) ist SIS..."
@@ -308,6 +327,60 @@ ANTWORT:
 1. Diana's Supabase-Projekt: wfklkrgeblwdzyhuyjrv
 2. Ollama läuft auf NAS Port 11434
 3. Medifox-Dokumente in NextCloud gespeichert
+4. **Aktiver Chat-Workflow:** SJ47UX9mv8wh1Wwy (RAG_Masterclass_Chat_hybrid)
+
+---
+
+## Quality-Boost für MediFox-Dokumente
+
+Alle Suchfunktionen müssen diesen Boost implementieren:
+
+```sql
+-- Quality-Boost Logik (in ALLEN Suchfunktionen!)
+CASE
+  WHEN metadata->>'source' = 'wissen.medifoxdan.de' THEN 0.15  -- +15%
+  WHEN metadata->>'quality' = 'high' THEN 0.10                 -- +10%
+  ELSE 0
+END AS quality_boost
+```
+
+**Betroffene Funktionen:**
+| Funktion | Nutzer | Quality-Boost |
+|----------|--------|---------------|
+| `match_documents` | n8n Supabase Vector Store | ✅ Ja |
+| `fast_search_text` | n8n-hybrid Edge Function | ✅ Ja |
+| `hybrid_search_v2` | Direkter RPC-Aufruf | ✅ Ja |
+
+---
+
+## Diagnose-Checklist: RAG-Qualitätsprobleme
+
+Wenn Antworten schlecht sind, prüfe in dieser Reihenfolge:
+
+```
+□ 1. Welcher Workflow ist AKTIV? (nicht annehmen!)
+     docker exec n8n-n8n-1 n8n list:workflow --active=true
+
+□ 2. Welche Suchfunktion wird aufgerufen?
+     - n8n Vector Store → match_documents
+     - n8n-hybrid Edge Function → fast_search_text
+     - Direkter HTTP → hybrid_search_v2
+
+□ 3. Hat diese Funktion Quality-Boost?
+     SELECT pg_get_functiondef(oid) FROM pg_proc
+     WHERE proname = 'FUNKTIONSNAME';
+
+□ 4. Wird die Benutzerfrage dynamisch übergeben?
+     Suche nach: "KI für Medifox" (hardcoded = FALSCH!)
+     Korrekt: $fromAI('searchQuery', ...)
+
+□ 5. Haben alle Dokumente Embeddings?
+     SELECT COUNT(*) FROM documents WHERE embedding IS NULL;
+
+□ 6. Funktioniert die Suche überhaupt?
+     curl -X POST "https://...functions.supabase.co/n8n-hybrid" \
+       -d '{"query": "Dienstplan", "match_count": 3}'
+```
 
 ---
 
