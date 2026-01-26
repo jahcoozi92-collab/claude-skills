@@ -457,6 +457,111 @@ const { data } = await supabase.rpc('fast_search_text', {
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
 
+### 2026-01-26 - Batch Re-Indexing 503 URL-only Dokumente
+
+**URL-only Dokumente erkennen und fixen:**
+```sql
+-- PATTERN: Dokumente die nur eine URL enthalten (kein echter Content)
+SELECT id, content, metadata->>'source' as source
+FROM documents
+WHERE content LIKE 'https://nextcloud%'
+  AND LENGTH(content) < 300;
+
+-- Ergebnis: 503 Dokumente hatten nur URL statt Volltext
+```
+
+**Batch-Update mit Dollar-Quoting (Spezialzeichen-sicher):**
+```sql
+-- PATTERN: Sichere Updates für Content mit Sonderzeichen
+UPDATE documents SET
+  content = $c$# Dokumenttitel
+
+**Quelle:** MediFox Stationär Wissensdatenbank
+**ID:** 590767
+
+---
+
+[Strukturierter Inhalt mit ## Headers, Aufzählungen, **Keywords**]
+
+**Tags:** tag1, tag2, tag3$c$,
+  fts = to_tsvector('german', 'keyword1 keyword2 keyword3')
+WHERE id = 347453;
+
+-- ✅ $c$...$c$ verhindert SQL-Injection bei Anführungszeichen, Backslashes etc.
+```
+
+**NextCloud WebDAV Download-Pattern:**
+```bash
+# Korrektes URL-Format für NextCloud WebDAV
+NC_USER="diana.goebel@proton.me"
+NC_PASS="MCPServer2024Secure"
+BASE="https://nextcloud.forensikzentrum.com/remote.php/dav/files/nextcloud/RAG_Masterclass"
+
+# Parallel-Downloads für Batch-Verarbeitung
+curl -s -u "$NC_USER:$NC_PASS" "$BASE/filename.md" > /tmp/batch/id.md &
+wait  # Warte auf alle parallelen Downloads
+```
+
+**🔴 KRITISCH - URL-Fehler beheben:**
+```bash
+# Malformed: nextcloudRAG_Masterclass (fehlender Slash)
+# Korrekt:   nextcloud/RAG_Masterclass
+
+sed 's|/nextcloudRAG_Masterclass/|/nextcloud/RAG_Masterclass/|g'
+```
+
+**Ergebnis:** 100 von 503 Dokumenten erfolgreich re-indexiert (20%), weitere 403 pending.
+
+---
+
+### 2026-01-26 - RAG_Masterclass_Chat_hybrid Enhancement
+
+**FTS-Lücke entdeckt und behoben:**
+```sql
+-- PRÜFEN: Wie viele Dokumente haben keine FTS-Vektoren?
+SELECT COUNT(*) FROM documents WHERE fts IS NULL;
+
+-- FIX: FTS für alle Dokumente regenerieren
+UPDATE documents
+SET fts = to_tsvector('german', COALESCE(content, ''))
+WHERE fts IS NULL;
+```
+
+**🔴 KRITISCH: FTS kann fehlen bei:**
+- Bulk-Imports ohne Trigger
+- Alten Dokumenten vor FTS-Einführung
+- Dokument-Updates ohne FTS-Regenerierung
+
+**Inventory-Funktionen erstellt:**
+```sql
+-- Statistiken für Meta-Fragen
+SELECT * FROM get_inventory_stats();
+-- Liefert: total_chunks, total_files, file_types, avg_length, etc.
+
+SELECT * FROM get_inventory_summary();
+-- Liefert: Tabelle mit file_type, count, latest_update
+```
+
+**Hybrid-Search Funktion verbessert:**
+```sql
+-- fast_search_text war zu aggressiv
+-- Geändert: length(content) > 10 (statt 150)
+-- Geändert: LIMIT 500 (statt 200)
+```
+
+**Intent-Klassifizierung im System Prompt:**
+- Template A: Inventar/Meta-Fragen ("Was ist in der DB?")
+- Template B: Standard RAG-Fragen (Fachfragen)
+- Template C: Navigation/Klickpfad-Fragen
+
+**Zitationsformat (VERPFLICHTEND):**
+```
+[DOKUMENT:S.X-Y §Abschnitt]
+Beispiel: [QM-Handbuch:S.45 §Bezugspflege]
+```
+
+---
+
 ### 2026-01-21 - Supabase Hybrid Search + LightRAG Indexierung
 
 **Probleme gelöst:**
