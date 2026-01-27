@@ -645,6 +645,56 @@ docker ps --format "{{.Ports}}" | tr ',' '\n' | grep -oE ':[0-9]+' | sort -u
 curl --resolve "host.domain.com:443:104.21.30.51" https://host.domain.com
 ```
 
+### 2026-01-27 - Moltbot/Clawdbot Installation & Migration
+
+**VOR Docker-Setup immer prüfen ob Container existiert:**
+```bash
+# IMMER zuerst prüfen!
+docker ps -a | grep -E 'claw|molt'
+
+# Falls Container existiert → nicht neu installieren
+# Stattdessen: docker compose up -d im bestehenden Verzeichnis
+```
+
+**Nach Verzeichnis-Umbenennung (.env aktualisieren):**
+```bash
+# Nach: mv /volume1/docker/clawdbot /volume1/docker/moltbot
+# IMMER .env auf alte Pfade prüfen!
+
+# ❌ FALSCH (alter Pfad)
+CLAWDBOT_CONFIG_DIR=/volume1/docker/clawdbot/config
+
+# ✅ RICHTIG (neuer Pfad)
+CLAWDBOT_CONFIG_DIR=/volume1/docker/moltbot/config
+```
+
+**Moltbot WhatsApp deaktivieren:**
+```bash
+# ❌ config "enabled: false" reicht NICHT
+# ✅ Credentials verschieben:
+mv config/credentials/whatsapp config/credentials/whatsapp.disabled
+docker compose restart clawdbot-gateway
+
+# Log zeigt dann: "[whatsapp] skipping provider start (no linked session)"
+```
+
+**Cloudflare Tunnel für neue Subdomain:**
+1. `config.yml` editieren reicht NICHT allein
+2. DNS CNAME Record muss im Cloudflare Dashboard angelegt werden
+3. Name: `clawdbot` → Target: `[tunnel-id].cfargotunnel.com`
+4. Dann: `docker restart cloudflared`
+
+**Moltbot Naming (Rebrand):**
+- Neuer Name: **Moltbot** (docs.molt.bot)
+- CLI heißt noch: `clawdbot`
+- Container-Namen: `moltbot-clawdbot-gateway-1`
+- Funktionalität identisch, nur Marketing-Name geändert
+
+**Moltbot Gateway Token:**
+- Liegt in `.env` als `CLAWDBOT_GATEWAY_TOKEN`
+- Control UI: http://192.168.22.90:18789/
+- Token in UI-Settings eingeben für Zugriff
+
 ---
 
 ## Quick Reference Card
