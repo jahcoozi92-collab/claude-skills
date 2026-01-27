@@ -305,24 +305,68 @@ ANTWORT:
    ```
    → Bei fehlender Dokumentation: `Wissensluecke_melden` Tool nutzen!
 
-4. **NIEMALS** sensible Patientendaten in Embeddings speichern
+4. **NIEMALS** Feature-Unterschiede zwischen n8n-Chat und externer Chat-Seite!
+   ```
+   ❌ n8n Chat: Screenshots/Bilder, Vision → Chat-Seite: Keine Bilder
+      (Feature-Parität MUSS gewährleistet sein!)
+   ✅ Beide Oberflächen: Gleiche Features, gleiche Antwortqualität
+   ```
+
+   **Aktueller Status (2026-01-27):**
+   | Feature | n8n Chat | Chat-Seite |
+   |---------|----------|------------|
+   | Text-Chat | ✅ | ✅ |
+   | Screenshots/Bilder | ✅ allowFileUploads=true | ✅ Implementiert |
+   | Vision/OCR | ✅ GPT-4o/Claude Vision | ✅ GPT-4o Vision |
+   | Clipboard Paste (Ctrl+V) | ❌ | ✅ Implementiert |
+   | Drag & Drop Upload | ✅ | ✅ Implementiert |
+   | EXIF-Stripping | ❌ | ✅ Implementiert |
+
+5. **NIEMALS** sensible Patientendaten in Embeddings speichern
    - Anonymisieren BEVOR Embedding erstellt wird
 
-5. **NIEMALS** zu kleine Chunks ohne Overlap
+6. **NIEMALS** zu kleine Chunks ohne Overlap
    - Kontext geht sonst verloren
 
-6. **NIEMALS** pgvector HNSW/IVFFlat Index für >2000 Dimensionen
+7. **NIEMALS** pgvector HNSW/IVFFlat Index für >2000 Dimensionen
    ```
    ❌ CREATE INDEX ON docs USING hnsw (embedding vector_cosine_ops)
       -- Fehler bei 3072 dims!
    ✅ Text-Vorfilterung nutzen, dann Vektor-Vergleich auf Subset
    ```
 
-7. **NIEMALS** Embedding als JSON Array an Supabase RPC übergeben
+8. **NIEMALS** Embedding als JSON Array an Supabase RPC übergeben
    ```
    ❌ supabase.rpc('search', { embedding: [0.1, 0.2, ...] })
    ✅ supabase.rpc('search', { embedding_text: '[0.1,0.2,...]' })
    ```
+
+9. **NIEMALS** n8n Workflow-HTML nur in einer Tabelle updaten!
+   ```
+   ❌ UPDATE workflow_entity SET nodes = ...
+      (Workflow läuft weiter mit alter Version!)
+   ✅ BEIDE Tabellen aktualisieren:
+      - workflow_entity (Editor-Version)
+      - workflow_history (Runtime-Version - diese wird serviert!)
+   ```
+   → n8n lädt aktive Workflows aus `workflow_history`, nicht `workflow_entity`!
+
+10. **NIEMALS** localStorage ohne try-catch in n8n Webhook-HTML!
+    ```
+    ❌ const saved = localStorage.getItem('theme');
+       (SecurityError: sandboxed document)
+    ✅ try { const saved = localStorage.getItem('theme'); } catch(e) {}
+    ```
+    → n8n Webhooks können in sandboxed context laufen (origin: null)
+
+11. **NIEMALS** Clipboard nur mit `clipboardData.items` prüfen (Linux/GNOME)!
+    ```
+    ❌ for (item of e.clipboardData.items) { ... }
+       (Funktioniert nicht auf Linux/GNOME!)
+    ✅ // Erst files prüfen (Linux/GNOME), dann items
+       if (e.clipboardData?.files?.length > 0) { ... }
+       else if (e.clipboardData?.items) { ... }
+    ```
 
 ### 🟡 BEVORZUGT
 
@@ -337,6 +381,15 @@ ANTWORT:
 2. Ollama läuft auf NAS Port 11434
 3. Medifox-Dokumente in NextCloud gespeichert
 4. **Aktiver Chat-Workflow:** SJ47UX9mv8wh1Wwy (RAG_Masterclass_Chat_hybrid)
+5. **n8n HTML-Architektur:**
+   - n8n serviert NICHT aus Dateien!
+   - Inline-HTML liegt in "Respond to Webhook" Node
+   - Runtime liest aus `workflow_history` Tabelle
+   - DB: `/volume1/docker/n8n/data/database.sqlite`
+6. **Cloudflare Errors ignorierbar:**
+   - `/cdn-cgi/speculation` - Prefetch-Optimierung
+   - `/cdn-cgi/rum` - Real User Monitoring
+   - Verursachen "origin null" Fehler, aber harmlos
 
 ---
 
@@ -418,6 +471,120 @@ ORDER BY priority DESC;
 -- Meistgenutzte Synonyme
 SELECT user_term, canonical_term, usage_count
 FROM term_synonyms ORDER BY usage_count DESC;
+```
+
+---
+
+## Screenshot-Learning für MediFox Klickpfade (GEPLANT)
+
+### Vision & Use Case
+
+**Problem:** MediFox-Handbücher beschreiben Klickpfade nur textlich. Benutzer schicken Screenshots mit der Frage "Wo muss ich hier klicken?"
+
+**Ziel:** Aufbau einer visuellen Wissensbasis für MediFox-Klickpfade:
+1. Benutzer lädt Screenshot hoch
+2. Vision-Modell (GPT-4o/Claude) analysiert den Screenshot
+3. OCR extrahiert sichtbare Texte/Menüs
+4. System findet dokumentierte Klickpfade basierend auf erkannten Elementen
+5. Bei neuen Pfaden: Benutzer kann annotieren → Learning
+
+### Architektur-Entwurf
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│ Chat-Seite  │────▶│  n8n oder   │────▶│ Vision-API  │
+│ Screenshot  │     │ Edge Func.  │     │ GPT-4o/     │
+│ Ctrl+V/Drop │     │             │     │ Claude 3.5  │
+└─────────────┘     └──────┬──────┘     └──────┬──────┘
+                          │                    │
+                    ┌─────▼─────┐        ┌─────▼─────┐
+                    │   OCR     │        │  Analyse  │
+                    │ Textextr. │        │ "Was ist  │
+                    └─────┬─────┘        │  sichtbar"│
+                          │              └─────┬─────┘
+                          └──────┬─────────────┘
+                                 │
+                    ┌────────────▼────────────┐
+                    │  click_paths Tabelle    │
+                    │  screen_region → Pfad   │
+                    └─────────────────────────┘
+```
+
+### Geplante Tabellen
+
+```sql
+-- Klickpfade zu Screenshots (DRAFT - noch nicht implementiert)
+CREATE TABLE click_paths (
+  id BIGSERIAL PRIMARY KEY,
+  screen_region TEXT,        -- "Hauptmenü/Verwaltung"
+  ocr_keywords TEXT[],       -- ["Verwaltung", "Bewohner", "Stammdaten"]
+  click_path TEXT NOT NULL,  -- "Verwaltung → Bewohnerverwaltung → Stammdaten"
+  description TEXT,
+  source_doc TEXT,           -- Welches Handbuch?
+  screenshot_hash TEXT,      -- Für Deduplizierung
+  verified BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+### Privacy-Anforderungen
+
+| Anforderung | Beschreibung |
+|-------------|--------------|
+| EXIF-Entfernung | Metadaten vor Speicherung entfernen |
+| Keine Raw-Images | Nur Hashes/OCR-Text speichern, keine Bilder |
+| Tenant-Isolation | Mandantentrennung bei Multi-Tenant |
+| DSGVO-konform | Keine personenbezogenen Daten aus Screenshots |
+
+### UX-Anforderungen
+
+| Feature | Status |
+|---------|--------|
+| Clipboard Paste (Ctrl+V) | ✅ Implementiert |
+| Drag & Drop | ✅ Implementiert |
+| File-Button Upload | ✅ Implementiert |
+| Auto-Detection "ist Screenshot" | ✅ Implementiert |
+| EXIF-Stripping (Privacy) | ✅ Implementiert |
+| Image Preview | ✅ Implementiert |
+
+### Implementierungsstatus
+
+**Phase 1 (ABGESCHLOSSEN):**
+1. ✅ Chat-Seite: Bild-Upload (Clipboard Ctrl+V, Drag&Drop, File-Button)
+2. ✅ EXIF-Strip im Browser via Canvas (keine Metadaten übertragen)
+3. ✅ Vision-API: `vision-analyzer` Edge Function mit GPT-4o
+4. ✅ OCR + Screenshot-Analyse in GPT-4o Vision
+5. ✅ Kombination: Vision-Analyse + Benutzer-Frage → RAG-Agent
+
+**Phase 2 (OFFEN):**
+6. ⬜ click_paths Tabelle + Suche
+7. ⬜ Learning-Flow für neue Klickpfade
+8. ⬜ Benutzer-Annotationen
+
+**Phase 3 (OFFEN):**
+9. ⬜ Admin-Panel für Klickpfad-Review
+10. ⬜ Export/Löschung (DSGVO)
+
+### Edge Function: `vision-analyzer`
+
+**URL:** `https://wfklkrgeblwdzyhuyjrv.supabase.co/functions/v1/vision-analyzer`
+
+```json
+// Request
+{
+  "image": "data:image/jpeg;base64,...",
+  "query": "Wo muss ich klicken?",
+  "context": "MediFox Screenshot"
+}
+
+// Response
+{
+  "success": true,
+  "description": "Der Screenshot zeigt das Hauptmenü...",
+  "extracted_text": "Verwaltung, Pflege, Dokumentation",
+  "ui_elements": ["Tab", "Menü", "Button"],
+  "suggested_action": "Klicken Sie auf Pflege/Betreuung"
+}
 ```
 
 ---
@@ -598,6 +765,83 @@ const { data } = await supabase.rpc('fast_search_text', {
 ## Gelernte Lektionen
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
+
+### 2026-01-27 - n8n DB-Architektur & Linux/GNOME Fixes
+
+**🔴 KRITISCH: n8n hat ZWEI Workflow-Tabellen!**
+
+```
+workflow_entity   → Editor-Version (was du im UI siehst)
+workflow_history  → Runtime-Version (was tatsächlich ausgeführt wird!)
+```
+
+**Problem:** Database-Update ohne Effekt
+- `workflow_entity` aktualisiert → ✅
+- n8n neugestartet → Alte Version wird serviert! ❌
+
+**Ursache:** n8n lädt aktive Workflows aus `workflow_history`
+
+**Lösung:**
+```python
+# BEIDE Tabellen updaten!
+cursor.execute("UPDATE workflow_entity SET nodes = ? WHERE id = ?", ...)
+cursor.execute("UPDATE workflow_history SET nodes = ? WHERE versionId = ?", ...)
+```
+
+---
+
+**🔴 KRITISCH: localStorage in n8n Webhooks**
+
+n8n Webhook-HTML kann in sandboxed context laufen (`origin: null`).
+
+```javascript
+// ❌ Fehler: SecurityError: sandboxed document
+const saved = localStorage.getItem('theme');
+
+// ✅ Korrekt: Mit try-catch
+try { const saved = localStorage.getItem('theme'); } catch(e) {}
+```
+
+---
+
+**🟡 Linux/GNOME Clipboard-Fix**
+
+`clipboardData.items` funktioniert nicht zuverlässig auf Linux/GNOME.
+
+```javascript
+// ✅ Erst files prüfen (Linux/GNOME), dann items (Windows/Mac)
+if (e.clipboardData?.files?.length > 0) {
+  for (const file of e.clipboardData.files) { ... }
+} else if (e.clipboardData?.items) {
+  for (const item of e.clipboardData.items) { ... }
+}
+```
+
+---
+
+### 2026-01-27 - Vision-Parität & Screenshot-Learning
+
+**🔴 KRITISCH: Feature-Gap zwischen n8n Chat und Chat-Seite!**
+
+| Feature | n8n Chat | Chat-Seite |
+|---------|----------|------------|
+| Bilder/Screenshots | ✅ allowFileUploads=true | ❌ Fehlt |
+| Vision/OCR | ✅ GPT-4o & Claude Vision-fähig | ❌ Nicht verbunden |
+
+**Neue Anforderung: Screenshot-Learning für MediFox**
+
+Benutzer möchten Screenshots hochladen und fragen: "Wo muss ich hier klicken?"
+→ Braucht: Clipboard Paste (Ctrl+V), Drag&Drop, Vision-API
+
+**Architektur dokumentiert:**
+- `click_paths` Tabelle für gelernte Klickpfade
+- EXIF-Removal für Privacy (keine Metadaten speichern)
+- OCR + Keyword-Extraktion aus Screenshots
+- Kein Raw-Image Storage (nur Hashes/OCR-Text)
+
+**Implementierungs-Checklist erstellt** (7 Schritte in SKILL.md)
+
+---
 
 ### 2026-01-27 - Feedback-System & Anti-Halluzination
 
