@@ -26,6 +26,84 @@ Aktiviere diesen Skill bei:
 - **User:** Jahcoozi
 - **Laptop:** Yoga7 (User: yoga7)
 
+---
+
+## Tailscale VPN
+
+### Geräte im Tailnet
+
+| Gerät | Tailscale-IP | Typ | Beschreibung |
+|-------|--------------|-----|--------------|
+| ugreen (NAS) | 100.90.233.16 | Linux | Haupt-NAS |
+| ws44 | 100.115.38.98 | Windows | Arbeitsrechner |
+| yoga7 | 100.73.166.69 | Linux | Laptop |
+| samsung-sm-s938b | 100.126.122.31 | Android | Handy |
+
+### Auth Key vs. API Token
+
+| Typ | Prefix | Verwendung |
+|-----|--------|------------|
+| Auth Key | `tskey-auth-` | Geräte zum Tailnet hinzufügen |
+| API Token | `tskey-api-` | Tailscale API steuern |
+
+### Auth Key mit Tags (deaktiviert Schlüsselablauf)
+
+1. Tags in ACL definieren: https://login.tailscale.com/admin/acls/file
+   ```json
+   {"tagOwners": {"tag:nas": ["autogroup:admin"]}}
+   ```
+2. Auth Key mit Tag erstellen: https://login.tailscale.com/admin/settings/keys
+3. Tag auswählen → Schlüsselablauf wird automatisch deaktiviert
+
+### Container Auth Key erneuern
+
+```bash
+cd /volume1/docker/tailscale
+echo "TS_AUTHKEY=tskey-auth-NEUER-KEY" > .env
+docker compose down && docker compose up -d
+docker exec tailscale tailscale status
+```
+
+---
+
+## Remote Desktop (Grafischer Fernzugriff)
+
+### Linux (xrdp) vorbereiten - Yoga7
+
+```bash
+sudo apt update
+sudo apt install xrdp -y
+sudo systemctl enable xrdp --now
+sudo systemctl status xrdp  # Muss "active (running)" zeigen
+```
+
+### Windows RDP aktivieren - ws44
+
+```
+Einstellungen (Win+I) → System → Remotedesktop → EIN
+```
+
+### Verbindungs-Apps
+
+| Von | Nach | App benutzen | Adresse |
+|-----|------|--------------|---------|
+| 📱 Android | 💻 Yoga7 | RD Client (Microsoft) | `100.73.166.69` |
+| 📱 Android | 🖥️ Windows | RD Client (Microsoft) | `100.115.38.98` |
+| 🖥️ Windows | 💻 Yoga7 | mstsc (Win+R) | `100.73.166.69` |
+| 💻 Yoga7 | 🖥️ Windows | Remmina | `100.115.38.98` |
+
+### Remmina auf Linux installieren
+
+```bash
+sudo apt install remmina remmina-plugin-rdp -y
+```
+
+### Checkliste vor Verbindung
+
+- [ ] Tailscale AN auf beiden Geräten
+- [ ] Ziel-Gerät eingeschaltet
+- [ ] Benutzername + Passwort bekannt
+
 ### Wichtige Pfade
 
 | System | Pfad | Beschreibung |
