@@ -765,6 +765,75 @@ Vision  RAG
 
 ---
 
+### 2026-01-28 - MediFox Chat UI (Webhook HTML Response)
+
+**🔴 UI Design-Qualität ("Level 2"):**
+- Standard-Design = "Level 1" (generisch, Bootstrap-look)
+- Diana erwartet "Level 2" = Premium, professionell
+- Inter Font für professionelle UIs
+- Animationen: hover-lift (`translateY(-2px)`), pop-effekt, fade-in
+
+**🔴 DRY-Prinzip für UI:**
+```
+❌ FALSCH: Quick Actions + Tips mit gleicher Funktion
+   - Button: "Screenshot hochladen"
+   - Tip: "Screenshots teilen" ← REDUNDANT, entfernen!
+
+✅ RICHTIG: Eine Interaktionsart pro Funktion
+   - Nur Quick Actions ODER nur Tips
+```
+
+**🔴 Keine fiktiven Domain-Beispiele:**
+```
+❌ FALSCH: Quick Action "Bericht erstellen" (ohne Backend-Wissen)
+✅ RICHTIG: Nur echte Funktionen anbieten (Screenshot, Teach, Frage)
+```
+
+**🟡 Clickpath-Visualisierung (Auto-Breadcrumbs):**
+```javascript
+// Pfade wie "Dokumentation → Bewohner → Verlauf" erkennen
+// und als visuelle Breadcrumbs mit Nummern darstellen
+
+function formatClickpaths(text) {
+  const pathPattern = /(?:Pfad:?\s*)?([\w]+)\s*[→>]\s*([\w]+(?:\s*[→>]\s*[\w]+)+)/gi;
+  return text.replace(pathPattern, (match, first, rest) => {
+    const steps = [first, ...rest.split(/\s*[→>]\s*/)];
+    return steps.map((s, i) => `<span class="step">${i+1}. ${s}</span>`).join(' → ');
+  });
+}
+```
+
+**🟡 Feedback-Buttons bei JEDER Bot-Antwort:**
+```
+Nicht nur bei "Ich weiß es nicht" → IMMER anzeigen!
+
+┌─────────────────────────────────────────┐
+│ [Bot-Antwort]                           │
+│                                         │
+│ War das hilfreich?                      │
+│ [👍 Ja] [❌ Falsch] [💡 Ergänzen]       │
+└─────────────────────────────────────────┘
+
+"Falsch" → öffnet Teach-Modal automatisch
+"Ja" → animiertes Checkmark + Danke-Nachricht
+```
+
+**🔵 CSS-Patterns für Chat-UI:**
+```css
+/* Hover-Lift für Buttons */
+.btn:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+
+/* Pop-Animation bei Selektion */
+@keyframes selectPop { 50% { transform: scale(1.1); } }
+
+/* Schrittweise Einblendung */
+.step:nth-child(1) { animation-delay: 0ms; }
+.step:nth-child(2) { animation-delay: 50ms; }
+/* ... */
+```
+
+---
+
 ## Nützliche Links
 
 - n8n Dokumentation: https://docs.n8n.io
