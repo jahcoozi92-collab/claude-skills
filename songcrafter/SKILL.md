@@ -17,9 +17,35 @@ Projektspezifischer Skill für die SongCrafter Pro AI Music Production App.
 ## Architektur
 
 ### 3-Schritt-Wizard
-1. **StepStyle.tsx** - Genre, Mood, Vocals, Referenz-Audio
+1. **StepStyle.tsx** - Genre, Mood, Vocals, Referenz-Audio, **World Hit Remix**
 2. **StepLyrics.tsx** - Lyrics-Editor mit Sektionen
 3. **StepGenerate.tsx** - Prompt-Optimierung + Audio-Generierung
+
+### World Hit Remix Feature
+- Upload beliebiges Audio als Remix-Grundlage
+- Drei Remix-Styles: Faithful, Reimagined, Genre-Flip
+- Intensitäts-Regler (1-5): 1=subtil, 5=komplett neu
+- Automatische Analyse von BPM, Genre, Mood, Energy
+- Spezieller Remix-Prompt-Generator: `generateRemixPrompt()` in geminiService.ts
+
+#### Remix State-Felder (types.ts)
+```typescript
+isRemixMode?: boolean;
+remixStyle?: 'faithful' | 'reimagined' | 'genre-flip';
+remixIntensity?: number; // 1-5
+referenceAnalysis?: {
+  originalBpm?: number;
+  originalKey?: string;
+  originalGenre?: string;
+  originalMood?: string;
+  originalEnergy?: number;
+};
+```
+
+### URL-Analyse (3-Schritt-Verfahren)
+1. **Metadaten-Recherche**: Songbpm.com, Tunebat.com → BPM, Key, Genre
+2. **Lyrics-Recherche**: Genius.com, AZLyrics → Original-Lyrics
+3. **Strukturierte Kombination**: Validierung gegen `constants.ts`
 
 ### Wichtige Services
 - `geminiService.ts` - Audio-Analyse, Prompt-Optimierung, Lyrics-Generator
@@ -51,6 +77,27 @@ Projektspezifischer Skill für die SongCrafter Pro AI Music Production App.
 - ❌ NIEMALS ohne Fallback-Prompt bei API-Fehlern
 - ✅ IMMER Ergebnisse gegen bekannte Genre/Substyle-Listen validieren
 - ✅ IMMER deutsche Fehlermeldungen für deutsche UI
+
+### Prompt-Optimierung (KRITISCH!)
+- ❌ NIEMALS User-Lyrics durch Gemini-generierte Lyrics ersetzen
+- ❌ NIEMALS `lyrics_prompt` von Gemini generieren lassen wenn User Lyrics eingegeben hat
+- ✅ `optimizePromptWithGemini()` MUSS Original-User-Lyrics als `lyrics_prompt` zurückgeben
+- ✅ Gemini generiert NUR den Musik-Prompt, NICHT die Lyrics
+
+### URL-Analyse (Web-Einstufung)
+- ❌ NIEMALS nur einen API-Call für Metadaten + Lyrics machen
+- ❌ NIEMALS BPM raten ohne Musik-Datenbanken zu konsultieren
+- ✅ IMMER 3-Schritt-Analyse: 1) Metadaten, 2) Lyrics, 3) Kombination
+- ✅ IMMER auf Songbpm.com, Tunebat.com, GetSongKey.com nach BPM/Key suchen
+- ✅ IMMER Genre/Substyle gegen `constants.ts` GENRES validieren
+- ✅ IMMER BPM-Fallback basierend auf Genre-Defaults
+
+### MiniMax Music Lyrics-Sprache (KRITISCH!)
+- ❌ NIEMALS davon ausgehen, dass MiniMax die Lyrics-Sprache automatisch erkennt
+- ❌ NIEMALS `prompt` ohne expliziten Sprach-Hinweis bei nicht-englischen Lyrics
+- ✅ IMMER Spracherkennung aus Lyrics durchführen (Umlaute, deutsche Wörter)
+- ✅ IMMER "German vocals, sung in German" in `prompt` wenn deutsche Lyrics
+- ✅ IMMER `lyrics_prompt` mit Sprach-Prefix: `[GERMAN LYRICS - SING IN GERMAN]`
 
 ---
 
@@ -120,6 +167,14 @@ Beim ersten Mal muss der User manuell einen Test auf fal.ai durchführen:
 **Ursache:** Gemini rät statt zu transkribieren
 **Lösung:** Verbesserte System-Instructions, Validierung gegen bekannte Listen
 
+### MiniMax Music ignoriert Lyrics-Sprache
+**Symptom:** Deutsche Lyrics werden auf Englisch gesungen, Prompt wird ignoriert
+**Ursache:** MiniMax Music braucht explizite Sprach-Anweisung im `prompt`-Feld
+**Lösung:**
+- `geminiService.ts`: Automatische Spracherkennung aus Lyrics
+- Prompt-Generierung fügt "German vocals, sung in German" hinzu
+- `falService.ts`: Double-Check und Prefix `[GERMAN LYRICS - SING IN GERMAN]`
+
 ---
 
 ## Gelernte Lektionen
@@ -145,3 +200,34 @@ Beim ersten Mal muss der User manuell einen Test auf fal.ai durchführen:
 - Retry-Wrapper für alle API-Calls
 - Fallback-Prompts wenn API fehlschlägt
 - Genre/Substyle-Validierung gegen Constants
+
+**MiniMax Music Sprach-Enforcement:**
+- MiniMax Music v2 ignoriert `lyrics_prompt` Sprache wenn `prompt` keine Anweisung enthält
+- IMMER Spracherkennung aus Lyrics durchführen
+- Bei deutschen Lyrics: `prompt` MUSS "German vocals" oder "sung in German" enthalten
+- Zusätzlich: `lyrics_prompt` mit Sprach-Prefix versehen: `[GERMAN LYRICS - SING IN GERMAN]`
+- Dreifache Absicherung: Gemini-Prompt, Fallback-Check, fal.ai-Service-Check
+
+### 2026-01-31 - Lyrics & URL-Analyse Session
+
+**User-Lyrics Preservation (KRITISCH):**
+- `optimizePromptWithGemini()` hat fälschlicherweise Gemini-generierte Lyrics zurückgegeben
+- User-Lyrics wurden überschrieben → englische Lyrics statt deutscher
+- FIX: Gemini generiert NUR den Musik-Prompt, Original-Lyrics werden durchgereicht
+- `lyrics_prompt: userLyrics || "[Instrumental]"` am Ende der Funktion
+
+**URL-Analyse Verbesserung:**
+- Alte 2-Schritt-Analyse war ungenau für BPM/Genre
+- Neue 3-Schritt-Analyse:
+  1. Metadaten von Songbpm.com, Tunebat.com, GetSongKey.com
+  2. Lyrics von Genius.com, AZLyrics (separat!)
+  3. Strukturierte Kombination mit Validierung
+- BPM-Extraktion aus Text: `/BPM[:\s]*(\d{2,3})/i`
+- Fallback-BPM pro Genre in `genreBpmDefaults`
+
+**World Hit Remix Feature:**
+- Prominente UI-Box in StepStyle.tsx
+- Drei Remix-Styles mit unterschiedlichen Prompt-Strategien
+- Intensitäts-Slider (1-5) beeinflusst Prompt-Formulierung
+- `generateRemixPrompt()` nutzt Original-Analyse als Referenz
+- Remix-Badge in StepGenerate.tsx zeigt aktiven Modus
