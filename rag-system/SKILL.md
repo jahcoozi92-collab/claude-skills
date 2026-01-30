@@ -368,6 +368,21 @@ ANTWORT:
        else if (e.clipboardData?.items) { ... }
     ```
 
+12. **NIEMALS** generische toolDescription für Vector Store Tools!
+    ```
+    ❌ "Nutze dieses Tool, um Wissen über MediFox zu erhalten"
+       → Agent ruft Tool NICHT auf, antwortet aus eigenem Wissen!
+
+    ✅ "IMMER nutzen für JEDE Frage über MediFox!
+       Enthält: Installation, CarePad, App, Smartphone, Handy,
+       Dokumentation, Klickpfade, Wunden, SIS, Pflege, Abrechnung...
+       MUSS bei JEDER Benutzerfrage aufgerufen werden!"
+    ```
+    - Bei `mode: "retrieve-as-tool"` → Agent MUSS Tool aktiv aufrufen
+    - Ohne Schlüsselwörter in toolDescription → Agent ignoriert Tool
+    - System Prompt verstärken: "BEVOR du antwortest, MUSST du Tool aufrufen!"
+    - Diagnose: Wenn Agent aus eigenem Wissen antwortet → toolDescription prüfen!
+
 ### 🟡 BEVORZUGT
 
 1. **Chunk-Größe:** 500-1000 Tokens
@@ -786,6 +801,18 @@ Wenn Antworten schlecht sind, prüfe in dieser Reihenfolge:
 □ 6. Funktioniert die Suche überhaupt?
      curl -X POST "https://...functions.supabase.co/n8n-hybrid" \
        -d '{"query": "Dienstplan", "match_count": 3}'
+
+□ 7. RUFT der Agent das Vector Store Tool überhaupt auf?
+     Symptom: Agent antwortet generisch aus eigenem Wissen
+     Ursache: toolDescription zu generisch!
+
+     Prüfe im Workflow:
+     - Vector Store Node → parameters.toolDescription
+     - Muss SCHLÜSSELWÖRTER enthalten (App, Smartphone, etc.)
+     - Muss explizit sagen: "MUSS aufgerufen werden!"
+
+     Fix:
+     "IMMER nutzen für JEDE Frage! Enthält: [alle Themen]..."
 ```
 
 ---

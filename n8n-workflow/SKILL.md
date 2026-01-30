@@ -278,6 +278,20 @@ Wie ein Wecker. Jeden Tag um 8 Uhr morgens startet der Workflow.
 4. **NIEMALS** synchrone Verarbeitung für große Dateien
    - Nutze Batch-Processing oder Queues
 
+5. **NIEMALS** generische Tool-Beschreibungen für Vector Store!
+   ```
+   ❌ FALSCH: "Nutze dieses Tool, um Wissen über MediFox zu erhalten"
+      → Agent ruft Tool NICHT auf, antwortet aus eigenem Wissen!
+
+   ✅ RICHTIG: "IMMER nutzen für JEDE Frage über MediFox!
+      Enthält: Installation, CarePad, App, Smartphone, Handy,
+      Dokumentation, Klickpfade, Wunden, SIS, Pflege...
+      MUSS bei JEDER Benutzerfrage aufgerufen werden!"
+   ```
+   - Bei `mode: "retrieve-as-tool"` MUSS Agent das Tool aktiv aufrufen
+   - Ohne explizite Schlüsselwörter in toolDescription → Agent ignoriert Tool
+   - System Prompt allein reicht NICHT - toolDescription ist entscheidend!
+
 ### 🟡 BEVORZUGT
 
 1. **Error Workflow** einrichten für Fehlerbenachrichtigung
