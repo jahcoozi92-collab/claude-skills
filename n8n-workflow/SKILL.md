@@ -765,6 +765,59 @@ Vision  RAG
 
 ---
 
+### 2026-01-30 - Multi-Respond-Node Workflow Pattern
+
+**🔴 KRITISCH: Unterscheide Respond-Nodes nach Funktion!**
+
+Bei Workflows mit mehreren `respondToWebhook` Nodes:
+- **"Respond to Webhook"** → HTML-UI (Chat-Oberfläche)
+- **"Respond Chat API"** → JSON-Response (API-Antwort)
+
+**Problem entdeckt:**
+Python-Skript aktualisierte ALLE `respondToWebhook` Nodes mit HTML.
+→ Chat-API gab plötzlich HTML statt JSON zurück!
+
+**Lösung:**
+```python
+for node in workflow.get('nodes', []):
+    if node.get('name') == 'Respond to Webhook':
+        # NUR diesen Node mit HTML updaten
+        node['parameters']['responseBody'] = html_content
+    elif node.get('name') == 'Respond Chat API':
+        # JSON-Response BEHALTEN!
+        pass  # Nicht ändern
+```
+
+**🔴 NIEMALS alle Respond-Nodes gleich behandeln!**
+
+---
+
+### 2026-01-30 - Workflow Update Pattern (CLI)
+
+**Standard-Pattern für Workflow-Änderungen:**
+
+```bash
+# 1. Workflow-JSON vorbereiten (lokal)
+# 2. In Container kopieren
+docker cp /tmp/workflow.json n8n-n8n-1:/tmp/workflow_to_import.json
+
+# 3. Importieren (deaktiviert automatisch!)
+docker exec n8n-n8n-1 n8n import:workflow --input=/tmp/workflow_to_import.json
+
+# 4. Aktivieren
+docker exec n8n-n8n-1 n8n update:workflow --id=<WORKFLOW_ID> --active=true
+
+# 5. IMMER Restart (n8n cacht Workflows im Memory!)
+docker restart n8n-n8n-1
+
+# 6. Verifizieren
+docker logs n8n-n8n-1 --tail 10 | grep "Activated workflow"
+```
+
+**🔴 Ohne Restart werden Änderungen NICHT geladen!**
+
+---
+
 ### 2026-01-28 - MediFox Chat UI (Webhook HTML Response)
 
 **🔴 UI Design-Qualität ("Level 2"):**

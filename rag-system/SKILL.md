@@ -510,21 +510,81 @@ FROM term_synonyms ORDER BY usage_count DESC;
                     └─────────────────────────┘
 ```
 
-### Geplante Tabellen
+### Phase 2 Tabellen (IMPLEMENTIERT 2026-01-27)
 
 ```sql
--- Klickpfade zu Screenshots (DRAFT - noch nicht implementiert)
-CREATE TABLE click_paths (
+-- UI-Elemente Registry (erkannte Menüs, Buttons, etc.)
+CREATE TABLE ui_elements (
   id BIGSERIAL PRIMARY KEY,
-  screen_region TEXT,        -- "Hauptmenü/Verwaltung"
-  ocr_keywords TEXT[],       -- ["Verwaltung", "Bewohner", "Stammdaten"]
-  click_path TEXT NOT NULL,  -- "Verwaltung → Bewohnerverwaltung → Stammdaten"
-  description TEXT,
-  source_doc TEXT,           -- Welches Handbuch?
-  screenshot_hash TEXT,      -- Für Deduplizierung
+  element_name TEXT NOT NULL,       -- "Verwaltung"
+  element_type TEXT,                -- "menu", "button", "tab"
+  parent_module TEXT,               -- "Hauptmenü"
+  keywords TEXT[],                  -- Synonyme/Tags
+  embedding VECTOR(1536),           -- text-embedding-3-small
+  occurrence_count INT DEFAULT 1,
   verified BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Klickpfade mit strukturierten Schritten
+CREATE TABLE click_paths (
+  id BIGSERIAL PRIMARY KEY,
+  title TEXT NOT NULL,              -- "Bewohnercode drucken"
+  goal TEXT,                        -- "Pseudonymisierungsliste für QPR"
+  steps JSONB NOT NULL,             -- [{element, action, screenshot_hash?}]
+  tags TEXT[],                      -- ["qpr", "drucken", "bewohner"]
+  embedding VECTOR(1536),           -- Für semantische Suche
+  helpful_votes INT DEFAULT 0,
+  unhelpful_votes INT DEFAULT 0,
+  verified BOOLEAN DEFAULT FALSE,
+  source_doc TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Benutzer-Annotationen auf Screenshots
+CREATE TABLE screenshot_annotations (
+  id BIGSERIAL PRIMARY KEY,
+  screenshot_hash TEXT NOT NULL,    -- SHA-256 für Deduplizierung
+  annotations JSONB NOT NULL,       -- [{type, coords, label, color}]
+  context TEXT,                     -- Beschreibung
+  click_path_id BIGINT REFERENCES click_paths(id),
+  is_public BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Navigation-Graph (Markov-Chain für Pfad-Vorhersage)
+CREATE TABLE element_transitions (
+  id BIGSERIAL PRIMARY KEY,
+  from_element_id BIGINT REFERENCES ui_elements(id),
+  to_element_id BIGINT REFERENCES ui_elements(id),
+  action_type TEXT,                 -- "click", "hover", "scroll"
+  frequency INT DEFAULT 1,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+### RPC-Funktionen für Klickpfad-Suche
+
+```sql
+-- Semantische Klickpfad-Suche
+SELECT * FROM match_click_paths(
+  query_embedding := '[0.1,0.2,...]'::vector(1536),
+  match_threshold := 0.5,
+  match_count := 10
+);
+
+-- UI-Element-Suche
+SELECT * FROM match_ui_elements(
+  query_embedding := '[...]'::vector(1536),
+  match_threshold := 0.6,
+  match_count := 5
+);
+
+-- Vote-Increment (Atomic)
+SELECT increment_vote(p_path_id := 1, p_column := 'helpful_votes');
+
+-- Verwandte Pfade (gleiche Tags)
+SELECT * FROM get_related_paths(p_path_id := 1, limit_count := 5);
 ```
 
 ### Privacy-Anforderungen
@@ -556,14 +616,14 @@ CREATE TABLE click_paths (
 4. ✅ OCR + Screenshot-Analyse in GPT-4o Vision
 5. ✅ Kombination: Vision-Analyse + Benutzer-Frage → RAG-Agent
 
-**Phase 2 (OFFEN):**
-6. ⬜ click_paths Tabelle + Suche
-7. ⬜ Learning-Flow für neue Klickpfade
-8. ⬜ Benutzer-Annotationen
+**Phase 2 (ABGESCHLOSSEN - 2026-01-27):**
+6. ✅ click_paths Tabelle + Suche (+ ui_elements, element_transitions)
+7. ✅ clickpath-store + clickpath-search Edge Functions
+8. ✅ screenshot_annotations Tabelle + Canvas-Annotation UI
 
-**Phase 3 (OFFEN):**
-9. ⬜ Admin-Panel für Klickpfad-Review
-10. ⬜ Export/Löschung (DSGVO)
+**Phase 3 (ABGESCHLOSSEN - 2026-01-27):**
+9. ✅ Admin-Panel für Klickpfad-Review (medifox-admin.html)
+10. ✅ DSGVO Edge Functions (gdpr-handler, admin-moderation)
 
 ### Edge Function: `vision-analyzer`
 
@@ -584,6 +644,116 @@ CREATE TABLE click_paths (
   "extracted_text": "Verwaltung, Pflege, Dokumentation",
   "ui_elements": ["Tab", "Menü", "Button"],
   "suggested_action": "Klicken Sie auf Pflege/Betreuung"
+}
+```
+
+### Edge Function: `admin-moderation` (Phase 3)
+
+**URL:** `https://wfklkrgeblwdzyhuyjrv.supabase.co/functions/v1/admin-moderation`
+
+| Action | Beschreibung |
+|--------|--------------|
+| `get_stats` | Dashboard-Statistiken (Pfade, Votes, Queue) |
+| `get_paths` | Pfade mit Filter abrufen |
+| `verify_path` | Pfad genehmigen + Audit-Log |
+| `reject_path` | Pfad ablehnen mit Begründung |
+| `edit_path` | Pfad bearbeiten |
+| `delete_path` | Pfad löschen |
+| `merge_paths` | Duplicate Pfade zusammenführen |
+| `bulk_verify` | Mehrere Pfade auf einmal genehmigen |
+| `get_audit_log` | Audit-Log abrufen |
+
+**Wichtig:** `verify_jwt: true` - Erfordert Supabase Auth Token!
+
+### Edge Function: `gdpr-handler` (Phase 3)
+
+**URL:** `https://wfklkrgeblwdzyhuyjrv.supabase.co/functions/v1/gdpr-handler`
+
+| Action | DSGVO-Artikel | Beschreibung |
+|--------|---------------|--------------|
+| `export_user_data` | Art. 15 | Alle Daten eines Users als JSON exportieren |
+| `delete_user_data` | Art. 17 | Right to be forgotten - Daten löschen |
+| `anonymize_user_data` | - | Alternative: Daten anonymisieren statt löschen |
+| `get_request_status` | - | Status einer DSGVO-Anfrage prüfen |
+| `get_user_requests` | - | Alle Anfragen eines Users |
+
+**Wichtig:** `verify_jwt: true` - Erfordert Supabase Auth Token!
+
+### Phase 3 Governance-Tabellen
+
+```sql
+-- Audit-Log für DSGVO-Nachweispflicht
+audit_log (action, entity_type, entity_id, actor, old_data, new_data, reason, ip_address)
+
+-- Moderation Queue für Review-Workflow
+moderation_queue (entity_type, entity_id, status, priority, assigned_to, notes)
+
+-- DSGVO Lösch-Requests
+deletion_requests (request_type, requester_identifier, status, data_scope, processed_items)
+```
+
+### Admin-Panel
+
+**Datei:** `/volume1/docker/n8n/medifox-admin.html`
+
+Features:
+- Dashboard mit Statistiken (Pfade, Votes, Aktivitäten)
+- Klickpfad-Verwaltung (Approve/Reject/Edit/Delete)
+- Filter nach Status (pending/approved/rejected)
+- Audit-Log Einsicht
+- DSGVO-Verwaltung (Export/Löschen/Anonymisieren)
+
+---
+
+### Edge Function: `clickpath-store` (Phase 2)
+
+**URL:** `https://wfklkrgeblwdzyhuyjrv.supabase.co/functions/v1/clickpath-store`
+
+| Action | Beschreibung |
+|--------|--------------|
+| `store_path` | Speichert Klickpfad mit Schritten + generiert Embedding |
+| `store_annotation` | Speichert Screenshot-Annotation (Hash-basiert) |
+| `vote` | Helpful/Unhelpful Vote für einen Pfad |
+
+```json
+// store_path Request
+{
+  "action": "store_path",
+  "title": "Bewohnercode drucken",
+  "goal": "Pseudonymisierungsliste für QPR generieren",
+  "steps": [
+    {"element": "Menü Verwaltung", "action": "click"},
+    {"element": "Bewohnerverwaltung", "action": "click"},
+    {"element": "Bewohnercode", "action": "click"},
+    {"element": "Drucken-Button", "action": "click"}
+  ],
+  "tags": ["bewohnercode", "drucken", "qpr"]
+}
+```
+
+### Edge Function: `clickpath-search` (Phase 2)
+
+**URL:** `https://wfklkrgeblwdzyhuyjrv.supabase.co/functions/v1/clickpath-search`
+
+- Unterstützt GET (`?q=suchbegriff`) und POST
+- Semantische Suche mit OpenAI text-embedding-3-small (1536 dims)
+- Fallback auf FTS bei RPC-Fehlern
+
+```json
+// Response
+{
+  "success": true,
+  "results": [
+    {
+      "id": 1,
+      "title": "Bewohnercode drucken",
+      "goal": "...",
+      "steps": [...],
+      "similarity": 0.87,
+      "helpful_votes": 5,
+      "unhelpful_votes": 0
+    }
+  ]
 }
 ```
 
@@ -765,6 +935,110 @@ const { data } = await supabase.rpc('fast_search_text', {
 ## Gelernte Lektionen
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
+
+### 2026-01-30 - Feedback Auto-Apply & Cloudflare Info
+
+**🔴 Präferenz: User Feedback IMMER automatisch übernehmen!**
+
+Diana möchte KEINE manuelle Review von Benutzer-Korrekturen.
+
+**Altes Verhalten:**
+```
+user_corrections.applied = false  # Wartet auf Review
+```
+
+**Neues Verhalten (feedback-processor v3):**
+```javascript
+// Korrektur erkannt → SOFORT übernehmen
+await supabase.from('user_corrections').insert({
+  ...correction,
+  applied: true  // DIREKT als applied markieren
+});
+
+// Synonym einfügen (Original + Lowercase)
+await supabase.from('term_synonyms').upsert([
+  { user_term: correction.userTerm, canonical_term: correction.canonicalTerm, ... },
+  { user_term: correction.userTerm.toLowerCase(), ... }
+]);
+```
+
+**Benutzer-Nachricht:** "Danke! Ich merke mir: X = Y"
+
+---
+
+**🔵 Cloudflare CDN CORS-Fehler ignorieren**
+
+Diese Fehler in der Browser-Konsole sind **HARMLOS**:
+- `/cdn-cgi/speculation` - Cloudflare Speculation Rules (Pre-Loading)
+- `/cdn-cgi/rum` - Cloudflare Real User Monitoring
+
+**Ursache:** Origin ist `null` bei bestimmten Konstellationen.
+**Auswirkung:** KEINE - Chat-Funktionalität ist nicht betroffen.
+
+---
+
+### 2026-01-27 - Phase 3: Admin-Panel + DSGVO implementiert
+
+**Neue Komponenten:**
+
+| Komponente | Beschreibung |
+|------------|--------------|
+| `audit_log` Tabelle | Alle Admin-Aktionen für DSGVO-Nachweis |
+| `moderation_queue` Tabelle | Review-Workflow für Pfade |
+| `deletion_requests` Tabelle | DSGVO-Anfragen tracking |
+| `admin-moderation` Edge Function | Verify/Reject/Edit/Merge/Delete |
+| `gdpr-handler` Edge Function | Export/Delete/Anonymize |
+| `medifox-admin.html` | Admin-Panel UI |
+
+**DSGVO-Compliance:**
+- Art. 15 (Auskunftsrecht): `export_user_data` exportiert alle Daten als JSON
+- Art. 17 (Recht auf Löschung): `delete_user_data` löscht alle personenbezogenen Daten
+- Anonymisierung als Alternative zur Löschung (für statistische Zwecke)
+- Audit-Log dokumentiert alle Änderungen (Wer, Wann, Was, IP)
+
+**Admin-Workflow:**
+```
+Neuer Pfad eingereicht → moderation_queue (pending)
+    ↓
+Admin prüft im Admin-Panel
+    ↓
+Approve → verified=true, audit_log Eintrag
+Reject → rejected_reason, audit_log Eintrag
+```
+
+---
+
+### 2026-01-27 - Phase 2: Klickpfad-Wissensbasis implementiert
+
+**Neue Komponenten:**
+
+| Komponente | Beschreibung |
+|------------|--------------|
+| `ui_elements` Tabelle | Registry aller erkannten MediFox UI-Elemente |
+| `click_paths` Tabelle | Strukturierte Klickpfade mit JSONB-Steps |
+| `screenshot_annotations` | Canvas-Annotationen auf Screenshots |
+| `element_transitions` | Markov-Chain für Navigation-Vorhersage |
+| `clickpath-store` Edge Function | Store + Vote für Pfade |
+| `clickpath-search` Edge Function | Semantische Suche mit OpenAI |
+
+**Architektur-Entscheidungen:**
+
+1. **1536 dims (text-embedding-3-small)** statt 3072 → pgvector HNSW-Index möglich
+2. **JSONB für Steps** → Flexible Struktur, jeder Step kann eigenen screenshot_hash haben
+3. **SHA-256 Image Hash** → Deduplizierung ohne Bilder zu speichern (Privacy)
+4. **Canvas-basierte Annotation** → Rects, Circles, Arrows, Text direkt im Browser
+5. **RLS: public read, service write** → Jeder kann lesen, nur Edge Functions schreiben
+
+**Canvas-Annotation-Tools implementiert:**
+- `rect` - Rechteck zeichnen
+- `circle` - Kreis zeichnen
+- `arrow` - Pfeil zeichnen
+- `text` - Text-Label platzieren
+- 5 Farben: Rot, Blau, Grün, Gelb, Lila
+
+**Touch-Support:** Annotation funktioniert auch auf Mobile (touchstart/touchmove/touchend)
+
+---
 
 ### 2026-01-27 - n8n DB-Architektur & Linux/GNOME Fixes
 
