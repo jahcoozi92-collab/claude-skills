@@ -222,5 +222,46 @@ reflect status  # Aktuellen Status anzeigen
 - GNOME Keyring umgehen: `GIT_ASKPASS="" git push`
 - Windows hat kein nano → `notepad` nutzen
 
+---
 
-*Noch keine Learnings erfasst. Führe `/reflect` nach einer Session aus!*
+### 2026-02-01 - RAG-System Optimierung
+
+**Supabase Vektor-Architektur:**
+- HNSW-Index mit `halfvec(3072)` umgeht das 2000-Dim Limit von pgvector
+- Index-Parameter: `m = 16, ef_construction = 64`
+- Suchzeit: 3032ms → 22ms (134x schneller)
+- Auto-Sync Trigger: `trg_sync_embedding_half` synchronisiert embedding → embedding_half
+
+**match_documents Boost-System:**
+| Bedingung | Boost |
+|-----------|-------|
+| source = 'system_reference' | +0.20 |
+| priority = 'critical' | +0.15 |
+| quality = 'high' | +0.05 |
+| source = 'manual_enrichment' | +0.03 |
+
+**HNSW Query-Optimierung:**
+```sql
+SET LOCAL hnsw.ef_search = 100;
+```
+
+**n8n Chat-History Persistenz:**
+- Von `memoryBufferWindow` → `memoryPostgresChat`
+- Credentials: NAS PostgreSQL (ID: cx83gXjDOqCuXZtm)
+- Tabelle: `n8n_chat_histories`
+- SessionKey: `={{ $json.sessionId || 'default' }}`
+
+**MD Stationär - Korrekte Menüpfade:**
+- Maßnahmenplanung: `Verwaltung → Bewohner → [Bewohner] → Reiter Planung`
+- Textbausteine: `Administration → Dokumentation → Kataloge/Textbausteine`
+- FALSCH war: `Pflege/Betreuung → Dokumentation → Pflegemappe`
+
+**Architektur-Insight:**
+- Hybrid Search = Vektor-Ähnlichkeit (HNSW) + Full-Text-Search (FTS) + Boost-System
+- `system_reference` Dokumente werden für autoritative Antworten priorisiert
+
+**Credentials (Referenz):**
+- Supabase Project: `wfklkrgeblwdzyhuyjrv`
+- n8n Workflow: `SJ47UX9mv8wh1Wwy`
+- Navigationsdokument ID: `368297`
+- Korrigiertes Dokument ID: `368064`
