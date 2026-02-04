@@ -695,6 +695,40 @@ docker compose restart clawdbot-gateway
 - Control UI: http://192.168.22.90:18789/
 - Token in UI-Settings eingeben für Zugriff
 
+### 2026-02-04 - Ollama Modell-Management
+
+**Modelle auflisten, hinzufügen, entfernen:**
+```bash
+# Liste aller installierten Modelle
+docker exec ollama ollama list
+
+# Modell herunterladen
+docker exec ollama ollama pull qwen3:8b
+
+# Modell entfernen (Speicher freigeben)
+docker exec ollama ollama rm qwen3:30b-a3b
+
+# Custom Modelfile erstellen
+docker exec ollama ollama create pflege-assistent -f /root/.ollama/Modelfile-pflege
+```
+
+**Modell-Größen für CPU-only NAS (UGREEN DXP4800):**
+| Kategorie | Empfehlung |
+|-----------|------------|
+| ✅ Gut | 3B-8B Modelle (~3-8 GB, 20-50 tok/s) |
+| ⚠️ Grenzwertig | 14B Modelle (~9 GB, 10-15 tok/s) |
+| ❌ Vermeiden | 30B+ Modelle (>18 GB, <5 tok/s) |
+
+**Speicherplatz-Optimierung:**
+- Vor dem Löschen: `docker exec ollama ollama list` für Größen prüfen
+- Nach dem Löschen: Speicher wird sofort freigegeben
+- Embedding-Modelle (bge-m3, nomic-embed) klein halten (~1-2 GB)
+
+**Port-Mapping beachten:**
+- Ollama intern: Port 11434
+- NAS extern: Port 11436 (gemapped in docker-compose.yml)
+- API-Calls: `http://192.168.22.90:11436/api/tags`
+
 ### 2026-02-03 - OpenClaw / Clawdbot VM Troubleshooting
 
 **VM-Architektur auf dem NAS:**

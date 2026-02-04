@@ -226,3 +226,44 @@ TTS Base URL: http://192.168.22.90:8006/api/v2
 - MCP-Config in DB darf kein `path` haben
 - Tool-Registrierung erfordert `specs` JSON
 - Lokale Modelle schlecht für Tool Calling
+
+### 2026-02-04 - Moonshot API & SQLite Config-Struktur
+
+**Moonshot (Kimi K2.5) als OpenAI-kompatible Verbindung hinzufügen:**
+- Moonshot API ist OpenAI-kompatibel: `https://api.moonshot.cn/v1`
+- Liegt NICHT in separater Tabelle, sondern in `config.data.openai`
+- Format: `api_base_urls` + `api_keys` als parallele Arrays
+- `api_configs` enthält pro Index: `enable`, `prefix_id`, `tags`
+
+**SQLite-Manipulation für neue API-Verbindung:**
+```python
+import sqlite3, json
+conn = sqlite3.connect('/volume1/docker/open-webui/webui.db')
+cur = conn.cursor()
+cur.execute('SELECT data FROM config WHERE id=1')
+data = json.loads(cur.fetchone()[0])
+
+# Neue Verbindung hinzufügen
+openai = data.get('openai', {})
+openai['api_base_urls'].append("https://api.moonshot.cn/v1")
+openai['api_keys'].append("sk-xxx")
+idx = str(len(openai['api_base_urls']) - 1)
+openai['api_configs'][idx] = {"enable": True, "prefix_id": "moonshot", "tags": []}
+data['openai'] = openai
+
+cur.execute('UPDATE config SET data=? WHERE id=1', (json.dumps(data),))
+conn.commit()
+```
+
+**models.json ist Referenz-Dokument:**
+- Wird NICHT von Open WebUI gelesen
+- Dient zur Dokumentation: lokale vs. externe Modelle
+- Enthält Benchmarks, Pricing, Context-Länge
+- Format: `{"models": {"local": [...], "external": [...]}}`
+
+**Kimi K2.5 Spezifikationen:**
+- 1T Parameter (MoE), 32B aktiv
+- Context: 262K tokens, Output: 33K tokens
+- Benchmarks: MMLU 92%, HumanEval 99%, MATH 98%
+- Pricing: $0.60/$2.50 per 1M tokens
+- Features: Agent Swarm (100 parallele Sub-Agents), Thinking-Mode
