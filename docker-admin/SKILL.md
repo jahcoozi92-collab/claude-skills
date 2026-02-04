@@ -695,6 +695,64 @@ docker compose restart clawdbot-gateway
 - Control UI: http://192.168.22.90:18789/
 - Token in UI-Settings eingeben für Zugriff
 
+### 2026-02-03 - OpenClaw / Clawdbot VM Troubleshooting
+
+**VM-Architektur auf dem NAS:**
+- `192.168.22.206` ist eine VM auf dem NAS `192.168.22.90` (kein separates Gerät!)
+- Hostname: `moltbot`, User: `moltbotadmin`
+- Docker ist auf der VM NICHT installiert
+- Dienste laufen als systemd User-Services, nicht als Container
+
+**Clawdbot Gateway Diagnose-Reihenfolge:**
+1. Config-Validierung: `clawdbot.json` auf ungültige Keys prüfen
+2. Auth: `auth-profiles.json` auf abgelaufene/gesperrte Keys prüfen
+3. Billing: `"disabledReason": "billing"` = Guthaben/Zahlung beim Provider prüfen
+4. Service-Status: `systemctl --user status clawdbot-gateway.service`
+
+**Clawdbot Config-Reparatur:**
+```bash
+# Config-Keys validieren und ungültige entfernen
+clawdbot doctor --fix
+
+# NICHT existierende Befehle: clawdbot wizard
+# Stattdessen: clawdbot doctor --fix, clawdbot agents add <id>
+```
+
+**Clawdbot Gateway als systemd User-Service:**
+```bash
+# Status prüfen
+systemctl --user status clawdbot-gateway.service
+
+# Neustarten
+systemctl --user restart clawdbot-gateway.service
+
+# Logs anzeigen
+journalctl --user -u clawdbot-gateway.service --no-pager -n 50
+
+# User-Service auch ohne Login laufen lassen
+loginctl enable-linger moltbotadmin
+```
+
+**Auth-Profile Pfad:**
+```
+~/.clawdbot/agents/main/agent/auth-profiles.json
+```
+
+**Häufige Fehler:**
+| Fehler | Ursache | Lösung |
+|--------|---------|--------|
+| `Unrecognized keys` in clawdbot.json | Veraltete Config | `clawdbot doctor --fix` |
+| `HTTP 401 invalid x-api-key` | API-Key ungültig/abgelaufen | Neuen Key eintragen |
+| `No API key found for provider` | Provider nicht konfiguriert | `auth-profiles.json` bearbeiten |
+| `disabledReason: "billing"` | Kein Guthaben beim Provider | Billing auf Provider-Seite prüfen |
+| `Context overflow` | Prompt zu groß für Model | Kontext leeren oder größeres Model |
+
+**502 bei Cloudflare Tunnel zu VM-Diensten:**
+- Cloudflared-Logs prüfen: `docker logs cloudflared --tail 50 | grep openclaw`
+- Fehler `connection refused` = Dienst auf VM läuft nicht
+- Erst VM-Erreichbarkeit testen: `nc -z -w 3 192.168.22.206 18789`
+- Dann Dienst auf VM starten (SSH → systemctl)
+
 ---
 
 ## Quick Reference Card
