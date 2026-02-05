@@ -267,3 +267,32 @@ conn.commit()
 - Benchmarks: MMLU 92%, HumanEval 99%, MATH 98%
 - Pricing: $0.60/$2.50 per 1M tokens
 - Features: Agent Swarm (100 parallele Sub-Agents), Thinking-Mode
+
+### 2026-02-05 - Z.AI Provider + API-Präferenz
+
+**Z.AI (Zhipu AI) als neuer Provider:**
+- API-Base: `https://api.z.ai/api/paas/v4`
+- OpenAI-kompatibel → gleiche SQLite-Struktur wie Moonshot
+- Prefix: `zai`
+
+**GLM-Modelle über Z.AI:**
+| Modell | Preis | Context | Besonderheit |
+|--------|-------|---------|--------------|
+| GLM-4.7-Flash | **KOSTENLOS** | 200K | Empfohlen für Tests |
+| GLM-4.7-FlashX | $0.07/$0.40 | 200K | Schneller |
+| GLM-4.7 | $0.60/$2.20 | 200K | Flagship |
+
+**Präferenz: API statt Lokal bei großen Modellen:**
+- Modelle >10GB auf CPU-only NAS sind zu langsam (~4-5 tok/s)
+- GLM-4.7-Flash lokal (19GB): ~4 tok/s ❌
+- GLM-4.7-Flash API: sofort ✅
+- **Faustregel:** Alles >8GB → API nutzen
+
+**Aktive API-Provider (Stand 02/2026):**
+| Provider | Prefix | API-Base |
+|----------|--------|----------|
+| OpenAI | - | api.openai.com/v1 |
+| Moonshot | moonshot | api.moonshot.cn/v1 |
+| Z.AI | zai | api.z.ai/api/paas/v4 |
+| Anthropic | anthropic | api.anthropic.com |
+| Google | - | generativelanguage.googleapis.com |

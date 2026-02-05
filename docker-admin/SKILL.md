@@ -853,6 +853,37 @@ loginctl enable-linger moltbotadmin
 ```
 Oder Interval sehr hoch setzen: `"every": "8760h"` (1 Jahr)
 
+### 2026-02-05 - Große Modelle: API statt Lokal
+
+**Modelle >10GB auf CPU-only NAS → API bevorzugen:**
+| Modell | Lokal (CPU) | API | Empfehlung |
+|--------|-------------|-----|------------|
+| glm-4.7-flash (19GB) | ~4-5 tok/s | sofort | ❌ Lokal, ✅ API |
+| qwen3:30b (18GB) | ~5 tok/s | - | ❌ Zu groß |
+| phi4:14b (9GB) | ~10 tok/s | - | ⚠️ Grenzwertig |
+| qwen3:8b (5GB) | ~25-30 tok/s | - | ✅ Lokal OK |
+
+**Faustregel:** Modelle >8GB = API nutzen (Z.AI, Moonshot, OpenRouter)
+
+**Custom Modelfile für CPU-Optimierung (+25% Speed):**
+```bash
+cat > Modelfile-fast << 'EOF'
+FROM [model]:latest
+PARAMETER num_ctx 2048      # Reduzierter Context
+PARAMETER num_predict 256   # Kürzere Ausgabe
+PARAMETER num_thread 4      # CPU-Threads
+PARAMETER num_batch 256
+PARAMETER num_gpu 0
+EOF
+docker exec ollama ollama create model-fast -f /root/.ollama/Modelfile-fast
+```
+
+**Z.AI (Zhipu AI) für GLM-Modelle:**
+- API-Base: `https://api.z.ai/api/paas/v4`
+- GLM-4.7-Flash: **KOSTENLOS**
+- GLM-4.7: $0.60/$2.20 per 1M tokens
+- OpenAI-kompatibel → In Open WebUI als weitere Verbindung hinzufügen
+
 ---
 
 ## Quick Reference Card
