@@ -293,6 +293,53 @@ conn.commit()
 |----------|--------|----------|
 | OpenAI | - | api.openai.com/v1 |
 | Moonshot | moonshot | api.moonshot.cn/v1 |
-| Z.AI | zai | api.z.ai/api/paas/v4 |
+| Z.AI | zai | open.bigmodel.cn/api/paas/v4 |
+| OpenRouter | openrouter | openrouter.ai/api/v1 |
 | Anthropic | anthropic | api.anthropic.com |
 | Google | - | generativelanguage.googleapis.com |
+
+### 2026-02-05 - Ollama API & OpenRouter Setup
+
+**Ollama API-Endpunkte (WICHTIG!):**
+```
+❌ /models         → 404 Not Found
+✅ /api/tags       → Model-Liste
+✅ /api/chat       → Chat-Anfragen
+✅ /               → Health-Check ("Ollama is running")
+```
+
+**Zhipu AI (GLM) funktioniert NICHT für Deutschland:**
+- open.bigmodel.cn erfordert chinesische Telefonnummer/Zahlung
+- **Alternative: OpenRouter** (openrouter.ai)
+- Zahlung mit Kreditkarte/PayPal möglich
+- Hat GLM-4 und 200+ andere Modelle
+
+**OpenRouter Konfiguration:**
+```python
+# In Open WebUI SQLite config hinzufügen:
+openai['api_base_urls'].append('https://openrouter.ai/api/v1')
+openai['api_keys'].append('sk-or-v1-...')
+openai['api_configs'][str(idx)] = {
+    "enable": True,
+    "prefix_id": "openrouter",
+    "tags": [],
+    "connection_type": "external"
+}
+```
+
+**OpenRouter Model-Namen:**
+- `openrouter.openai/gpt-4o-mini`
+- `openrouter.anthropic/claude-3.5-sonnet`
+- `openrouter.thudm/glm-4-plus` (GLM-4!)
+- `openrouter.google/gemini-2.0-flash-001`
+
+**Zhipu Model-Namen Mapping (falls Guthaben vorhanden):**
+| Open WebUI | Zhipu API (echt) |
+|------------|------------------|
+| zai.glm-4.7 | glm-4-plus |
+| zai.glm-4.6 | glm-4-0520 |
+| zai.glm-4.5-air | glm-4-air |
+
+**Browser-Warnungen ignorieren:**
+- `ResponseMessage.svelte passive event listener` = Frontend-Code
+- Nicht konfigurierbar, keine Funktionsstörung
