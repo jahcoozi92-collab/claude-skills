@@ -787,6 +787,72 @@ loginctl enable-linger moltbotadmin
 - Erst VM-Erreichbarkeit testen: `nc -z -w 3 192.168.22.206 18789`
 - Dann Dienst auf VM starten (SSH → systemctl)
 
+### 2026-02-04 - Clawdbot Modell-Konfiguration
+
+**Fehler "HTTP 404: model 'X' not found":**
+- Bedeutet: Modell-ID in clawdbot.json existiert nicht auf Ollama-Server
+- Prüfen welche Modelle verfügbar: `docker exec ollama ollama list`
+- Config anpassen: `nano ~/.clawdbot/clawdbot.json`
+
+**Clawdbot Config-Struktur für Modelle:**
+```json
+{
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "anthropic/claude-sonnet-4-20250514",
+        "fallbacks": [
+          "anthropic/claude-opus-4-5",
+          "ollama/qwen2.5:7b"
+        ]
+      }
+    }
+  },
+  "models": {
+    "providers": {
+      "ollama": {
+        "baseUrl": "http://192.168.22.90:11436/v1",
+        "models": [
+          {"id": "qwen2.5:7b", "name": "Qwen 2.5 7B", ...}
+        ]
+      }
+    }
+  }
+}
+```
+
+**Wichtige Pfade in clawdbot.json:**
+| Pfad | Bedeutung |
+|------|-----------|
+| `agents.defaults.model.primary` | Haupt-Modell (Format: provider/model-id) |
+| `agents.defaults.model.fallbacks` | Backup-Modelle wenn primary fehlschlägt |
+| `models.providers.ollama.models` | Ollama-Modell-Definitionen |
+| `models.providers.ollama.baseUrl` | Ollama API URL |
+
+**Verfügbare Ollama-Modelle auf NAS (Stand 02/2026):**
+- `qwen2.5:32b` (19 GB) - Flagship, langsam
+- `qwen2.5:7b` (4.7 GB) - Empfohlen für Clawdbot
+- `qwen2.5-coder:7b-instruct` (4.7 GB) - Code
+- `deepseek-r1:7b` (4.7 GB) - Reasoning
+- `phi4:14b` (9.1 GB) - Research
+- `bge-m3` (1.2 GB) - Embedding only
+
+**Empfohlene Clawdbot-Konfiguration:**
+```json
+"model": {
+  "primary": "anthropic/claude-sonnet-4-20250514",
+  "fallbacks": ["anthropic/claude-opus-4-5", "ollama/qwen2.5:7b"]
+}
+```
+
+**Heartbeat deaktivieren:**
+```json
+"heartbeat": {
+  "enabled": false
+}
+```
+Oder Interval sehr hoch setzen: `"every": "8760h"` (1 Jahr)
+
 ---
 
 ## Quick Reference Card
