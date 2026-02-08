@@ -1,0 +1,179 @@
+# Windows-Workstation Skill – Instanz-Skill für WS44 (Windows 11)
+
+| name | description |
+|------|-------------|
+| windows-workstation | Instanz-spezifischer Skill für Diana's Windows-Arbeitsplatz WS44. Pfade, Netzlaufwerke, lokale Tools, PowerShell-Patterns. Aktiviert bei Windows-spezifischen Aufgaben. |
+
+## Was ist dieser Skill?
+
+Stell dir vor, du hast mehrere Computer — einen im Büro (Windows), einen Laptop (Linux) und einen Server (NAS). Jeder hat andere Programme, andere Ordner und andere Zugänge. Dieser Skill kennt den Büro-Computer genau: welche Laufwerke angeschlossen sind, welche Programme installiert sind, und wie man von hier aus auf die anderen Systeme zugreift.
+
+---
+
+## Trigger
+
+Aktiviere diesen Skill bei:
+- Windows-Pfade, Netzlaufwerke, SMB-Zugriff
+- PowerShell-Scripting auf dem Arbeitsplatz
+- Lokale Entwicklung (Python, Node.js)
+- pywin32 / COM-Automation
+- Büro-spezifische Aufgaben (Office, QM-Dokumente)
+- SSH-Aliases (`nas`, `yoga7`, `nas-work`)
+
+---
+
+## System-Steckbrief
+
+| Eigenschaft | Wert |
+|-------------|------|
+| **Hostname** | WS44 |
+| **OS** | Microsoft Windows 11 Pro (64-Bit) |
+| **User** | D.Göbel |
+| **Home** | `C:\Users\D.Göbel` |
+| **Shell** | Git Bash (Standard in Claude Code), PowerShell verfügbar |
+| **Python** | 3.13.7 |
+| **Node.js** | v22.20.0 |
+| **Git** | 2.52.0.windows.1 |
+| **Docker** | 28.4.0 (Docker Desktop) |
+
+---
+
+## Netzlaufwerke
+
+| Laufwerk | Remote-Pfad | Zweck |
+|----------|-------------|-------|
+| Q: | `\\SERVER2012R2\QM-Handbuch` | QM-Dokumentation |
+| V: | `\\Server2012r2\ki` | KI-Dateien |
+| W: | `\\sql-server\MEDIFOX` | Medifox-Daten |
+| X: | `\\sql-server\MEDIFOX` | Medifox-Daten (2. Mapping) |
+| Y: | `\\SERVER2012R2\Dokumente` | Allgemeine Dokumente |
+| (UNC) | `\\192.168.2.215\arche\` | NAS UGREEN (SMB) |
+| (UNC) | `\\192.168.2.215\TimeMachineBackup` | NAS Backup |
+
+**Wichtig:** NAS UGREEN ist auch über `\\192.168.2.215\arche\` erreichbar (kein Laufwerksbuchstabe zugeordnet).
+
+---
+
+## SSH-Aliases (über Git Bash)
+
+Die `.bashrc` lädt SSH-Aliases beim Start:
+
+| Alias | Ziel | Beschreibung |
+|-------|------|--------------|
+| `ssh nas` | sshd@192.168.2.215 | NAS UGREEN DXP4800PLUS |
+| `ssh nas-work` | NAS WD EX2 Ultra | Zweites NAS |
+| `ssh nas-ts` | NAS via Tailscale | Remote-Zugriff |
+| `ssh yoga7` | Laptop (Kali Linux) | Entwicklungsmaschine |
+| `mydevices` | - | Zeigt alle IPs |
+
+---
+
+## Installierte Python-Pakete (relevant)
+
+| Paket | Version | Zweck |
+|-------|---------|-------|
+| `pywin32` | 311 | COM-Automation (Word, Excel, PowerPoint) |
+| `python-docx` | 1.2.0 | .docx Bearbeitung |
+| `openpyxl` | 3.1.5 | .xlsx Bearbeitung |
+| `python-pptx` | 1.0.2 | .pptx Bearbeitung |
+| `openai-whisper` | 20250625 | Transkription |
+| `torch` | 2.8.0+cpu | PyTorch (CPU-only) |
+| `mcp` | 1.16.0 | MCP SDK |
+| `mcp-server-office` | 0.2.0 | Office MCP Server |
+| `lxml` | 6.0.2 | XML-Verarbeitung |
+| `beautifulsoup4` | 4.14.2 | HTML-Parsing |
+
+---
+
+## Wichtige Pfade
+
+| Pfad | Inhalt |
+|------|--------|
+| `~/pflegeassist/` | PflegeAssist Pro PWA (Git-Repo) |
+| `~/mcp-pflegeassist-server/` | MCP NAS-Deployment Server |
+| `~/*.py` | QM-Handbuch Automatisierungs-Skripte |
+| `~/.claude/skills/` | Skills-Repository |
+| `Q:\Konzepte-Formulare BZWP\` | QM-Dokumente auf Server |
+| `\\192.168.2.215\arche\QM-Handbuch\` | QM-Dokumente auf NAS |
+
+---
+
+## Windows-spezifische Patterns
+
+### Shell-Kontext
+Claude Code verwendet Git Bash als Shell. Befehle werden als bash ausgeführt, aber Windows-Programme (PowerShell, Python, Docker) sind über PATH erreichbar.
+
+```bash
+# PowerShell aus Git Bash aufrufen
+powershell -ExecutionPolicy Bypass -File script.ps1
+powershell -Command "Get-ChildItem Q:\"
+
+# Python-Skripte
+python ~/qm_migration_tool.py --scan
+
+# Windows-Programme
+explorer.exe .          # Ordner in Explorer öffnen
+notepad.exe file.txt    # Datei in Notepad
+```
+
+### Pfad-Konvertierung
+Git Bash konvertiert Pfade automatisch:
+- `C:\Users\D.Göbel` → `/c/Users/D.Göbel`
+- UNC-Pfade: In Python immer raw-strings verwenden (`r"\\192.168.2.215\..."`)
+- Nie `Path.resolve()` auf UNC-Pfade anwenden
+
+### Netzwerk-Zugriff
+```bash
+# SMB-Status prüfen
+net use
+
+# NAS-Zugriff testen
+ls "//192.168.2.215/arche/" 2>/dev/null    # Git Bash Syntax
+ping 192.168.2.215
+```
+
+---
+
+## Abgrenzung zu anderen Skills
+
+| Aufgabe | Richtiger Skill |
+|---------|-----------------|
+| Docker auf NAS verwalten | `docker-admin` |
+| Docker auf Windows (Docker Desktop) | `win-docker` |
+| QM-Dokumente bearbeiten | `qm-word-automation` |
+| NAS-Konfiguration (SSH, SMB-Shares) | `nas-homelab` |
+| PflegeAssist auf NAS deployen | MCP Server Tools |
+| Lokale Entwicklung (Python, Node) | **dieser Skill** |
+| Windows-Pfade, Laufwerke, Tools | **dieser Skill** |
+
+---
+
+## Constraints
+
+### NIEMALS
+1. Keine `Path.resolve()` oder `os.path.abspath()` auf UNC-Pfade — konvertiert `\\192.168.2.215\` zu `C:\192.168.2.215\`
+2. Keine Hardcoded Passwörter in neuen Skripten — `.env` oder Environment-Variablen nutzen
+3. Keine `rm -rf` auf Netzlaufwerken ohne explizite Bestätigung
+
+### BEVORZUGT
+1. Git Bash für Dateisystem-Operationen, PowerShell für Windows-spezifische Aufgaben (COM, Registry)
+2. Raw-Strings (`r"..."`) für alle Windows-/UNC-Pfade in Python
+3. Lokale Kopie vor NAS-Bearbeitung (tempfile → bearbeiten → zurückkopieren)
+
+### GUT ZU WISSEN
+1. Docker Desktop ist installiert (v28.4), aber Docker-Workloads laufen primär auf NAS
+2. Whisper + PyTorch (CPU-only) sind installiert für Transkription
+3. `mcp-server-office` ist installiert — Office-Dokumente können auch über MCP bearbeitet werden
+4. Rechner-Name ist WS44, User ist D.Göbel (Domänen-User)
+
+---
+
+## Gelernte Lektionen
+
+### 2026-02-08 - Initiale Erstellung
+
+**Instanz-Differenzierung:**
+- Skills pro Maschine zu differenzieren ist wichtig in Multi-Device-Setups
+- NAS hat andere Pfade, User und Dienste als der Windows-Arbeitsplatz
+- Dieser Skill dokumentiert WS44-spezifische Konfiguration
+- Netzlaufwerke Q:, V:, W:, X:, Y: sind fest gemappt und für QM/Medifox kritisch

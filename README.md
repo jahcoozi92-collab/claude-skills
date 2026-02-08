@@ -13,8 +13,20 @@ Dieses Repository enthält selbst-verbessernde Skills für Claude Code, maßgesc
 | **[reflect](./reflect/SKILL.md)** | Meta-Skill zum Lernen aus Sessions | `/reflect` |
 | **[pflege-dokumentation](./pflege-dokumentation/SKILL.md)** | Medifox, DAN, Pflegesoftware | automatisch |
 | **[n8n-workflow](./n8n-workflow/SKILL.md)** | Workflow-Automatisierung | automatisch |
-| **[docker-admin](./docker-admin/SKILL.md)** | Container-Management | automatisch |
+| **[docker-admin](./docker-admin/SKILL.md)** | Container-Management (NAS) | automatisch |
 | **[rag-system](./rag-system/SKILL.md)** | RAG-Pipelines, Vektordatenbanken | automatisch |
+| **[n8n-workflow-auditor](./n8n-workflow-auditor/SKILL.md)** | Workflow-Audit und -Validierung | automatisch |
+| **[nas-homelab](./nas-homelab/SKILL.md)** | NAS Administration (UGREEN) | automatisch |
+| **[open-webui](./open-webui/SKILL.md)** | Open WebUI Integration | automatisch |
+| **[business-strategie](./business-strategie/SKILL.md)** | Geschäftsstrategieplanung | automatisch |
+
+### Instanz-Skills (maschinenspezifisch)
+
+| Skill | Maschine | Beschreibung | Trigger |
+|-------|----------|--------------|---------|
+| **[windows-workstation](./windows-workstation/SKILL.md)** | WS44 (Win11) | Windows-Arbeitsplatz, Pfade, Netzlaufwerke, lokale Tools | automatisch |
+| **[win-docker](./win-docker/SKILL.md)** | WS44 (Win11) | Docker Desktop (Entwicklung/Test, nicht Produktion) | automatisch |
+| **[qm-word-automation](./qm-word-automation/SKILL.md)** | WS44 (Win11) | QM-Handbuch Word-Automatisierung via pywin32 COM | automatisch |
 
 ---
 
