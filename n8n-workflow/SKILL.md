@@ -278,7 +278,36 @@ Wie ein Wecker. Jeden Tag um 8 Uhr morgens startet der Workflow.
 4. **NIEMALS** synchrone Verarbeitung für große Dateien
    - Nutze Batch-Processing oder Queues
 
-5. **NIEMALS** generische Tool-Beschreibungen für Vector Store!
+5. **NIEMALS** CORS auf eine spezifische Domain setzen bei n8n Webhook-HTML!
+   ```
+   ❌ FALSCH: access-control-allow-origin: https://n8n.forensikzentrum.com
+      → n8n setzt Content-Security-Policy: sandbox (OHNE allow-same-origin)
+      → Seiten-Origin wird zu "null" → CORS-Mismatch → fetch schlägt fehl!
+
+   ✅ RICHTIG: access-control-allow-origin: *
+      → Einzige Option weil sandbox-CSP die Origin immer auf "null" setzt
+      → n8n's sandbox-CSP ist nicht konfigurierbar
+   ```
+
+6. **NIEMALS** annehmen dass Supabase Delete-Nodes Daten weiterreichen!
+   ```
+   ❌ FALSCH: FormTrigger → Delete → SetNode($json.field)
+      → Delete gibt {} zurück → $json.field = null!
+
+   ✅ RICHTIG: FormTrigger → Delete → CodeNode($('FormTrigger').first())
+      return { json: {...}, binary: $('FormTrigger').first().binary }
+   ```
+   → Delete/Update-Nodes von Supabase, PostgreSQL etc. geben EIGENE Ausgabe
+   → JSON UND Binary gehen verloren
+   → Fix: Code-Node mit expliziter Referenz auf Upstream-Node
+
+7. **NIEMALS** Fehler als "Platform-Bug" abtun ohne Root-Cause-Analyse!
+   ```
+   ❌ FALSCH: "SQLITE_ERROR ist bekannter n8n-Bug" → nächstes Thema
+   ✅ RICHTIG: Tief graben → war falsche URL + Daten-Flow-Problem
+   ```
+
+8. **NIEMALS** generische Tool-Beschreibungen für Vector Store!
    ```
    ❌ FALSCH: "Nutze dieses Tool, um Wissen über MediFox zu erhalten"
       → Agent ruft Tool NICHT auf, antwortet aus eigenem Wissen!
@@ -437,6 +466,29 @@ return [{
 ## Gelernte Lektionen
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
+
+### 2026-02-07 - Form Upload Fix, Sandbox-CORS, Delete-Dataflow
+
+**🔴 n8n Form Trigger URLs:**
+- Form-URL: `/form/{webhookId}` — NICHT `/form/{workflowId}`!
+- HTML-Feldnamen: `field-0`, `field-1` etc. — NICHT die Label-Namen!
+- POST geht an dieselbe URL wie GET (nicht `/form-waiting/`)
+
+**🔴 Supabase Delete/Update Nodes zerstören Datenfluss!**
+- Output ist `{}` — JSON UND Binary gehen verloren
+- Fix: Code-Node mit `$('UpstreamNode').first()` statt `$json.field`
+- Pattern: `return { json: {...}, binary: $('FormTrigger').first().binary }`
+
+**🔴 n8n Sandbox-CSP macht CORS mit spezifischer Domain unmöglich:**
+- `Content-Security-Policy: sandbox` (ohne `allow-same-origin`) → Origin = `null`
+- `access-control-allow-origin: https://domain.com` ≠ `null` → CORS blocked
+- Fix: Immer `access-control-allow-origin: *` verwenden
+
+**🔴 Fehler nie als "Platform-Bug" abtun!**
+- SQLITE_ERROR NaN war KEIN n8n-Bug → falsche URL + Daten-Flow-Problem
+- Immer Root-Cause-Analyse machen, auch wenn es wie ein Plattform-Fehler aussieht
+
+---
 
 ### 2026-01-26 - n8n CLI Import NICHT ZUVERLÄSSIG
 

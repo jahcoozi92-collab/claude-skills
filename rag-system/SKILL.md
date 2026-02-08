@@ -359,6 +359,18 @@ ANTWORT:
     ```
     → n8n Webhooks können in sandboxed context laufen (origin: null)
 
+13. **NIEMALS** CORS auf spezifische Domain setzen bei n8n Webhook-HTML!
+    ```
+    ❌ access-control-allow-origin: https://n8n.forensikzentrum.com
+       → n8n setzt CSP: sandbox (OHNE allow-same-origin)
+       → Browser-Origin wird "null" → CORS-Mismatch → fetch blocked!
+
+    ✅ access-control-allow-origin: *
+       → Einzige Option weil sandbox-CSP Origin auf "null" erzwingt
+    ```
+    → Betrifft ALLE Webhook-Responses (HTML UND JSON-API!)
+    → n8n's sandbox-CSP ist NICHT konfigurierbar
+
 11. **NIEMALS** Clipboard nur mit `clipboardData.items` prüfen (Linux/GNOME)!
     ```
     ❌ for (item of e.clipboardData.items) { ... }
@@ -962,6 +974,32 @@ const { data } = await supabase.rpc('fast_search_text', {
 ## Gelernte Lektionen
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
+
+### 2026-02-07 - Form Upload Fix, Sandbox-CORS, Delete-Dataflow
+
+**🔴 CORS in n8n Webhook-HTML: Immer `*` verwenden!**
+
+n8n setzt `Content-Security-Policy: sandbox` (ohne `allow-same-origin`) auf ALLE Webhook-Responses. Das macht die Seiten-Origin zu `null`. Spezifische CORS-Domains (`https://domain.com`) matchen niemals `null` → fetch schlägt fehl.
+
+**🔴 Supabase Delete/Update Nodes zerstören Datenfluss!**
+
+```
+FormTrigger → Delete → SetNode($json.field)  ← $json.field = null!
+```
+
+Delete/Update-Nodes geben `{}` zurück — JSON UND Binary gehen verloren.
+
+**Fix:** Code-Node mit expliziter Referenz auf Upstream:
+```javascript
+const formData = $('On form submission').first();
+return { json: {...formData.json}, binary: formData.binary };
+```
+
+**🔴 n8n Form Trigger URLs:**
+- Form-URL: `/form/{webhookId}` — NICHT `/form/{workflowId}`!
+- HTML-Feldnamen: `field-0`, `field-1` etc. — NICHT die Label-Namen!
+
+---
 
 ### 2026-01-30 - Feedback Auto-Apply & Cloudflare Info
 
