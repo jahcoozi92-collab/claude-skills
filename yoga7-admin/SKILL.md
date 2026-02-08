@@ -71,3 +71,26 @@ sudo chattr -i ~/CLAUDE.md
 - Instanz-Skills auf allen drei Maschinen angelegt
 - Shared Skills-Repo verhindert Verwechslungen durch klare Scope-Sektionen
 - Architecture Locks + chattr +i als Guardrail gegen Agent-Aenderungen
+
+### 2026-02-08 — SSH-Setup & Claude Update
+
+**SSH-Konnektivität:**
+- SSH-Key (`id_ed25519`) auf moltbot VM (.206) eingerichtet
+- NAS (.90) hatte bereits SSH-Key-Zugang
+- fail2ban ist auf moltbot VM nicht installiert
+- Passwortloser Zugang: `ssh moltbotadmin@192.168.22.206`
+
+**Claude Code Installation:**
+- Doppelte Installation bereinigt (npm-global + native)
+- Aktive Installation: `/home/yoga7/.npm-global/bin/claude`
+- Native Installation entfernt: `/home/yoga7/.local/bin/claude`
+- Update-Befehl: `claude update`
+
+**Sync-Befehle (Referenz):**
+```bash
+# NAS synchronisieren
+ssh Jahcoozi@192.168.22.90 'cd ~/.claude/skills && git pull --rebase origin main'
+
+# moltbot VM synchronisieren
+ssh moltbotadmin@192.168.22.206 'cd ~/.claude/skills && git pull --rebase origin main'
+```
