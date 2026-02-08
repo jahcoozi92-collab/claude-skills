@@ -37,25 +37,10 @@ Falls kein Skill-Name angegeben wurde, frage:
 
 ```
 Welchen Skill soll ich für diese Session analysieren?
-
-Domain-Skills:
 - pflege-dokumentation (Medifox, Pflegesoftware)
 - n8n-workflow (Automatisierungen)
-- n8n-workflow-auditor (Workflow-Audit)
-- docker-admin (Container-Management NAS)
+- docker-admin (Container-Management)
 - rag-system (RAG-Pipelines, Vektordatenbank)
-- nas-homelab (NAS Administration)
-- open-webui (Open WebUI Integration)
-- business-strategie (Geschäftsplanung)
-
-Instanz-Skills (maschinenspezifisch):
-- windows-workstation (WS44 Windows-Arbeitsplatz)
-- win-docker (Docker Desktop auf Windows)
-- qm-word-automation (QM-Handbuch Word-Automatisierung)
-- moltbot-admin (moltbot VM)
-- nas-instance (NAS DXP4800)
-- yoga7-admin (Yoga7 Laptop)
-
 - [anderer]
 ```
 
@@ -216,6 +201,7 @@ reflect status  # Aktuellen Status anzeigen
 ## Gelernte Lektionen
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
+## Gelernte Lektionen
 
 ### 2026-01-11 - Setup-Session
 
@@ -229,7 +215,7 @@ reflect status  # Aktuellen Status anzeigen
 
 **Systeme:**
 - Yoga7: `~/claude-skills` (Original) + Symlink `~/.claude/skills` → Instanz-Skill: `yoga7-admin`
-- Windows: `$HOME\.claude\skills` → Instanz-Skills: `windows-workstation`, `win-docker`, `qm-word-automation`
+- Windows: `$HOME\.claude\skills` → Instanz-Skill: `windows-admin`
 - NAS: `/home/Jahcoozi/.claude/skills` → Instanz-Skill: `nas-instance`
 - moltbot VM: `/home/moltbotadmin/.claude/skills` → Instanz-Skill: `moltbot-admin`
 
@@ -252,14 +238,7 @@ reflect status  # Aktuellen Status anzeigen
 | `moltbot-admin` | moltbot VM | 192.168.22.206 | moltbotadmin |
 | `nas-instance` | NAS DXP4800 | 192.168.22.90 | Jahcoozi |
 | `yoga7-admin` | Yoga7 Laptop | 192.168.22.86 | yoga7 |
-| `windows-workstation` | WS44 (Win11) | — | D.Göbel |
-| `win-docker` | WS44 (Win11) | — | D.Göbel |
-| `qm-word-automation` | WS44 (Win11) | — | D.Göbel |
-
-**Windows-Instanz-Skills (WS44) Details:**
-- `windows-workstation`: System-Steckbrief, Netzlaufwerke (Q/V/W/X/Y), SSH-Aliases, installierte Pakete
-- `win-docker`: Docker Desktop v28.4 (Entwicklung/Test, abgegrenzt von NAS-Produktion)
-- `qm-word-automation`: QM-Handbuch Word-Automatisierung via pywin32 COM mit 8 Code-Patterns
+| `windows-admin` | Windows 11 PC | 192.168.2.38 | Diana |
 
 **CLAUDE.md Schutz-Eskalation:**
 - `chmod 444` — Basis, Owner kann umgehen
@@ -276,10 +255,40 @@ reflect status  # Aktuellen Status anzeigen
 - Workspace-Sektion ergaenzt (Memory-Konzept war undokumentiert)
 - Drei-Stufen Hierarchie: Root → clawd/ → clawdbot-src/AGENTS.md
 
-**Reflect-Skill selbst:**
-- Skill-Auswahlliste muss alle Skills enthalten — auch neue Instanz-Skills
-- Unterscheidung Domain-Skills vs. Instanz-Skills in der Auswahl hilft bei der Orientierung
-- README.md der Skills sollte ebenfalls alle Skills listen (war unvollständig)
+---
+
+### 2026-02-08 - Always-On Constraints Pattern
+
+**Problem:** Skill-Lektionen sind nur aktiv wenn der Skill aufgerufen wird.
+
+**Lösung: Zwei-Stufen-System**
+```
+~/CLAUDE.md (immutable, immer geladen)
+├── ## Always-On Constraints ← Kritische Regeln
+│   ├── Credentials (supabase-prod, nextcloud-nas)
+│   ├── n8n Kern-Regeln (Webhook statt HTTP Request)
+│   ├── Instanzen-Tabelle (alle 4 Maschinen)
+│   └── Code Style Präferenzen
+│
+└── Skills (bei /skill-name Aufruf geladen)
+    └── Detaillierte, skill-spezifische Regeln
+```
+
+**Wann gehört etwas in Always-On Constraints?**
+- Credential-Namen (werden überall gebraucht)
+- Instanzen-Verwechslungsgefahr (IP, User)
+- Kritische NIEMALS-Regeln die skill-übergreifend gelten
+- Allgemeine Präferenzen (deutsche Variablen, Commit-Style)
+
+**Wann bleibt es im Skill?**
+- Skill-spezifische Details (n8n Node-Konfiguration)
+- Kontext-abhängige Regeln
+- Ausführliche Beispiele und Patterns
+
+**Workflow für neue Always-On Constraints:**
+1. `sudo chattr -i ~/CLAUDE.md` (entsperren)
+2. Regel zur "Always-On Constraints" Sektion hinzufügen
+3. `sudo chattr +i ~/CLAUDE.md` (sperren)
 
 ---
 
