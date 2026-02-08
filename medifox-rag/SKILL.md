@@ -166,6 +166,35 @@ MediFox-Original: https://wissen.medifoxdan.de/pages/viewpage.action?pageId=[id]
 
 ## Gelernte Lektionen
 
+### 2026-02-08 - Level 2 Deep-Audit: Komplett-Inventar Wiki
+
+**247 Wiki-Seiten in der DB (von 301 im Wiki gesamt):**
+- 194 neue Seiten via Confluence REST API gescraped und inseriert
+- 53 bestehende Wiki-Docs (7 mit erneuertem Content aus Level-1)
+- 54 Wiki-Seiten bewusst ausgeschlossen (Video-Refs, Update-Logs, Kategorieseiten)
+- 88 manual_enrichment Docs als `unverified` markiert (KI-generiert)
+
+**Confluence API für Wiki-Scraping:**
+```
+# Alle Seiten im Space MSKB:
+GET https://wissen.medifoxdan.de/rest/api/content?spaceKey=MSKB&limit=500
+
+# Einzelne Seite mit HTML-Body:
+GET https://wissen.medifoxdan.de/rest/api/content/{PAGE_ID}?expand=body.storage
+
+# Kein Auth nötig (öffentliches Wiki)
+```
+
+**HTML → Markdown Konvertierung:**
+- Confluence-Macros entfernen (ac:structured-macro, ri:attachment)
+- HTML-Tags: h1-h6 → #, li → -, b/strong → **, i/em → *
+- Tabellen: Confluence-Tabellen → Pipe-Tabellen (vereinfacht)
+- Standard-Header: `# Titel\n\n**Quelle:** MediFox Stationär Wissensdatenbank\n**URL:** ...`
+
+**DB-Status (2026-02-08): 1369 Docs total, 100% Embeddings**
+
+---
+
 ### 2026-01-26 - Initiale Dokumentation
 
 **503 URL-only Dokumente entdeckt:**
@@ -195,7 +224,7 @@ MediFox-Original: https://wissen.medifoxdan.de/pages/viewpage.action?pageId=[id]
 │ Quelle:     wissen.medifoxdan.de                       │
 │ Storage:    NextCloud → Supabase documents table       │
 ├────────────────────────────────────────────────────────┤
-│ Total Docs: ~500+ Artikel                              │
+│ Total Docs: 1369 (247 Wiki, 88 ME, 1033 Blob)          │
 │ Sprache:    Deutsch (IMMER 'german' für tsvector!)     │
 └────────────────────────────────────────────────────────┘
 ```
