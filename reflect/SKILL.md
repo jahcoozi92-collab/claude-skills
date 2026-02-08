@@ -214,13 +214,46 @@ reflect status  # Aktuellen Status anzeigen
 - Repository: `github.com/jahcoozi92-collab/claude-skills`
 
 **Systeme:**
-- Yoga7: `~/claude-skills` (Original) + Symlink `~/.claude/skills`
-- Windows: `$HOME\.claude\skills`
-- NAS: `/home/Jahcoozi/.claude/skills`
+- Yoga7: `~/claude-skills` (Original) + Symlink `~/.claude/skills` → Instanz-Skill: `yoga7-admin`
+- Windows: `$HOME\.claude\skills` → Instanz-Skill: `windows-admin`
+- NAS: `/home/Jahcoozi/.claude/skills` → Instanz-Skill: `nas-instance`
+- moltbot VM: `/home/moltbotadmin/.claude/skills` → Instanz-Skill: `moltbot-admin`
 
 **Workarounds:**
 - GNOME Keyring umgehen: `GIT_ASKPASS="" git push`
 - Windows hat kein nano → `notepad` nutzen
+
+---
+
+### 2026-02-08 - Instanz-Skills + Architecture Locks
+
+**Multi-Maschinen Instanz-Verwaltung:**
+- Jede Maschine bekommt einen eigenen Instanz-Skill mit klarer Scope-Sektion
+- Shared Git Repo (`jahcoozi92-collab/claude-skills`) — alle Maschinen sehen alle Skills
+- Scope-Sektion am Anfang jedes Instanz-Skills verhindert Cross-Machine Verwechslungen
+
+**Instanz-Skills erstellt:**
+| Skill | Maschine | IP | User |
+|-------|----------|-----|------|
+| `moltbot-admin` | moltbot VM | 192.168.22.206 | moltbotadmin |
+| `nas-instance` | NAS DXP4800 | 192.168.22.90 | Jahcoozi |
+| `yoga7-admin` | Yoga7 Laptop | 192.168.22.86 | yoga7 |
+| `windows-admin` | Windows PC | — | — |
+
+**CLAUDE.md Schutz-Eskalation:**
+- `chmod 444` — Basis, Owner kann umgehen
+- `chattr +i` — Stark, braucht sudo zum Aufheben (Linux)
+- Windows: `Set-ItemProperty IsReadOnly` oder NTFS ACLs
+
+**Architecture Lock Pattern:**
+- `~/architecture/ARCHITECTURE_LOCK.md` dokumentiert gelockte Strukturen
+- Erstellt auf: moltbot VM, NAS (Yoga7 + Windows manuell)
+
+**CLAUDE.md Rewrite (moltbot VM):**
+- Module-Tabelle (20 Zeilen, 14 fehlend) ersetzt durch Message-Flow-Diagramm
+- Coverage-Threshold korrigiert (55% → 70% Branches)
+- Workspace-Sektion ergaenzt (Memory-Konzept war undokumentiert)
+- Drei-Stufen Hierarchie: Root → clawd/ → clawdbot-src/AGENTS.md
 
 ---
 
