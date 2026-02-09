@@ -317,7 +317,7 @@ ANTWORT:
    |---------|----------|------------|
    | Text-Chat | ✅ | ✅ |
    | Screenshots/Bilder | ✅ allowFileUploads=true | ✅ Implementiert |
-   | Vision/OCR | ✅ GPT-4o/Claude Vision | ✅ GPT-4o Vision |
+   | Vision/OCR | ✅ Claude Sonnet 4.5 Vision | ✅ Claude Sonnet 4.5 Vision |
    | Clipboard Paste (Ctrl+V) | ❌ | ✅ Implementiert |
    | Drag & Drop Upload | ✅ | ✅ Implementiert |
    | EXIF-Stripping | ❌ | ✅ Implementiert |
@@ -510,7 +510,7 @@ FROM term_synonyms ORDER BY usage_count DESC;
 
 **Ziel:** Aufbau einer visuellen Wissensbasis für MediFox-Klickpfade:
 1. Benutzer lädt Screenshot hoch
-2. Vision-Modell (GPT-4o/Claude) analysiert den Screenshot
+2. Vision-Modell (Claude Sonnet 4.5) analysiert den Screenshot
 3. OCR extrahiert sichtbare Texte/Menüs
 4. System findet dokumentierte Klickpfade basierend auf erkannten Elementen
 5. Bei neuen Pfaden: Benutzer kann annotieren → Learning
@@ -520,8 +520,8 @@ FROM term_synonyms ORDER BY usage_count DESC;
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
 │ Chat-Seite  │────▶│  n8n oder   │────▶│ Vision-API  │
-│ Screenshot  │     │ Edge Func.  │     │ GPT-4o/     │
-│ Ctrl+V/Drop │     │             │     │ Claude 3.5  │
+│ Screenshot  │     │ Edge Func.  │     │ Claude      │
+│ Ctrl+V/Drop │     │             │     │ Sonnet 4.5  │
 └─────────────┘     └──────┬──────┘     └──────┬──────┘
                           │                    │
                     ┌─────▼─────┐        ┌─────▼─────┐
@@ -639,8 +639,8 @@ SELECT * FROM get_related_paths(p_path_id := 1, limit_count := 5);
 **Phase 1 (ABGESCHLOSSEN):**
 1. ✅ Chat-Seite: Bild-Upload (Clipboard Ctrl+V, Drag&Drop, File-Button)
 2. ✅ EXIF-Strip im Browser via Canvas (keine Metadaten übertragen)
-3. ✅ Vision-API: `vision-analyzer` Edge Function mit GPT-4o
-4. ✅ OCR + Screenshot-Analyse in GPT-4o Vision
+3. ✅ Vision-API: `vision-analyzer` Edge Function (v2: Claude Sonnet 4.5, war GPT-4o)
+4. ✅ OCR + Screenshot-Analyse via Claude Vision
 5. ✅ Kombination: Vision-Analyse + Benutzer-Frage → RAG-Agent
 
 **Phase 2 (ABGESCHLOSSEN - 2026-01-27):**
@@ -652,9 +652,11 @@ SELECT * FROM get_related_paths(p_path_id := 1, limit_count := 5);
 9. ✅ Admin-Panel für Klickpfad-Review (medifox-admin.html)
 10. ✅ DSGVO Edge Functions (gdpr-handler, admin-moderation)
 
-### Edge Function: `vision-analyzer`
+### Edge Function: `vision-analyzer` (v2)
 
 **URL:** `https://wfklkrgeblwdzyhuyjrv.supabase.co/functions/v1/vision-analyzer`
+**Modell:** Claude Sonnet 4.5 (`claude-sonnet-4-5-20250929`) - seit 2026-02-08 (war GPT-4o)
+**API-Key:** Liest aus `ANTHROPIC_API_KEY` env var, Fallback: Supabase Vault via `get_secret()`
 
 ```json
 // Request
@@ -976,6 +978,29 @@ const { data } = await supabase.rpc('fast_search_text', {
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
 
+### 2026-02-08 - Claude Sonnet 4.5 Migration + Chat-Frontend
+
+**GPT-4o Ersatz (Deprecation 2026-02-13):**
+- Chat-Modell: `gpt-4o` → `claude-sonnet-4-5-20250929` (Anthropic Chat Model Node)
+- vision-analyzer Edge Function: GPT-4o Vision → Claude Sonnet 4.5 Messages API (v2)
+- Embeddings (`text-embedding-3-large`) NICHT betroffen
+
+**Anthropic API-Key Storage:**
+- n8n: Credential `8vuwy9VrY5EheWYB` (AES-256-CBC verschluesselt, CryptoJS Format)
+- Supabase: Vault Secret `ANTHROPIC_API_KEY` + `get_secret()` RPC-Funktion (SECURITY DEFINER)
+
+**Chat-Frontend formatMessage() komplett neugeschrieben:**
+- Vorher: Nur Inline-Markdown (bold, italic, code, unordered lists)
+- Nachher: Nummerierte Listen (`msg-ol`), verschachtelte Listen, Abschnitts-Cards, `hr`
+- CSS: `.msg-ol` mit Counter-Kreisen, `.msg-section` mit Background, `.msg-hr`
+- Problem war: Antworten mit 10+ Kategorien waren visuell nicht voneinander trennbar
+
+**API-Key Validierung:**
+- IMMER pruefen ob Key doppeltes Prefix hat (z.B. `sk-ant-api03-sk-ant-api03-`)
+- Anthropic Key Format: `sk-ant-api03-{random}-{suffix}` (genau EIN Prefix)
+
+---
+
 ### 2026-02-08 - Level 2 Deep-Audit: Bulk-Insert Pipeline + Embedding-Generation
 
 **🔴 KRITISCH: RLS blockiert REST API Inserts mit anon key!**
@@ -1243,7 +1268,7 @@ if (e.clipboardData?.files?.length > 0) {
 | Feature | n8n Chat | Chat-Seite |
 |---------|----------|------------|
 | Bilder/Screenshots | ✅ allowFileUploads=true | ❌ Fehlt |
-| Vision/OCR | ✅ GPT-4o & Claude Vision-fähig | ❌ Nicht verbunden |
+| Vision/OCR | ✅ Claude Sonnet 4.5 Vision | ✅ Claude Sonnet 4.5 Vision |
 
 **Neue Anforderung: Screenshot-Learning für MediFox**
 

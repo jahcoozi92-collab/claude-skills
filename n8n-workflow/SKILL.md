@@ -321,6 +321,32 @@ Wie ein Wecker. Jeden Tag um 8 Uhr morgens startet der Workflow.
    - Ohne explizite Schlüsselwörter in toolDescription → Agent ignoriert Tool
    - System Prompt allein reicht NICHT - toolDescription ist entscheidend!
 
+9. **NIEMALS** nur `workflow_entity` aktualisieren bei SQLite-Aenderungen!
+   ```
+   ❌ FALSCH: UPDATE workflow_entity SET nodes=... WHERE id='...'
+      → n8n liest aktive Workflows aus workflow_history!
+      → Aenderung hat KEINE Wirkung!
+
+   ✅ RICHTIG: BEIDE Tabellen synchron aktualisieren:
+      1. UPDATE workflow_entity SET nodes=... WHERE id='...'
+      2. UPDATE workflow_history SET nodes=...
+         WHERE versionId=(SELECT activeVersionId FROM workflow_entity WHERE id='...')
+         AND workflowId='...'
+      3. docker restart n8n-n8n-1
+   ```
+   → `workflow_history` ist die Source of Truth fuer aktive Workflows
+   → `activeVersionId` in `workflow_entity` zeigt auf den History-Eintrag
+
+10. **NIEMALS** API-Keys ohne Format-Validierung speichern!
+    ```
+    ❌ FALSCH: key = user_input  → direkt speichern
+       → Doppeltes Prefix "sk-ant-api03-sk-ant-api03-" → 401 Fehler
+
+    ✅ RICHTIG: Key-Format pruefen
+       Anthropic: sk-ant-api03-{random} (genau EIN Prefix)
+       OpenAI: sk-proj-{random} oder sk-{random}
+    ```
+
 ### 🟡 BEVORZUGT
 
 1. **Error Workflow** einrichten für Fehlerbenachrichtigung
@@ -466,6 +492,29 @@ return [{
 ## Gelernte Lektionen
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
+
+### 2026-02-08 - workflow_history + Credential Encryption + Chat-Frontend
+
+**🔴 workflow_history ist Source of Truth:**
+- n8n speichert aktive Workflows in `workflow_history` (nicht nur `workflow_entity`)
+- `activeVersionId` verweist auf den History-Eintrag
+- Bei SQLite-Aenderungen IMMER beide Tabellen updaten + restart
+
+**n8n Credential Encryption (CryptoJS AES):**
+```python
+# Format: Base64("Salted__" + 8-byte salt + AES-256-CBC encrypted data)
+# Key derivation: EVP_BytesToKey mit MD5 (passphrase = N8N_ENCRYPTION_KEY)
+# Plaintext: JSON z.B. {"apiKey": "sk-ant-api03-..."}
+# Python: cryptography lib + custom EVP_BytesToKey
+```
+
+**Chat-Frontend (Respond to Webhook Node):**
+- HTML liegt in `responseBody` Parameter des `Respond to Webhook` Nodes
+- `formatMessage()` JS-Funktion fuer Markdown-Rendering
+- CSS Styles inline im selben HTML-String
+- Aenderungen muessen in workflow_entity UND workflow_history
+
+---
 
 ### 2026-02-07 - Form Upload Fix, Sandbox-CORS, Delete-Dataflow
 
