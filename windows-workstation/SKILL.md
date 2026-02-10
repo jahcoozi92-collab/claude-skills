@@ -142,7 +142,7 @@ ping 192.168.2.215
 | Docker auf Windows (Docker Desktop) | `win-docker` |
 | QM-Dokumente bearbeiten | `qm-word-automation` |
 | NAS-Konfiguration (SSH, SMB-Shares) | `nas-homelab` |
-| PflegeAssist auf NAS deployen | MCP Server Tools |
+| PflegeAssist auf NAS deployen | **dieser Skill** (SCP) oder MCP Server Tools |
 | Lokale Entwicklung (Python, Node) | **dieser Skill** |
 | Windows-Pfade, Laufwerke, Tools | **dieser Skill** |
 
@@ -165,6 +165,7 @@ ping 192.168.2.215
 2. Whisper + PyTorch (CPU-only) sind installiert für Transkription
 3. `mcp-server-office` ist installiert — Office-Dokumente können auch über MCP bearbeitet werden
 4. Rechner-Name ist WS44, User ist D.Göbel (Domänen-User)
+5. PowerShell-Einzeiler in Git Bash: `$`-Variablen (`$_`, `$r`, etc.) werden von Bash expandiert, bevor PowerShell sie sieht — komplexe PS-Befehle mit `try/catch` oder `$_` daher via `-File` oder als Script ausführen, nicht inline
 
 ---
 
@@ -177,3 +178,22 @@ ping 192.168.2.215
 - NAS hat andere Pfade, User und Dienste als der Windows-Arbeitsplatz
 - Dieser Skill dokumentiert WS44-spezifische Konfiguration
 - Netzlaufwerke Q:, V:, W:, X:, Y: sind fest gemappt und für QM/Medifox kritisch
+
+### 2026-02-11 - PflegeAssist Deployment-Workflow
+
+**Deployment-Pattern (PflegeAssist → NAS):**
+```bash
+# 1. Lokal bearbeiten
+#    ~/pflegeassist/index.html editieren
+# 2. Lokal testen
+python -m http.server 8000  # http://localhost:8000
+# 3. Auf NAS deployen
+scp ~/pflegeassist/index.html sshd@192.168.2.215:/shares/Public/pflegeassist/index.html
+# 4. Live prüfen: http://192.168.2.215/pflegeassist/
+```
+
+**Wichtig:** Nach lokalen Änderungen an PflegeAssist IMMER an NAS-Deployment denken — Diana erwartet, dass die Live-Version aktuell bleibt.
+
+**PowerShell-Escape in Git Bash:**
+- `$_`, `$r`, `$_.Exception` etc. werden von Bash als leere Variablen expandiert
+- Workaround: Einfache PS-Befehle ohne `$`-Referenzen nutzen, oder `.ps1`-Datei erstellen
