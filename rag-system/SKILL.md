@@ -978,6 +978,54 @@ const { data } = await supabase.rpc('fast_search_text', {
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
 
+### 2026-02-10 - marked.js + MediFox Wunddoku + Service-Key Pattern
+
+**Chat-Frontend: marked.js ersetzt Custom-Parser:**
+- Vorher (2026-02-08): Custom `formatMessage()` mit manuellen Regex-Regeln
+- Problem: Text in schmalen Spalten, Code-Blöcke/Tabellen/Blockquotes nicht unterstützt
+- Nachher: **marked.js** (CDN) für professionelles Markdown-Rendering
+- Fallback: Simpler Inline-Parser falls CDN nicht erreichbar
+- CSS: Vollständige Styles für h1-h4, ul/ol, blockquote, pre/code, table, a, hr
+- Clickpath-Visualisierung bleibt erhalten (Placeholder-Extraktion vor marked.parse)
+
+**System-Prompt: Formatierungsanleitung hinzugefügt:**
+- Explizite Markdown-Struktur für Anleitungen vs. Wissensfragen
+- `##` Hauptabschnitte, nummerierte Listen für Schritte, `**fett**` für UI-Elemente
+- Menüpfade immer als: **Reiter → Menüpunkt → Untermenü → Aktion**
+
+**MediFox Wunddokumentation in RAG eingepflegt:**
+- 3 neue manual_enrichment Dokumente (IDs: 368702, 368703, 368704):
+  - "Ärztliche Verordnung mit Wunddokumentation verknüpfen"
+  - "Wunddokumentation in MediFox stationär"
+  - "Verordnungsmanagement in MediFox stationär"
+- Embeddings via `generate-embeddings` Edge Function generiert
+- Quellen: wissen.medifoxdan.de, MediFox Blog, Connect-Handbuch
+
+**Supabase Service-Role Key Pattern:**
+- Anon-Key aus HTML-Config kann ungültig/expired sein!
+- Service-Role Key aus n8n Credential entschlüsseln:
+  ```python
+  # 1. Credential aus credentials_entity lesen (id = 'xG3IsdqbYMiWY8oP')
+  # 2. Mit N8N_ENCRYPTION_KEY (EVP_BytesToKey + AES-256-CBC) entschlüsseln
+  # 3. JSON parsen → creds['serviceRole']
+  ```
+- Service-Role Key umgeht RLS → für Inserts/Updates nutzen
+
+**generate-embeddings Edge Function direkt aufrufbar:**
+```bash
+curl -X POST "$SUPABASE_URL/functions/v1/generate-embeddings" \
+  -H "Authorization: Bearer $SERVICE_ROLE_KEY" \
+  -d '{"document_ids": [368702, 368703, 368704], "batch_size": 3}'
+# → {"message":"Processed 3 documents","successful":3,"failed":0}
+```
+
+**Webhook-Cache nach API PUT:**
+- n8n cached Webhook-Handler im Speicher
+- Nach API PUT: deactivate + activate ODER docker restart nötig
+- Ohne dies liefert Webhook weiterhin alte HTML-Version
+
+---
+
 ### 2026-02-08 - Claude Sonnet 4.5 Migration + Chat-Frontend
 
 **GPT-4o Ersatz (Deprecation 2026-02-13):**
@@ -989,11 +1037,10 @@ const { data } = await supabase.rpc('fast_search_text', {
 - n8n: Credential `8vuwy9VrY5EheWYB` (AES-256-CBC verschluesselt, CryptoJS Format)
 - Supabase: Vault Secret `ANTHROPIC_API_KEY` + `get_secret()` RPC-Funktion (SECURITY DEFINER)
 
-**Chat-Frontend formatMessage() komplett neugeschrieben:**
-- Vorher: Nur Inline-Markdown (bold, italic, code, unordered lists)
-- Nachher: Nummerierte Listen (`msg-ol`), verschachtelte Listen, Abschnitts-Cards, `hr`
+**Chat-Frontend formatMessage() v1 (Custom-Parser, ERSETZT durch marked.js am 2026-02-10):**
+- Nummerierte Listen (`msg-ol`), verschachtelte Listen, Abschnitts-Cards, `hr`
 - CSS: `.msg-ol` mit Counter-Kreisen, `.msg-section` mit Background, `.msg-hr`
-- Problem war: Antworten mit 10+ Kategorien waren visuell nicht voneinander trennbar
+- Problem: Text in schmalen Spalten bei komplexem Markdown → durch marked.js gefixt
 
 **API-Key Validierung:**
 - IMMER pruefen ob Key doppeltes Prefix hat (z.B. `sk-ant-api03-sk-ant-api03-`)
@@ -1488,7 +1535,7 @@ Beispiel: [QM-Handbuch:S.45 §Bezugspflege]
 │ Top-K:             5 (Anzahl Ergebnisse)               │
 ├────────────────────────────────────────────────────────┤
 │ Supabase:          wfklkrgeblwdzyhuyjrv                │
-│ Total Docs:        1369 (247 Wiki, 88 ME, 1033 Blob)  │
+│ Total Docs:        1372 (247 Wiki, 91 ME, 1033 Blob)  │
 │ Embeddings:        100% Abdeckung                      │
 │ Ollama-API:        http://192.168.22.90:11434          │
 └────────────────────────────────────────────────────────┘

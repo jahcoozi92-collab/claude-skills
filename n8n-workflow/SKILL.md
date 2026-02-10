@@ -347,6 +347,21 @@ Wie ein Wecker. Jeden Tag um 8 Uhr morgens startet der Workflow.
        OpenAI: sk-proj-{random} oder sk-{random}
     ```
 
+11. **NIEMALS** erwarten dass API PUT allein Webhooks aktualisiert!
+    ```
+    ❌ FALSCH: PUT /api/v1/workflows/{id} → Webhook liefert sofort neues HTML
+       → n8n cached Webhook-Handler im Speicher!
+       → Webhook liefert weiterhin ALTE Version!
+
+    ✅ RICHTIG: Nach API PUT zusätzlich:
+       1. POST /api/v1/workflows/{id}/deactivate
+       2. POST /api/v1/workflows/{id}/activate
+       3. Falls immer noch alt: docker restart n8n-n8n-1
+    ```
+    → API PUT aktualisiert nur die DB, nicht den laufenden Webhook-Handler
+    → Deactivate/Activate erzwingt Neu-Registrierung der Webhooks
+    → Container-Restart ist der sichere Fallback
+
 ### 🟡 BEVORZUGT
 
 1. **Error Workflow** einrichten für Fehlerbenachrichtigung
@@ -510,9 +525,13 @@ return [{
 
 **Chat-Frontend (Respond to Webhook Node):**
 - HTML liegt in `responseBody` Parameter des `Respond to Webhook` Nodes
-- `formatMessage()` JS-Funktion fuer Markdown-Rendering
+- `formatMessage()` nutzt **marked.js** (CDN) fuer Markdown-Rendering (seit 2026-02-10)
 - CSS Styles inline im selben HTML-String
-- Aenderungen muessen in workflow_entity UND workflow_history
+- Aenderungen via API PUT + deactivate/activate (oder Container-Restart)
+
+**n8n API Key Standort:**
+- NICHT in `.env` gespeichert!
+- Liegt hardcoded in Workflow-Scripts: `workflows/test-n8n.sh`, `deploy-n8n-mcp.sh`, `import-workflow.sh`
 
 ---
 
