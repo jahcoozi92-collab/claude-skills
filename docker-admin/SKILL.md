@@ -42,6 +42,27 @@ Docker ist wie ein Schuhkarton-System:
 | **SearXNG** | 8081 | Suchmaschine für RAG |
 | **Vaultwarden** | 8083 | Passwort-Manager |
 
+### Container-zu-Compose-Mapping (NAS)
+
+Nicht jeder Container hat sein eigenes Compose-Verzeichnis. Diese Zuordnung ist kritisch für Updates:
+
+| Container | Compose-Verzeichnis | Anmerkung |
+|-----------|---------------------|-----------|
+| cloudflared | `/volume1/docker/cloudflared/` | Eigenständig |
+| n8n-n8n-1 | `/volume1/docker/n8n/` | Image: `docker.n8n.io/n8nio/n8n:latest` |
+| crawl4ai-n8n | `/volume1/docker/Crawl4AI/` | Nutzt gleiches n8n-Image, anderer Stack! |
+| ollama | `/volume1/docker/ollama/` | Eigenständig |
+| searxng | `/volume1/docker/searxng-docker/` | NICHT `/volume1/docker/searxng/`! |
+| homeassistant | `/volume1/docker/home-assistant/` | `-p home-assistant` für Compose |
+| mosquitto | `/volume1/docker/home-assistant/` | Teil des HA-Stacks |
+| esphome | `/volume1/docker/home-assistant/` | Teil des HA-Stacks |
+| matter-server | `/volume1/docker/home-assistant/` | Teil des HA-Stacks |
+| nextcloud_app | `/volume1/docker/nextcloud/` | Eigenständig |
+| nextcloud_db | `/volume1/docker/nextcloud/` | MariaDB, Teil des NC-Stacks |
+| vaultwarden | `/volume1/docker/vaultwarden/` | Eigenständig |
+| dify-* | `/volume1/docker/dify/` | Gepinnt auf 0.15.3 (Feb 2025), Major Update separat prüfen! |
+| open-webui | `/volume1/docker/open-webui/` | Eigenständig |
+
 ---
 
 ## Docker-Grundlagen (für Anfänger)
@@ -73,6 +94,40 @@ Docker ist wie ein Schuhkarton-System:
 ---
 
 ## Wichtige Docker-Befehle
+
+### Container-Update-Workflow (sicher)
+
+```bash
+# 1. Alle öffentlichen Images pullen (sicher, ändert keine Container)
+docker pull [image:tag]
+
+# 2. Prüfen ob neues Image verfügbar
+#    "Image is up to date" = kein Update
+#    "Downloaded newer image" = Update verfügbar
+
+# 3. Risiko-Kategorisierung:
+#    SICHER:   cloudflared, ollama, searxng, n8n (stateless/unkritisch)
+#    MITTEL:   home-assistant, jellyfin (wichtig, aber Volume-basiert)
+#    SENSIBEL: vaultwarden, mariadb/nextcloud (Passwörter/Datenbank)
+#    → Sichere zuerst, sensible nur nach Bestätigung
+
+# 4. Container aktualisieren (im jeweiligen Compose-Verzeichnis)
+docker compose up -d
+
+# 5. Bei Namenskonflikten (orphaned Container):
+docker compose down && docker compose up -d
+# Oder einzelne alte Container entfernen:
+docker rm [alte-container-id]
+
+# 6. Verifizieren
+docker ps --format "table {{.Names}}\t{{.Status}}"
+docker ps -a --filter "status=exited" --filter "status=restarting"
+```
+
+**Typische Probleme beim Update:**
+- Port already allocated → alter Container mit gleichem Port läuft noch
+- Container name conflict → `docker compose down` dann `up -d`
+- Orphaned Container mit Prefix-Namen (z.B. `7b0265dce765_searxng-docker-searxng-1`) → `docker rm` der alten Container
 
 ### Container verwalten
 
@@ -852,6 +907,33 @@ loginctl enable-linger moltbotadmin
 }
 ```
 Oder Interval sehr hoch setzen: `"every": "8760h"` (1 Jahr)
+
+### 2026-02-10 - Container-Update-Session (Reflect)
+
+**Container-zu-Compose-Mapping ist kritisch:**
+- SearXNG liegt in `searxng-docker/`, nicht `searxng/`
+- Mosquitto ist Teil des home-assistant Stacks (kein eigenes Compose)
+- MariaDB ist Teil des nextcloud Stacks
+- crawl4ai-n8n nutzt das gleiche n8n-Image, gehört aber zum Crawl4AI-Stack
+
+**Orphaned Container bei Updates:**
+- Nach Docker Compose v1→v2 Migration bleiben alte Container mit Prefix-Namen
+- Symptom: `Conflict. The container name "/xyz" is already in use`
+- Lösung: `docker compose down && docker compose up -d` oder `docker rm [alte-id]`
+- Port-Konflikte: Alten Container erst stoppen bevor neuer starten kann
+
+**Risiko-basiertes Update-Verfahren:**
+- Pull zuerst (ändert keine laufenden Container)
+- Kategorisiere: sicher → mittel → sensibel
+- Patch-Updates (z.B. MariaDB 11.4.9→11.4.10) sind sicher
+- Sensible Services (Vaultwarden, Datenbanken) nur nach Bestätigung
+
+**Dify sehr veraltet:**
+- Gepinnt auf 0.15.3 (Feb 2025) — über 1 Jahr alt
+- Major Update separat behandeln (Breaking Changes möglich)
+
+**n8n Image-Registry:**
+- Tatsächliches Image: `docker.n8n.io/n8nio/n8n:latest` (nicht `n8nio/n8n`)
 
 ### 2026-02-05 - Große Modelle: API statt Lokal
 
