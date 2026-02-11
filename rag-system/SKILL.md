@@ -33,13 +33,13 @@ Die KI kennt nur das, was sie in der Schule gelernt hat (Training). Sie weiß ni
 └─────────────┘     └──────┬──────┘     └──────┬──────┘
                           │                    │
                     ┌─────▼─────┐              │
-                    │  Ollama   │              │
+                    │  OpenAI   │              │
                     │(Embeddings)│             │
                     └───────────┘              │
                                                │
 ┌─────────────┐     ┌─────────────┐            │
-│   Benutzer  │────▶│  Claude/    │◀───────────┘
-│   (Frage)   │     │  Open-WebUI │
+│   Benutzer  │────▶│  Claude 4.5 │◀───────────┘
+│   (Frage)   │     │  (Sonnet)   │
 └─────────────┘     └─────────────┘
 ```
 
@@ -49,9 +49,9 @@ Die KI kennt nur das, was sie in der Schule gelernt hat (Training). Sie weiß ni
 |------------|-------------|-------|
 | **Dokumenten-Quelle** | NextCloud auf NAS | PDFs, Docs speichern |
 | **Orchestrierung** | n8n Workflows | Automatische Verarbeitung |
-| **Embedding-Modell** | Ollama (nomic-embed-text) | Text → Vektoren |
-| **Vektor-Datenbank** | Supabase pgvector | Speicher + Suche |
-| **LLM** | Claude / Ollama | Antworten generieren |
+| **Embedding-Modell** | OpenAI text-embedding-3-large (3072d) | Text → Vektoren |
+| **Vektor-Datenbank** | Supabase pgvector (halfvec HNSW) | Speicher + Suche |
+| **LLM** | Claude Sonnet 4.5 (Anthropic) | Antworten generieren |
 
 ---
 
@@ -84,14 +84,19 @@ CREATE TABLE documents (
   id BIGSERIAL PRIMARY KEY,
   content TEXT NOT NULL,
   metadata JSONB,
-  embedding VECTOR(768),  -- Für nomic-embed-text
+  embedding VECTOR(3072),           -- text-embedding-3-large (Legacy, wird nicht mehr indexiert)
+  embedding_half HALFVEC(3072),     -- Aktive Spalte für Suche (halfvec umgeht 2000-dim Limit)
+  fts TSVECTOR,                     -- Full-Text-Search (deutsch)
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Index für schnelle Vektor-Suche
-CREATE INDEX ON documents 
-USING ivfflat (embedding vector_cosine_ops)
-WITH (lists = 100);
+-- HNSW-Index auf halfvec (aktive Suche)
+CREATE INDEX idx_documents_embedding_half_hnsw ON documents
+USING hnsw (embedding_half halfvec_cosine_ops)
+WITH (m = 16, ef_construction = 64);
+
+-- FTS-Index (deutsch)
+CREATE INDEX idx_documents_german_fts ON documents USING gin(fts);
 ```
 
 ### Similarity-Search Funktion
@@ -842,47 +847,23 @@ Wenn Antworten schlecht sind, prüfe in dieser Reihenfolge:
 | **text-embedding-3-large** | 3072 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ❌ Nein! |
 
 **Diana's Setup:**
-- **n8n Workflow:** text-embedding-3-large (3072 dims) - beste Qualität
-- **LightRAG:** text-embedding-3-small (1536 dims) - mit Index möglich
+- **n8n Workflow:** text-embedding-3-large (3072 dims) → gespeichert als `embedding_half` (halfvec)
+- Sync-Trigger `trg_sync_embedding_half` kopiert `embedding` → `embedding_half` automatisch
 
-⚠️ **WICHTIG:** Bei >2000 Dimensionen ist kein pgvector HNSW/IVFFlat Index möglich!
-Workaround 1: Text-Vorfilterung vor Vektor-Vergleich (siehe `fast_search_text`)
-Workaround 2: `halfvec(3072)` mit HNSW-Index (aktuelle Lösung, `embedding_half` Spalte)
+⚠️ **WICHTIG:** Bei >2000 Dimensionen ist kein pgvector HNSW/IVFFlat Index auf VECTOR möglich!
+**Lösung:** `halfvec(3072)` mit HNSW-Index auf `embedding_half` Spalte (aktive Suche)
+Legacy-Spalte `embedding` (VECTOR 3072) existiert noch, wird aber nicht indexiert.
 
 ---
 
-## LightRAG Integration
+## ~~LightRAG Integration~~ (ENTFERNT 2026-02-11)
 
-Diana nutzt **LightRAG** für Knowledge-Graph-basierte RAG zusätzlich zu reiner Vektor-Suche.
-
-### LightRAG vs. Standard RAG
-
-| Aspekt | Standard RAG | LightRAG |
-|--------|--------------|----------|
-| Suche | Nur Vektoren | Vektoren + Knowledge Graph |
-| Kontext | Chunks | Entitäten + Relationen |
-| Ergebnis | Ähnliche Texte | Vernetzte Informationen |
-
-### LightRAG Authentifizierung
-
-```bash
-# WICHTIG: LightRAG nutzt JWT Token, NICHT API Key!
-TOKEN=$(curl -s -X POST "http://localhost:9621/login" \
-  -d "username=admin&password=PASSWORT" | jq -r '.access_token')
-
-# Dann für Anfragen:
-curl -H "Authorization: Bearer $TOKEN" http://localhost:9621/query
-```
-
-### LightRAG Endpoints
-
-| Endpoint | Methode | Beschreibung |
-|----------|---------|--------------|
-| `/login` | POST | JWT Token holen (Form-Data!) |
-| `/query` | POST | RAG-Anfrage stellen |
-| `/documents/scan` | POST | Dokumente indexieren |
-| `/documents/pipeline_status` | GET | Indexierungs-Status |
-| `/health` | GET | Status + pipeline_busy |
+> **LightRAG wurde vollständig deinstalliert:**
+> - 11 Supabase-Tabellen gedroppt (232 MB freigegeben)
+> - Docker Container `lightrag` entfernt
+> - Cloudflare Route `lightrag.forensikzentrum.com` entfernt
+> - 4 n8n Workflows deaktiviert, Open WebUI Tool disabled
+> - Knowledge-Graph-Ansatz war nicht mehr nötig — Hybrid Search (Vektor + FTS + Boost) liefert ausreichende Ergebnisse
 
 ---
 
@@ -1023,6 +1004,17 @@ curl -X POST "$SUPABASE_URL/functions/v1/generate-embeddings" \
 - n8n cached Webhook-Handler im Speicher
 - Nach API PUT: deactivate + activate ODER docker restart nötig
 - Ohne dies liefert Webhook weiterhin alte HTML-Version
+
+**Design-Refresh: Admin Panel + Chat UI (2026-02-10):**
+- Einheitliches Design-System: Plus Jakarta Sans + JetBrains Mono, Teal/Cyan (#14b8a6)
+- Admin Panel (`medifox-admin`, nginx:alpine port 8086): Komplette Neuentwicklung
+  - Glass morphism Login, Gradient-Top-Lines, SVG Icons, Priority-Dots, Confidence-Bars
+  - HTML bind mount (ro) → Änderungen sofort live ohne Container-Restart
+- Chat UI (n8n Webhook): CSS-Migration via Python-Script
+  - 3 Themes (dark/medium/light): Indigo/Purple → Teal/Cyan
+  - Font: Inter → Plus Jakarta Sans + JetBrains Mono
+  - Pattern: String-Replace aller CSS-Variablen + verbleibende Hex/RGBA-Referenzen
+  - Backup → Modify → API PUT → docker restart → Verify (grep für alte/neue Farben)
 
 ---
 
@@ -1479,7 +1471,7 @@ Beispiel: [QM-Handbuch:S.45 §Bezugspflege]
 
 ---
 
-### 2026-01-21 - Supabase Hybrid Search + LightRAG Indexierung
+### 2026-01-21 - Supabase Hybrid Search
 
 **Probleme gelöst:**
 
@@ -1491,20 +1483,118 @@ Beispiel: [QM-Handbuch:S.45 §Bezugspflege]
    - Ursache: 3072-dim Vektoren können kein HNSW/IVFFlat Index haben
    - Lösung: `fast_search_text` mit Text-Vorfilterung (GIN Index)
 
-3. **LightRAG API "Invalid token"**
-   - Ursache: LightRAG erwartet JWT Token, nicht API Key
-   - Lösung: Erst `/login` mit Form-Data, dann Bearer Token nutzen
-
 **Erfolge:**
 - n8n-hybrid Edge Function v11 funktioniert
-- LightRAG indexierte 252 Dokumente erfolgreich
-- Knowledge Graph: 4000+ Nodes, 6600+ Edges
+- halfvec(3072) + HNSW-Index löst das Dimensionslimit
 
 **Technische Details:**
-- pgvector Index max: 2000 Dimensionen
-- text-embedding-3-large: 3072 dims (kein Index!)
-- text-embedding-3-small: 1536 dims (Index möglich)
+- pgvector Index max: 2000 Dimensionen für VECTOR
+- halfvec(3072) umgeht dieses Limit mit HNSW-Index
 - Deutsche Textsuche: `to_tsvector('german', content)`
+
+---
+
+### 2026-02-11 - LightRAG Entfernung + DB-Wartung + Error Handling
+
+**Probleme gelöst:**
+
+1. **Supabase über Plan-Limit (616 MB / 500 MB)**
+   - VACUUM FULL: documents 363 MB → 46 MB (TOAST Bloat)
+   - LightRAG-Tabellen gedroppt: 232 MB freigegeben
+   - Ergebnis: 616 MB → 68 MB
+
+2. **Leere Webhook-Antworten bei LLM-Ausfall**
+   - Ursache: Kein Error-Branch im Webhook-Pfad
+   - Lösung: `onError: continueRegularOutput` + IF-Check auf `$json.output`
+   - 3 neue Nodes: Check Agent Error, Set Error Message, Respond Error API
+
+3. **IVFFlat blockiert VACUUM FULL**
+   - Fehler: `column cannot have more than 2000 dimensions for ivfflat index`
+   - Lösung: IVFFlat-Index droppen vor VACUUM (war ohnehin redundant, HNSW auf halfvec aktiv)
+
+4. **n8n Workflow-Deaktivierung unzuverlässig**
+   - API `/deactivate` gibt manchmal `active: true` zurück
+   - Workaround: Direkt SQLite updaten: `UPDATE workflow_entity SET active = 0`
+   - Archivierte Workflows können nicht via API geändert werden
+
+**LightRAG-Bereinigung (vollständig):**
+- 11 Supabase-Tabellen gedroppt (lightrag_*)
+- Docker Container gestoppt und entfernt
+- Cloudflare Route entfernt
+- 4 n8n Workflows deaktiviert
+- Open WebUI Tool disabled (.py → .py.disabled)
+
+**DB-Status nach Bereinigung:**
+- 1470 Dokumente, 100% Embedding-Abdeckung
+- Nur noch HNSW-Index auf embedding_half (halfvec 3072d)
+- Redundante Indexes entfernt: idx_documents_embedding_ivfflat, documents_content_gin_idx, idx_documents_source
+
+---
+
+## Supabase Free Plan Limits
+
+| Ressource | Limit | Aktuell (2026-02-11) |
+|-----------|-------|----------------------|
+| **Datenbank** | 500 MB | ~68 MB (13.6%) |
+| **Storage** | 1 GB | ~573 MB (Bilder_001) |
+| **Edge Functions** | 500K Aufrufe/Monat | OK |
+
+**Grace Period:** Bei Überschreitung gibt Supabase eine Nachfrist (typisch 2-4 Wochen).
+Regelmäßig prüfen unter: Supabase Dashboard → Settings → Usage
+
+---
+
+## Wartung: VACUUM FULL + TOAST Bloat
+
+PostgreSQL TOAST-Tabellen können nach vielen DELETE/UPDATE-Operationen stark aufblähen (bis zu 11x der tatsächlichen Datengröße). Normales VACUUM reicht NICHT — nur `VACUUM FULL` gibt TOAST-Speicher frei.
+
+### Wartungs-Ablauf
+
+```sql
+-- 1. Aktuelle Größe prüfen
+SELECT pg_size_pretty(pg_total_relation_size('documents')) AS total,
+       pg_size_pretty(pg_relation_size('documents')) AS table_only;
+
+-- 2. WICHTIG: IVFFlat-Index droppen falls vorhanden (>2000 dims blockiert VACUUM FULL)
+DROP INDEX IF EXISTS idx_documents_embedding_ivfflat;
+
+-- 3. Redundante Indexes identifizieren und droppen
+-- Beispiel: documents_content_gin_idx war Duplikat von idx_documents_german_fts
+
+-- 4. VACUUM FULL (exklusive Sperre, Tabelle nicht erreichbar!)
+VACUUM FULL documents;
+
+-- 5. Größe erneut prüfen
+SELECT pg_size_pretty(pg_total_relation_size('documents')) AS total;
+```
+
+**🔴 KRITISCH:** `VACUUM FULL` sperrt die Tabelle exklusiv — Chat ist währenddessen nicht erreichbar! Am besten nachts oder in Wartungsfenster ausführen.
+
+**Erfahrungswert:** 363 MB → 46 MB nach VACUUM FULL (Faktor 8x Einsparung)
+
+---
+
+## Webhook Error-Handling Pattern
+
+Wenn der LLM-Provider ausfällt (z.B. Anthropic Credits leer), liefert der Webhook eine leere 200-Antwort statt einer Fehlermeldung. Lösung: Error-Branch im Workflow.
+
+### Implementierung (n8n)
+
+```
+Supabase KI-Agent (onError: continueRegularOutput)
+    │
+    ▼
+Check Agent Error (IF: {{ $json.output }} exists)
+    │                    │
+    ▼ true               ▼ false
+Respond Chat API     Set Error Message → Respond Error API
+(normale Antwort)    ("KI-Assistent nicht erreichbar")
+```
+
+**Wichtige Einstellungen:**
+- `onError: 'continueRegularOutput'` auf dem Agent-Node (nicht `stopWorkflow`!)
+- IF-Node prüft: `={{ $json.output }}` — bei Fehler ist output undefined/leer
+- Error-Response enthält `{ error: true }` Flag für Frontend-Erkennung
 
 ---
 
@@ -1525,18 +1615,21 @@ Beispiel: [QM-Handbuch:S.45 §Bezugspflege]
 ## Quick Reference
 
 ```
-┌────────────────────────────────────────────────────────┐
-│                   RAG QUICK REFERENCE                   │
-├────────────────────────────────────────────────────────┤
-│ Embedding-Modell:  text-embedding-3-large (3072 dim)   │
-│ Halfvec-Index:     HNSW auf embedding_half (halfvec)   │
-│ Chunk-Größe:       1500 chars, 350 overlap             │
-│ Similarity:        > 0.7 (Threshold)                   │
-│ Top-K:             5 (Anzahl Ergebnisse)               │
-├────────────────────────────────────────────────────────┤
-│ Supabase:          wfklkrgeblwdzyhuyjrv                │
-│ Total Docs:        1372 (247 Wiki, 91 ME, 1033 Blob)  │
-│ Embeddings:        100% Abdeckung                      │
-│ Ollama-API:        http://192.168.22.90:11434          │
-└────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                   RAG QUICK REFERENCE                    │
+├─────────────────────────────────────────────────────────┤
+│ Embedding-Modell:  text-embedding-3-large (3072 dim)    │
+│ Aktiver Index:     HNSW auf embedding_half (halfvec)    │
+│ Chat-LLM:         Claude Sonnet 4.5 (Anthropic)        │
+│ Chunk-Größe:       1500 chars, 350 overlap              │
+│ Similarity:        > 0.7 (Threshold)                    │
+│ Top-K:             5 (Anzahl Ergebnisse)                │
+├─────────────────────────────────────────────────────────┤
+│ Supabase:          wfklkrgeblwdzyhuyjrv                 │
+│ Total Docs:        1470 (1033 Blob, 247 Wiki, 91 ME)   │
+│ DB-Größe:          ~68 MB (Free Plan: 500 MB)           │
+│ Embeddings:        100% Abdeckung                       │
+│ LightRAG:          ENTFERNT (2026-02-11)                │
+│ n8n Workflow:      SJ47UX9mv8wh1Wwy (76 Nodes)         │
+└─────────────────────────────────────────────────────────┘
 ```
