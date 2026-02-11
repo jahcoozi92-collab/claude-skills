@@ -333,3 +333,17 @@ SET LOCAL hnsw.ef_search = 100;
 - n8n Workflow: `SJ47UX9mv8wh1Wwy`
 - Navigationsdokument ID: `368297`
 - Korrigiertes Dokument ID: `368064`
+
+---
+
+### 2026-02-12 - Reflect auf Nicht-Skill-Sessions
+
+**Instanz-Skill als Fallback:**
+- Wenn eine Session keinen expliziten Skill nutzt (z.B. reine Config-Optimierung, System-Administration), ist der jeweilige **Instanz-Skill** der richtige Ziel-Skill fuer Reflect
+- Instanz-Skills: `moltbot-admin`, `nas-instance`, `yoga7-admin`, `windows-admin`
+- Heuristik: Betrifft die Arbeit eine bestimmte Maschine? → Instanz-Skill. Betrifft sie ein Fach-Thema? → Fach-Skill
+
+**JSON-Config und Learn-by-Doing:**
+- JSON unterstuetzt keine Kommentare → `TODO(human)` kann nicht inline platziert werden
+- Workaround: Helper-Script (z.B. `/tmp/voice-test.mjs`) erstellen, TODO(human) dort platzieren
+- Config mit funktionierendem Default schreiben, User passt ueber Script/CLI an
