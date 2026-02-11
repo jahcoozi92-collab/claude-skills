@@ -90,6 +90,49 @@ sudo chattr +i <datei>         # Immutable (nur root kann aufheben)
 
 ---
 
+## Secrets-Management
+
+**Regel: Keine API-Keys in `clawdbot.json`!** Alle Secrets gehoeren in `~/.clawdbot/.env` (chmod 600).
+
+Clawdbot kennt drei Secret-Mechanismen:
+
+| Mechanismus | Wann nutzen | Beispiel |
+|-------------|-------------|---------|
+| **Auto-Fill** | Provider-Keys, Channel-Tokens | `OPENROUTER_API_KEY`, `TELEGRAM_BOT_TOKEN` — einfach Feld weglassen |
+| **`${VAR}` Interpolation** | Gateway-Token, Hooks, Skills | `"token": "${CLAWDBOT_GATEWAY_TOKEN}"` |
+| **`env.vars` Block** | Sonderfaelle | Setzt env vars beim Config-Laden |
+
+**Auto-Fill Env-Variablen (kein Feld in JSON noetig):**
+`OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `CLAWDBOT_GATEWAY_TOKEN`
+
+---
+
+## Config-Optimierung Checkliste
+
+### Level 1 — Sicherheit & Korrektheit
+- [ ] Alle Secrets in `.env` ausgelagert (keine Klartext-Keys in JSON)
+- [ ] `.env` hat `chmod 600`
+- [ ] Model-Parameter stimmen mit Intention ueberein (thinking, maxTokens)
+- [ ] Tote Eintraege entfernt (leere Objekte, deaktivierte Plugins, unreferenzierte Modelle)
+- [ ] `plugins.allow` hat keinen Leerstring
+
+### Level 2 — UX & Performance
+- [ ] `typingMode: "instant"` — sofortiger Typing-Indicator
+- [ ] `ackReaction` + `removeAckAfterReply` — visuelles Feedback
+- [ ] `queue.mode: "collect"` + `debounceMs: 1500` — Schnellnachrichten buendeln
+- [ ] `session.reset.mode: "idle"` + `idleMinutes` — stale Sessions vermeiden
+- [ ] `userTimezone` + `timeFormat: "24"` — Zeitbewusstsein
+- [ ] Fallback-Kette: guenstigstes Modell zuerst (Gemini Free vor Opus $75/M)
+- [ ] `contextPruning.keepLastAssistants: 3` — schuetzt letzte Antworten
+- [ ] `heartbeat.activeHours` — nur waehrend Wachzeiten
+- [ ] Telegram: `linkPreview: false`, `markdown.tables: "code"`, `dmHistoryLimit: 50`
+
+### Level 3 — Features
+- [ ] TTS: `messages.tts.auto: "inbound"` + Edge TTS (kostenlos, kein API-Key)
+- [ ] Deutsche Stimmen: `de-DE-FlorianMultilingualNeural` (multilingual) oder `de-DE-KatjaNeural`
+
+---
+
 ## Gateway-Schnellreferenz
 
 ```bash
@@ -120,3 +163,31 @@ clawdbot doctor
 - Workspace-Dateien dedupliziert (USER.md/TOOLS.md/MEMORY.md hatten 3x gleiche Daten)
 - AGENTS.md von 7.8KB auf 3.9KB gekuerzt
 - settings.local.json: 92 auf 34 Permission-Eintraege (Secrets entfernt)
+
+### 2026-02-12 — Config-Tiefenoptimierung
+
+**Secrets-Management:**
+- 6+ API-Keys/Tokens standen im Klartext in `clawdbot.json` — alle in `~/.clawdbot/.env` ausgelagert
+- Provider-Keys (OpenRouter, Gemini) brauchen kein `apiKey`-Feld — Auto-Fill ueber Env-Vars
+- Channel-Tokens (Telegram) ebenso — `TELEGRAM_BOT_TOKEN` wird automatisch erkannt
+- Gateway/Hooks/Skill-Keys ueber `${VAR}` Interpolation (funktioniert in allen String-Werten)
+
+**UX-Optimierung (Level 2):**
+- Fallback-Kette neu geordnet: DeepSeek → Gemini Free → Sonnet → Opus (spart bis $60/M bei Ausfall)
+- `typingMode: "instant"` + `ackReaction: "👀"` + `removeAckAfterReply` = sofortiges Feedback
+- `queue.mode: "collect"` + `debounceMs: 1500` buendelt Schnellnachrichten
+- `session.reset.mode: "idle"` + 120min verhindert stale Kontext
+- Telegram: `markdown.tables: "code"` (lesbar), `linkPreview: false` (weniger Rauschen)
+
+**Edge TTS aktiviert:**
+- `messages.tts.auto: "inbound"` — antwortet per Audio wenn User Sprachnachricht schickt
+- Provider: Edge TTS (kostenlos, kein API-Key, <1s Latenz)
+- Stimme: `de-DE-FlorianMultilingualNeural` (gut fuer gemischte DE/EN-Texte)
+- Voice-Samples generieren: `cd ~/clawdbot-src && node /tmp/voice-test.mjs`
+
+**Preis-Korrektur:**
+- DeepSeek V3.2 kostet $0.25/$0.38 pro 1M Tokens (nicht $0.14/$0.28 wie vorher notiert)
+
+**Systemd-Hinweis:**
+- Service-Datei hat noch hardcodierte API-Keys — werden durch `.env` ueberdeckt
+- Beim naechsten `clawdbot wizard` Run sollten die bereinigt werden
