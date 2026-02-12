@@ -347,7 +347,39 @@ Wie ein Wecker. Jeden Tag um 8 Uhr morgens startet der Workflow.
        OpenAI: sk-proj-{random} oder sk-{random}
     ```
 
-11. **NIEMALS** erwarten dass API PUT allein Webhooks aktualisiert!
+11. **NIEMALS** PG executeQuery in einer Serienkette vor Daten-Nodes!
+    ```
+    ❌ FALSCH: Kosten Tracken → PG INSERT → JSON Validieren
+       → PG INSERT gibt {success:true} zurueck → JSON Validieren bekommt KEINE LLM-Daten!
+       → Gleich wie Supabase Delete (Regel #6) - alle DB-Write-Nodes brechen den Datenfluss!
+
+    ✅ RICHTIG: Fan-out Pattern (parallel statt seriell)
+       Kosten Tracken → [JSON Validieren, PG INSERT]  (gleichzeitig)
+       n8n Connection: {"main": [[{"node":"A"},{"node":"B"}]]} = Fan-out
+    ```
+    → Gilt fuer ALLE Postgres/Supabase INSERT/UPDATE/DELETE Nodes
+    → executeQuery gibt Query-Ergebnis zurueck, NICHT die Eingangsdaten
+
+12. **NIEMALS** LLM-Output direkt in SQL-Expressions ohne Escaping!
+    ```
+    ❌ FALSCH: VALUES ('{{ $json.llm_text }}')
+       → LLM schreibt "it's important" → SQL bricht: VALUES ('it's important')
+
+    ✅ RICHTIG: Im Code Node VOR dem PG Node escapen:
+       function sqlEscape(s) { return String(s).replace(/'/g, "''"); }
+       return [{ json: { _sql: `INSERT INTO ... VALUES ('${sqlEscape(text)}')` } }];
+       → PG Node: query = {{ $json._sql }}
+    ```
+
+13. **NIEMALS** .toFixed() auf PG NUMERIC-Werte ohne Number()-Cast!
+    ```
+    ❌ FALSCH: budget.tages_limit.toFixed(2)
+       → PG gibt NUMERIC als String zurueck → "toFixed is not a function"
+
+    ✅ RICHTIG: Number(budget.tages_limit).toFixed(2)
+    ```
+
+14. **NIEMALS** erwarten dass API PUT allein Webhooks aktualisiert!
     ```
     ❌ FALSCH: PUT /api/v1/workflows/{id} → Webhook liefert sofort neues HTML
        → n8n cached Webhook-Handler im Speicher!
@@ -368,6 +400,11 @@ Wie ein Wecker. Jeden Tag um 8 Uhr morgens startet der Workflow.
 2. **Sticky Notes** für Dokumentation im Workflow
 3. **Versionen** in Workflow-Namen (v1, v2, ...)
 4. **Test zuerst** mit Manual Trigger vor Webhook
+5. **Fan-out fuer DB-Writes** neben der Hauptkette (nicht seriell!)
+6. **OpenRouter HTTP Request**: `specifyBody: "string"`, `contentType: "raw"`, `rawContentType: "application/json"`, body mit `JSON.stringify` (NICHT `specifyBody: "json"` - bricht bei Sonderzeichen in Prompts)
+7. **Deploy-Pattern**: deactivate → PUT (interne API) → activate
+8. **n8n Timezone beachten**: Ohne `GENERIC_TIMEZONE` env = UTC. Alle Crons in UTC!
+9. **Activation API (v2.7.4+)**: `active` ist read-only in PUT → `POST /workflows/{id}/activate` und `/deactivate`
 
 ### 🟢 GUT ZU WISSEN
 
@@ -957,8 +994,10 @@ docker logs n8n-n8n-1 --tail 10 | grep "Activated workflow"
 **🔴 UI Design-Qualität ("Level 2"):**
 - Standard-Design = "Level 1" (generisch, Bootstrap-look)
 - Diana erwartet "Level 2" = Premium, professionell
-- Inter Font für professionelle UIs
+- **Aktuell (2026-02-10)**: Plus Jakarta Sans + JetBrains Mono, Teal/Cyan (#14b8a6)
+- Vorher: Inter Font, Indigo/Purple (#6366f1) - komplett migriert
 - Animationen: hover-lift (`translateY(-2px)`), pop-effekt, fade-in
+- Glass morphism, gradient top-lines, SVG icons, staggered card entrances
 
 **🔴 DRY-Prinzip für UI:**
 ```
@@ -1018,6 +1057,62 @@ Nicht nur bei "Ich weiß es nicht" → IMMER anzeigen!
 .step:nth-child(2) { animation-delay: 50ms; }
 /* ... */
 ```
+
+---
+
+### 2026-02-12 - Agent System Health Check: PG Data Flow, Fan-out, SQL Escape
+
+**🔴 PG executeQuery bricht Datenfluss (Generalisierung von Regel #6):**
+- ALLE DB-Write-Nodes (INSERT/UPDATE/DELETE) geben ihr EIGENES Ergebnis zurueck
+- `{success: true}` oder Query-Result - NICHT die Eingangsdaten!
+- Betrifft: Postgres, Supabase, MySQL - alle DB-Nodes mit executeQuery
+- Fix: Fan-out Pattern oder Node am Ende der Kette platzieren
+
+**🔴 Fan-out Pattern fuer parallele DB-Writes:**
+```
+// n8n Connection JSON - ein Output an mehrere Targets:
+"Kosten Tracken": {
+    "main": [[
+        {"node": "JSON Validieren", "type": "main", "index": 0},
+        {"node": "Kosten Loggen", "type": "main", "index": 0}
+    ]]
+}
+// → Beide Nodes erhalten die GLEICHEN Eingangsdaten von Kosten Tracken
+```
+
+**🔴 SQL-Injection durch LLM-Output:**
+- LLM-generierter Text enthaelt Apostrophe, Anfuehrungszeichen, Sonderzeichen
+- In n8n Expression `{{ $json.llm_text }}` direkt in SQL = Injection-Risiko
+- Fix: Code Node baut escaped SQL, PG Node fuehrt `{{ $json._sql }}` aus
+- Escape-Funktion: `String(s).replace(/'/g, "''")`
+
+**🔴 PG NUMERIC → String in n8n:**
+- PostgreSQL NUMERIC-Spalten kommen als String an (z.B. `"1.50"` statt `1.50`)
+- `.toFixed()` auf String = TypeError
+- IMMER `Number()` wrappen: `Number(budget.tages_limit).toFixed(2)`
+
+**🟡 OpenRouter HTTP Request Config:**
+```
+specifyBody: "string"          // NICHT "json"!
+contentType: "raw"
+rawContentType: "application/json"
+body: "={{ JSON.stringify({ model: '...', messages: [...] }) }}"
+```
+- `specifyBody: "json"` bricht wenn Prompts Sonderzeichen enthalten
+- `specifyBody: "string"` mit manueller Serialisierung ist sicher
+
+**🟡 n8n Timezone:**
+- Container laeuft UTC (kein `GENERIC_TIMEZONE` gesetzt)
+- Alle Cron-Expressions sind UTC-basiert
+- 08:00 UTC = 09:00 CET (Winter) / 10:00 CEST (Sommer)
+
+**🟡 Agent System Credentials:**
+| Credential | ID | Zweck |
+|------------|-----|-------|
+| postgres-local | LYUdGid4dzQwI8iP | n8n_agents DB (Port 5435) |
+| OpenRouter | JDjnOpGlLzqfePON | LLM API |
+| Telegram | V5Uu10rEX9pFxQr2 | Chat-ID 2061281331 |
+| SerpAPI | Wf09NDPygzEeQhYT | Web-Suche |
 
 ---
 
