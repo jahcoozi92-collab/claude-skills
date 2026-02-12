@@ -194,9 +194,36 @@ Arzt informiert um 10:15 Uhr."
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
 
-### Session-Learnings:
+### 2026-02-12 - MD Stationär Ordner-Analyse
 
-*Noch keine Learnings erfasst. Führe `/reflect pflege-dokumentation` nach einer Session aus!*
+**MD Stationär Migration (DAN/Tulipan → MD Stationär):**
+- Kunde: Betreuungszentrum Arche Noah KG, Herzogenrath
+- Zwei Standorte: Betreuungszentrum (BZ) + Wohnpark (WP)
+- Projektmanager Medifox: Norbert Biron
+- Migration geplant: KW 30/2025 (Datenübernahme)
+
+**5-Schritte-Migrationsprozess:**
+1. Update DAN auf aktuelle Version
+2. MD-Datenbank vorbereiten
+3. Pflichtdaten übernehmen (Stammdaten, Mitarbeiter)
+4. Abrechnungs-/Pflegedokumente übernehmen
+5. Manuelle Nachbearbeitung
+
+**Module MD Stationär:**
+- PEP (Personalplanung), VA (Verwaltung), KPB (Pflegeplanung/Dokumentation)
+- Connect (Schnittstellen), KI-Dienstplanung, KI-Tourenplanung
+- Schulungscodes: KPEP, KVA, KPB, APEP, AVA, APB, KKI, KTour, KCon
+
+**Korrekte Menüpfade (im RAG-System korrigiert):**
+- Maßnahmenplanung: `Verwaltung → Bewohner → [Bewohner] → Reiter Planung`
+- Textbausteine: `Administration → Dokumentation → Kataloge/Textbausteine`
+- FALSCH: `Pflege/Betreuung → Dokumentation → Pflegemappe`
+
+**Projektordner-Struktur:**
+- `\\SERVER2012R2\Dokumente\MD Stationär\` enthält ~38 Dateien (PDF, DOCX, XLSX, XLSM)
+- Unterordner: `MD Hilfeordner\`, `Konfiguration\`, `Ticketsystem\`
+- Analyse-Skript: `C:\Users\D.Göbel\analyze_md_stationaer.py`
+- Analyse-Output: `C:\Users\D.Göbel\md_stationaer_analyse.txt`
 
 ---
 
@@ -208,3 +235,4 @@ Arzt informiert um 10:15 Uhr."
 | RAG-Vektoren | Supabase @ wfklkrgeblwdzyhuyjrv |
 | Workflow-Backups | NextCloud |
 | Skills-Repository | ~/.claude/skills/ |
+| **MD Stationär Projektordner** | `\\SERVER2012R2\Dokumente\MD Stationär\` (= `Y:\MD Stationär\`) |
