@@ -75,6 +75,7 @@ Die `.bashrc` lädt SSH-Aliases beim Start:
 | `pywin32` | 311 | COM-Automation (Word, Excel, PowerPoint) |
 | `python-docx` | 1.2.0 | .docx Bearbeitung |
 | `openpyxl` | 3.1.5 | .xlsx Bearbeitung |
+| `pdfplumber` | latest | PDF-Textextraktion (auch für UNC-Pfade) |
 | `python-pptx` | 1.0.2 | .pptx Bearbeitung |
 | `openai-whisper` | 20250625 | Transkription |
 | `torch` | 2.8.0+cpu | PyTorch (CPU-only) |
@@ -154,11 +155,14 @@ ping 192.168.2.215
 1. Keine `Path.resolve()` oder `os.path.abspath()` auf UNC-Pfade — konvertiert `\\192.168.2.215\` zu `C:\192.168.2.215\`
 2. Keine Hardcoded Passwörter in neuen Skripten — `.env` oder Environment-Variablen nutzen
 3. Keine `rm -rf` auf Netzlaufwerken ohne explizite Bestätigung
+4. **Kein `cmd.exe` wenn CWD ein UNC-Pfad ist** (`\\SERVER...`) — cmd.exe unterstützt keine UNC-Pfade als Arbeitsverzeichnis. IMMER `powershell.exe -Command "..."` verwenden
 
 ### BEVORZUGT
 1. Git Bash für Dateisystem-Operationen, PowerShell für Windows-spezifische Aufgaben (COM, Registry)
 2. Raw-Strings (`r"..."`) für alle Windows-/UNC-Pfade in Python
 3. Lokale Kopie vor NAS-Bearbeitung (tempfile → bearbeiten → zurückkopieren)
+4. **Bulk-Dokumentenanalyse via Python-Skript** — pdfplumber + python-docx + openpyxl, Output in UTF-8-Datei schreiben (nicht stdout)
+5. **Encoding-Workaround** — `sys.stdout.reconfigure(encoding='utf-8', errors='replace')` + Ergebnisse in Datei mit `open(..., encoding='utf-8')` schreiben, da Windows-Konsole (cp1252) bei Unicode-Zeichen versagt
 
 ### GUT ZU WISSEN
 1. Docker Desktop ist installiert (v28.4), aber Docker-Workloads laufen primär auf NAS
@@ -166,6 +170,7 @@ ping 192.168.2.215
 3. `mcp-server-office` ist installiert — Office-Dokumente können auch über MCP bearbeitet werden
 4. Rechner-Name ist WS44, User ist D.Göbel (Domänen-User)
 5. PowerShell-Einzeiler in Git Bash: `$`-Variablen (`$_`, `$r`, etc.) werden von Bash expandiert, bevor PowerShell sie sieht — komplexe PS-Befehle mit `try/catch` oder `$_` daher via `-File` oder als Script ausführen, nicht inline
+6. `pip install` funktioniert OHNE Admin-Rechte, `choco install` BRAUCHT Admin/Elevation — bei fehlenden Tools erst pip-Alternative prüfen
 
 ---
 
@@ -197,3 +202,22 @@ scp ~/pflegeassist/index.html sshd@192.168.2.215:/shares/Public/pflegeassist/ind
 **PowerShell-Escape in Git Bash:**
 - `$_`, `$r`, `$_.Exception` etc. werden von Bash als leere Variablen expandiert
 - Workaround: Einfache PS-Befehle ohne `$`-Referenzen nutzen, oder `.ps1`-Datei erstellen
+
+### 2026-02-12 - MD Stationär Ordner-Analyse
+
+**UNC-Pfad + cmd.exe:**
+- Claude Code CWD war `\\SERVER2012R2\Dokumente\MD Stationär` → alle cmd.exe-Aufrufe schlugen fehl
+- Lösung: `powershell.exe -Command "..."` statt cmd.exe
+
+**Bulk-Dokumentenextraktion:**
+- Read-Tool kann keine binären Office-Dateien (XLSX, DOCX) und keine PDFs ohne pdftoppm lesen
+- Lösung: Python-Skript mit pdfplumber + python-docx + openpyxl
+- Output in UTF-8-Datei (`C:\Users\D.Göbel\md_stationaer_analyse.txt`), da stdout cp1252-Encoding hat
+
+**Encoding-Problem:**
+- `print()` nach stdout scheitert an Unicode-Zeichen (z.B. U+2610 BALLOT BOX)
+- `sys.stdout.reconfigure(encoding='utf-8', errors='replace')` + Datei-Output löst das
+
+**pip vs choco:**
+- `choco install poppler` scheiterte (Lock-File + Admin-Rechte)
+- `pip install pdfplumber python-docx openpyxl` funktionierte sofort (kein Admin nötig)
