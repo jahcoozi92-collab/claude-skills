@@ -394,6 +394,31 @@ Wie ein Wecker. Jeden Tag um 8 Uhr morgens startet der Workflow.
     → Deactivate/Activate erzwingt Neu-Registrierung der Webhooks
     → Container-Restart ist der sichere Fallback
 
+15. **NIEMALS** chatTrigger mit respondToWebhook kombinieren!
+    ```
+    ❌ FALSCH: Chat-Trigger → Agent → ... → Respond to Webhook
+       → chatTrigger erwartet output vom LETZTEN Node
+       → respondToWebhook gibt NICHTS zurück → "No response" im Chat-UI!
+
+    ✅ RICHTIG: Routing per Trigger-Typ nach dem Agent:
+       Agent → Trigger_Router (Code) → Ist_Webhook? (IF)
+         TRUE  → Respond to Webhook (für API-Webhook-Pfad)
+         FALSE → Chat_Antwort (Set: {output: $json.output})
+    ```
+    - chatTrigger liest `output` Feld vom letzten ausgeführten Node
+    - respondToWebhook sendet HTTP-Response, gibt aber KEIN output weiter
+    - Trigger-Erkennung: `try { $('Format Chat Input').first(); } catch(e) {}`
+
+16. **NIEMALS** zusätzliche Felder in n8n API PUT /workflows settings!
+    ```
+    ❌ FALSCH: settings: { executionOrder, timezone, callerPolicy, ... }
+       → "request/body/settings must NOT have additional properties"
+
+    ✅ RICHTIG: settings: { executionOrder: "v1" }
+       → NUR executionOrder wird akzeptiert
+    ```
+
+
 ### 🟡 BEVORZUGT
 
 1. **Error Workflow** einrichten für Fehlerbenachrichtigung
@@ -1113,6 +1138,60 @@ body: "={{ JSON.stringify({ model: '...', messages: [...] }) }}"
 | OpenRouter | JDjnOpGlLzqfePON | LLM API |
 | Telegram | V5Uu10rEX9pFxQr2 | Chat-ID 2061281331 |
 | SerpAPI | Wf09NDPygzEeQhYT | Web-Suche |
+
+---
+
+### 2026-02-14 - chatTrigger Routing, API Settings, Trigger Detection
+
+**🔴 chatTrigger + respondToWebhook = "No response"!**
+
+```
+Chat-Trigger → Agent → Grounding_Verifier → respondToWebhook
+                                              ↑ gibt NICHTS zurück!
+                                              → chatTrigger bekommt kein output
+                                              → "No response. Make sure the last node outputs the content to display."
+```
+
+**Fix: Routing nach Trigger-Typ**
+```
+Agent → Grounding_Verifier → Trigger_Router (Code) → Ist_Webhook? (IF)
+  TRUE  → Check Agent Error → Respond Chat API (respondToWebhook)
+  FALSE → Chat_Antwort (Set: { output: $json.output })
+```
+
+**Trigger-Erkennung Pattern:**
+```javascript
+// In Code Node nach dem Agent:
+let isApiWebhook = false;
+try {
+  const fci = $('Format Chat Input').first();
+  if (fci && fci.json) isApiWebhook = true;
+} catch(e) {
+  isApiWebhook = false;
+}
+return { json: { ...$json, _isApiWebhook: isApiWebhook } };
+```
+
+**🔴 n8n API PUT settings: NUR executionOrder!**
+```python
+# Alle anderen Felder (timezone, callerPolicy, timeSavedMode, availableInMCP)
+# verursachen Validation Error!
+put_payload = {
+    "nodes": wf['nodes'],
+    "connections": wf['connections'],
+    "settings": {"executionOrder": "v1"},  # NUR das!
+    "name": wf['name']
+}
+```
+
+**🟡 API Update-Zyklus für Webhook-Re-Registrierung:**
+```bash
+# 1. PUT workflow update
+# 2. POST /workflows/{id}/deactivate
+# 3. sleep 2
+# 4. POST /workflows/{id}/activate
+# → Webhooks werden erst nach Deaktivierung/Aktivierung re-registriert
+```
 
 ---
 

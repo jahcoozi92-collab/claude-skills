@@ -364,7 +364,25 @@ ANTWORT:
     ```
     → n8n Webhooks können in sandboxed context laufen (origin: null)
 
-13. **NIEMALS** CORS auf spezifische Domain setzen bei n8n Webhook-HTML!
+13. **NIEMALS** "ca.", "circa", "ungefähr" bei Inventar/Zähl-Antworten!
+    ```
+    ❌ FALSCH: "Die Datenbank enthält ca. 80 Dokumente zur Abrechnung"
+       → LLM erfindet Kategorien-Zahlen trotz Tool-Daten!
+       → Benutzer vertraut erfundenen Zahlen!
+
+    ✅ RICHTIG: System-Prompt MUSS enthalten:
+       "KEINE 'ca.' oder 'circa' bei Dokumentanzahlen.
+        Exakte Zahlen NUR pro Dateityp (aus Tool-Daten).
+        Themengebiete OHNE Zahlen auflisten."
+
+    ✅ Format:
+       **Gesamtanzahl:** 502 Dokumente (exakt aus Alle_dateien)
+       | Dateityp | Anzahl |
+       | TXT      | 267    |   ← exakt berechnet
+       **Themengebiete:** Abrechnung, PEP, Pflege... ← KEINE Zahlen!
+    ```
+
+14. **NIEMALS** CORS auf spezifische Domain setzen bei n8n Webhook-HTML!
     ```
     ❌ access-control-allow-origin: https://n8n.forensikzentrum.com
        → n8n setzt CSP: sandbox (OHNE allow-same-origin)
@@ -1595,6 +1613,44 @@ Respond Chat API     Set Error Message → Respond Error API
 - `onError: 'continueRegularOutput'` auf dem Agent-Node (nicht `stopWorkflow`!)
 - IF-Node prüft: `={{ $json.output }}` — bei Fehler ist output undefined/leer
 - Error-Response enthält `{ error: true }` Flag für Frontend-Erkennung
+
+---
+
+### 2026-02-14 - Anti-Halluzination: "ca."-Schätzungen, Grounding Verifier
+
+**🔴 LLM erfindet "ca. X Dokumente" bei Inventar-Fragen!**
+
+Trotz Tool-Daten (Alle_dateien liefert exakte Liste) gruppiert das LLM
+die Dateien in Kategorien und erfindet "ca. 80", "ca. 60" Schätzungen.
+
+**Fix im System-Prompt (verschärft):**
+```
+### VERBOTEN bei Inventar-Antworten:
+- KEINE "ca." oder "circa" oder "ungefähr" bei Dokumentanzahlen
+- KEINE geschätzten Kategorien-Zahlen wie "ca. 80 Dokumente"
+- Stattdessen: Themengebiete OHNE Zahlen + exakte Gesamtzahl
+```
+
+**Ergebnis vorher:**
+```
+### Abrechnung (ca. 80 Dokumente)  ← ERFUNDEN!
+### Personaleinsatzplanung (ca. 60 Dokumente)  ← ERFUNDEN!
+```
+
+**Ergebnis nachher:**
+```
+**Gesamtanzahl:** 502 Dokumente  ← EXAKT aus Tool
+| TXT | 267 |  ← EXAKT
+**Themengebiete:** Abrechnung, PEP, ...  ← OHNE Zahlen
+```
+
+**🟡 Grounding_Verifier Warning fast immer aktiv**
+
+Der Grounding_Verifier prüft Bold-Terms gegen Retrieved Context.
+Threshold 0.7 → Warning wird bei den meisten Antworten angehängt,
+weil Überschriften wie "Personaleinsatzplanung" nicht wörtlich im
+Context stehen. Ggf. Threshold auf 0.5 senken oder Ignore-Liste
+erweitern.
 
 ---
 
