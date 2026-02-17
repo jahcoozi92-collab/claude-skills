@@ -323,6 +323,9 @@ SET LOCAL hnsw.ef_search = 100;
 - Maßnahmenplanung: `Verwaltung → Bewohner → [Bewohner] → Reiter Planung`
 - Textbausteine: `Administration → Dokumentation → Kataloge/Textbausteine`
 - Pflegemappe: `Dokumentation → Dokumentation → [Bewohner]`
+- Checklisten erstellen/importieren: `Dokumentation → Dokumentation → [Bewohner] → Stammdaten → Zahnrad (Import) oder Fragebögen → Neu`
+- Checklisten-Status einsehen: `Verwaltung → Bewohner → [Bewohner] → Bewohnercockpit → Status`
+- Fragebögen = Formulare = Checklisten (gleiche Erstellungsfunktion)
 - FALSCH war: `Pflege/Betreuung → Dokumentation → Pflegemappe` (Web-Recherche lieferte falsches Ergebnis)
 
 **Architektur-Insight:**
