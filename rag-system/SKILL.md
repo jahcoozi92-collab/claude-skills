@@ -461,7 +461,10 @@ ANTWORT:
 2. Ollama läuft auf NAS Port 11434
 3. Medifox-Dokumente in NextCloud gespeichert
 4. **Aktiver Chat-Workflow:** SJ47UX9mv8wh1Wwy (RAG_Masterclass_Chat_hybrid)
-5. **n8n HTML-Architektur:**
+5. **API-Test-Endpoint:** `POST /webhook/rag-chat-api` (JSON-Antwort)
+   - NICHT `GET /webhook/medifox-chat` (das liefert die HTML-Seite)
+   - Payload: `{"sessionId":"test-xyz","chatInput":"Frage hier"}`
+6. **n8n HTML-Architektur:**
    - n8n serviert NICHT aus Dateien!
    - Inline-HTML liegt in "Respond to Webhook" Node
    - Runtime liest aus `workflow_history` Tabelle
