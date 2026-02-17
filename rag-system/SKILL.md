@@ -418,6 +418,32 @@ ANTWORT:
     - System Prompt verstärken: "BEVOR du antwortest, MUSST du Tool aufrufen!"
     - Diagnose: Wenn Agent aus eigenem Wissen antwortet → toolDescription prüfen!
 
+14. **NIEMALS** Grounding Verifier Antworten ersetzen oder kürzen lassen!
+    ```
+    ❌ if (score < 0.4) finalAnswer = "Unklare Datenlage..."
+       (Ersetzt auch korrekte Antworten, 3x in Session gescheitert!)
+    ✅ if (score < 0.4) finalAnswer = answer + "\n---\n⚠️ Warnung..."
+       (Nur Warnung ANHÄNGEN, System-Prompt ist primäre Verteidigung)
+    ```
+
+15. **NIEMALS** Prompt-Tuning VOR Quelldokument-Prüfung!
+    ```
+    ❌ Bot antwortet falsch → System-Prompt verschärfen
+       (Hilft nicht wenn die Quellen selbst falsch sind!)
+    ✅ Bot antwortet falsch → ERST Supabase-Dokumente prüfen
+       → Falsche/unpräzise Docs korrigieren → DANN Prompt tunen
+    ```
+
+16. **Korrekte MediFox Stationär Menüpfade (verifiziert 2026-02-17):**
+    ```
+    ✅ Pflegemappe:      Dokumentation → Dokumentation → [Bewohner]
+    ✅ Maßnahmenplanung: Verwaltung → Bewohner → [Bewohner] → Reiter Planung
+    ✅ Textbausteine:    Administration → Dokumentation → Kataloge/Textbausteine
+    ❌ FALSCH: Pflege/Betreuung → Dokumentation → Pflegemappe (Web-Recherche-Fehler!)
+    ```
+    - "Bewohnerakte" ist KEIN Menüpunkt — nur ein Konzept
+    - Korrekt: "Bewohneransicht" nach Verwaltung → Bewohner → [Bewohner]
+
 ### 🟡 BEVORZUGT
 
 1. **Chunk-Größe:** 500-1000 Tokens

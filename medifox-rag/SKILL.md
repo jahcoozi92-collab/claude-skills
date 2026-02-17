@@ -69,6 +69,7 @@ Dieser Skill hilft dabei:
 | **Mitarbeiterzeiterfassung (MZE)** | Sollstunden, Überstunden, Abschließen |
 | **Verwaltung > Mitarbeiter** | Stammdaten, Regelarbeitszeit, Abwesenheiten |
 | **Administration** | Benutzerverwaltung, Rollen/Rechte |
+| **Dokumentation** | Pflegemappe, Dokumentation, SIS, Sturzdokumentation |
 | **Organisation** | Jahresübersicht, Urlaubsanträge |
 
 ---

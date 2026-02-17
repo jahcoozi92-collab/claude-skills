@@ -322,7 +322,8 @@ SET LOCAL hnsw.ef_search = 100;
 **MD Stationär - Korrekte Menüpfade:**
 - Maßnahmenplanung: `Verwaltung → Bewohner → [Bewohner] → Reiter Planung`
 - Textbausteine: `Administration → Dokumentation → Kataloge/Textbausteine`
-- FALSCH war: `Pflege/Betreuung → Dokumentation → Pflegemappe`
+- Pflegemappe: `Dokumentation → Dokumentation → [Bewohner]`
+- FALSCH war: `Pflege/Betreuung → Dokumentation → Pflegemappe` (Web-Recherche lieferte falsches Ergebnis)
 
 **Architektur-Insight:**
 - Hybrid Search = Vektor-Ähnlichkeit (HNSW) + Full-Text-Search (FTS) + Boost-System
