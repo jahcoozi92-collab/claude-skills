@@ -1670,13 +1670,45 @@ die Dateien in Kategorien und erfindet "ca. 80", "ca. 60" Schätzungen.
 **Themengebiete:** Abrechnung, PEP, ...  ← OHNE Zahlen
 ```
 
-**🟡 Grounding_Verifier Warning fast immer aktiv**
+**Grounding_Verifier v4 (silent, 2026-02-17)**
 
-Der Grounding_Verifier prüft Bold-Terms gegen Retrieved Context.
-Threshold 0.7 → Warning wird bei den meisten Antworten angehängt,
-weil Überschriften wie "Personaleinsatzplanung" nicht wörtlich im
-Context stehen. Ggf. Threshold auf 0.5 senken oder Ignore-Liste
-erweitern.
+Der Grounding_Verifier ist jetzt silent: Score wird berechnet und in
+`answer_traces` geloggt, aber KEINE Warnung wird dem User angezeigt.
+Diana-Präferenz: Keine technischen Hinweise im Chat.
+
+System-Prompt ist die primäre Verteidigung gegen Halluzination.
+Verifier dient nur noch als Monitoring-Tool.
+
+---
+
+### 2026-02-17 - Chat-Qualitätsverbesserungen
+
+**Bulk-Fix Pattern für Dokumente:**
+Bei Dokumentkorrekturen IMMER DB-weite Suche nach ähnlichen Mustern:
+```sql
+SELECT count(*), array_agg(id) FROM documents
+WHERE content LIKE '%falscher_text%';
+```
+Nicht nur bekannte IDs fixen! (24 statt 14 Docs gefunden)
+
+**Chat-HTML Card-Detection Keywords (EXAKT):**
+Die Chat-Oberfläche rendert farbige Karten NUR wenn der LLM diese
+Überschriften verwendet (in `parseStructuredResponse()`):
+- `Zusammenfassung` → 📋 Teal-Karte
+- `Schritte` → ✅ Grüne Karte
+- `Hinweis` → ⚠️ Amber-Karte
+- `Quellen` → 📚 Graue Karte (klappbar)
+- **Minimum 2 erkannte Sektionen** (`sectionCount >= 2`)
+- Andere Headers ("Funktion", "Zugriff", "Anpassung") werden NICHT erkannt!
+- Fix: Explizite Formatierungsanweisung im System-Prompt mit diesen Keywords
+
+**Verbotene Phrasen im System-Prompt:**
+"Recherchiere im Internet", "Suche online", "Google nach" etc.
+→ LLM generiert diese eigenständig als Empfehlung, ohne Prompt-Anweisung
+
+**Antwortlängen-Limits:**
+Klickpfad max. 250, Fachfragen max. 350, Follow-up max. 200 Wörter.
+Dramatisch effektiv (800+ → 130-190 Wörter).
 
 ---
 
