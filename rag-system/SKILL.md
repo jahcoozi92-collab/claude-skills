@@ -418,12 +418,16 @@ ANTWORT:
     - System Prompt verstärken: "BEVOR du antwortest, MUSST du Tool aufrufen!"
     - Diagnose: Wenn Agent aus eigenem Wissen antwortet → toolDescription prüfen!
 
-14. **NIEMALS** Grounding Verifier Antworten ersetzen oder kürzen lassen!
+14. **NIEMALS** Grounding Verifier Antworten ersetzen, kürzen oder Warnungen anhängen!
     ```
     ❌ if (score < 0.4) finalAnswer = "Unklare Datenlage..."
        (Ersetzt auch korrekte Antworten, 3x in Session gescheitert!)
-    ✅ if (score < 0.4) finalAnswer = answer + "\n---\n⚠️ Warnung..."
-       (Nur Warnung ANHÄNGEN, System-Prompt ist primäre Verteidigung)
+    ❌ if (score < 0.7) finalAnswer = answer + "\n---\n⚠️ Warnung..."
+       (User will KEINE sichtbaren Warnungen — verwirrt Endbenutzer!)
+    ✅ Grounding Verifier v4 (aktuell, seit 2026-02-18):
+       - Score berechnen → in answer_traces loggen → Antwort UNVERÄNDERT durchlassen
+       - System-Prompt + Abstain-Regel ist die primäre Verteidigung
+       - Monitoring über answer_traces Tabelle (grounding_score, ungrounded_terms)
     ```
 
 15. **NIEMALS** Prompt-Tuning VOR Quelldokument-Prüfung!
@@ -447,6 +451,20 @@ ANTWORT:
     - "Bewohnerakte" ist KEIN Menüpunkt — nur ein Konzept
     - Korrekt: "Bewohneransicht" nach Verwaltung → Bewohner → [Bewohner]
     - Fragebögen = Formulare = Checklisten (gleiche Erstellungsfunktion in MediFox)
+
+17. **Dokument-Audit-Pattern** (bei neuer Verzeichnisstruktur-Info):
+    ```
+    ❌ Nur bekannte Dokument-IDs korrigieren
+       (Weitere Dokumente mit gleichem Fehler werden übersehen!)
+    ✅ Systematischer DB-Audit:
+       1. Neue Struktur-Info als system_reference einfügen
+       2. SELECT id, LEFT(content,120) FROM documents
+          WHERE content LIKE '%alter_falscher_pfad%'
+       3. ALLE Treffer korrigieren (nicht nur bekannte IDs)
+       4. Finale Verifikation: Query muss 0 Treffer liefern
+    ```
+    - Referenz-Dokumente: ID 368849 (MediFox Vollstruktur), 368850 (SIS-Detail)
+    - click_paths: 67 Einträge gesamt (6 Module + Dokumappe + Schnellzugriff)
 
 ### 🟡 BEVORZUGT
 
