@@ -136,6 +136,67 @@ docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 
 ---
 
+## QPR Pipeline v4 — Architektur
+
+**Kernprinzip:** Kleine LLMs (4B-8B) NIEMALS fuer strukturierte Parsing-Aufgaben einsetzen. Deterministische Regex ist schneller (5ms vs 40s), zuverlaessiger (16/16 Tests), und hat null Halluzinationen.
+
+### Pipeline-Flow (6 Nodes, ~1-2 Min)
+```
+Datei-Upload → Text extrahieren → Sofort-Antwort → Medifox PII-Parser → Claude QPR-Analyse → Ergebnis speichern
+```
+
+### Workflow-IDs
+| Workflow | ID |
+|----------|----|
+| Upload-Seite | `awEwRy06dnMmYGHo` |
+| QPR-Pipeline (v4) | `13BSbohy6LXnnsva` |
+| Ergebnis-Polling | `OVyDxI3TMa2aQDMF` |
+
+### Medifox PII-Parser (deterministisch, kein LLM)
+Erkennt automatisch aus Medifox-Header-Struktur:
+1. **Bewohner:** `Name, Vorname: Nachname, Vorname (*DD.MM.YYYY)`
+2. **Geburtsdatum:** NUR `(*DD.MM.YYYY)` Pattern — Pflegedaten (seit, Zeitraum) NICHT ersetzen
+3. **Benutzer:** `Benutzer: Nachname, Vorname (Kuerzel)`
+4. **Bezugspflegekraft**
+5. **Arzt:** Nur Grossbuchstabe-Namen nach Hausarzt/Facharzt/etc., NICHT generisches "Arzt"
+6. **Angehoerige**
+7. **Einrichtung + Adresse + Tel/Fax + E-Mail + IK** (Einzel-Patterns, kein Block-Regex)
+8. **Zimmer**
+9. **Fliesstext-Scan:** Dr./Schwester + Name
+
+### Medifox PII-Regeln (kritisch)
+- **PP = Pflegeperson** — Standard-Medifox-Abkuerzung, ist KEIN Name, NIEMALS ersetzen
+- **Word-Boundary `\b`** fuer Ersetzungen < 5 Zeichen (verhindert "Suppe" → "SuPK_1e")
+- **Sortierung:** Laengste Matches zuerst, dann nach Prioritaet
+- **Safety-Check:** Falls Bewohner-Nachname nach allen Ersetzungen noch im Text → Notfall-Replace
+
+### Claude QPR-Prompt Kontext
+- `max_tokens: 8192` (4096 reicht nicht, Report wird abgeschnitten)
+- Claude muss wissen: `PP = Pflegeperson` (Medifox-Abkuerzung)
+- Claude bewertet einen **Massnahmenplan**, nicht die vollstaendige Dokumentation
+- Fehlende SIS/Medikation → "separat pruefen", nicht "fehlt"
+- Warnung im Ergebnis-HTML wenn `stop_reason = max_tokens`
+
+### Deutsches Namens-Regex (8/8 getestet)
+```regex
+[A-ZÄÖÜa-zäöüß][A-ZÄÖÜa-zäöüßé\-]+(?:\s+(?:von|van|de|der|den|zu|zum|zur)\s+[A-ZÄÖÜa-zäöüß][A-ZÄÖÜa-zäöüßé\-]+)*
+```
+Unterstuetzt: Schmidt-Meier, von der Heide, Oezdemir, étranger-Varianten
+
+---
+
+## n8n Webhook Constraints
+
+- **CSP Sandbox:** Webhooks erzwingen `sandbox` OHNE `allow-same-origin`
+  - `fetch()`, `XMLHttpRequest`, `localStorage`, `sessionStorage` BLOCKIERT
+  - Nutze `<form target="_blank">` fuer POST
+  - Nutze `<meta http-equiv="refresh">` fuer Polling
+- **JS Variable Naming:** NIEMALS `var status` oder `var error` als globale Variablen (Konflikt mit `window.status`)
+- **Cloudflare Free:** 100s HTTP-Timeout (Fehler 524) → Async-Pattern mit Polling-Endpoint erforderlich
+- **Task Runner Timeout:** `N8N_RUNNERS_TASK_TIMEOUT` wird intern *1000 → Max safe: 1800000 (30 Min)
+
+---
+
 ## Gelernte Lektionen
 
 ### 2026-02-08 — Initiale Einrichtung
@@ -150,3 +211,23 @@ docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 - Cloudflare Tunnel statt Reverse Proxy
 - Ollama laeuft als Docker Container (nicht nativ)
 - Mehrere Docker-Compose-Dateien fuer verschiedene Stacks
+
+### 2026-02-18 — QPR Pipeline v1-v4 Evolution
+
+**Architektur-Evolution (v1→v4):**
+- v1: Ollama gemma3:4b Volltext-Anonymisierung → Bengali-Gibberish bei 30K Input
+- v2: Ollama mit Truncation auf 5K + JSON-Mapping → Halluzinationen ("geben" → Arzt)
+- v3: Ollama + Regex-Fallback → "PP" → "PK_1" zerstoert Woerter ("Suppe" kaputt)
+- **v4: Ollama komplett entfernt** → Deterministischer Medifox PII-Parser (16/16 Tests bestanden)
+
+**Level-2 Thinking Prinzip:**
+- Nach 3+ iterativen Patches am selben Problem → STOPP
+- Architektur ueberdenken statt weitere Patches
+- Symptom-Patches (Blacklist, Boundary-Fixes) sind Warnsignal fuer falschen Ansatz
+- In diesem Fall: LLM-basiertes Parsing war der falsche Ansatz fuer strukturierte Daten
+
+**Infrastruktur-Fixes:**
+- Cloudflare 524 Timeout → Async-Polling-Architektur mit meta-refresh
+- N8N_RUNNERS_TASK_TIMEOUT=2400000 crasht Task Runner (32-bit Overflow) → 1800000
+- `var status` in sandboxed Webhook-Page → `statusBox` (window.status Konflikt)
+- PDF-Extraktion mit pdfjs-dist funktioniert fuer Medifox-Exporte
