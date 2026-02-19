@@ -418,6 +418,30 @@ Wie ein Wecker. Jeden Tag um 8 Uhr morgens startet der Workflow.
        → NUR executionOrder wird akzeptiert
     ```
 
+17. **NIEMALS** annehmen dass Python/pip/apk im n8n Container verfuegbar sind!
+    ```
+    ❌ FALSCH: docker exec n8n-n8n-1 pip install python-docx
+       → n8n Docker Image (v2.7.4+) ist "Hardened Alpine"
+       → apk, pip, Python sind ENTFERNT!
+
+    ✅ RICHTIG: Node.js-Alternativen nutzen:
+       - DOCX-Parsing: mammoth.js (npm install mammoth --prefix /home/node/.n8n)
+       - File-Watching: scheduleTrigger (Polling) statt localFileTrigger
+       - localFileTrigger Node existiert NICHT im Hardened Image!
+    ```
+
+18. **NIEMALS** fs.renameSync() zwischen separaten Docker-Mounts!
+    ```
+    ❌ FALSCH: fs.renameSync('/datenbank/eingang/file.txt', '/datenbank/verarbeitet/file.txt')
+       → EXDEV: cross-device link not permitted
+       → eingang/ und verarbeitet/ sind SEPARATE Docker-Volume-Mounts!
+
+    ✅ RICHTIG: Copy + Delete statt Rename:
+       fs.copyFileSync(srcPath, dstPath);
+       fs.unlinkSync(srcPath);
+    ```
+    → Gilt fuer ALLE Faelle wo Quell- und Zielverzeichnis verschiedene Mounts sind
+
 
 ### 🟡 BEVORZUGT
 
@@ -430,6 +454,9 @@ Wie ein Wecker. Jeden Tag um 8 Uhr morgens startet der Workflow.
 7. **Deploy-Pattern**: deactivate → PUT (interne API) → activate
 8. **n8n Timezone beachten**: Ohne `GENERIC_TIMEZONE` env = UTC. Alle Crons in UTC!
 9. **Activation API (v2.7.4+)**: `active` ist read-only in PUT → `POST /workflows/{id}/activate` und `/deactivate`
+10. **mammoth.js in Code Nodes**: `npm install mammoth --prefix /home/node/.n8n` (persistiert im gemounteten Volume). Env: `NODE_FUNCTION_ALLOW_EXTERNAL=mammoth`. Import: `const mammoth = require('mammoth');`
+11. **Anthropic API direkt aus n8n**: Gleiche Config wie OpenRouter (#6): `specifyBody: "string"`, `contentType: "raw"`, `rawContentType: "application/json"`. Auth: `x-api-key` Header mit `{{ $env.ANTHROPIC_API_KEY }}`. `max_tokens: 16384` fuer grosse Dokumente.
+12. **Claude max_tokens Truncation Recovery**: Wenn `stop_reason === 'max_tokens'`: JSON ist abgeschnitten. Letzte vollstaendige `},` finden, offene Brackets/Braces schliessen, `JSON.parse()` versuchen.
 
 ### 🟢 GUT ZU WISSEN
 
@@ -1138,6 +1165,61 @@ body: "={{ JSON.stringify({ model: '...', messages: [...] }) }}"
 | OpenRouter | JDjnOpGlLzqfePON | LLM API |
 | Telegram | V5Uu10rEX9pFxQr2 | Chat-ID 2061281331 |
 | SerpAPI | Wf09NDPygzEeQhYT | Web-Suche |
+
+---
+
+### 2026-02-19 - Formular Konverter: Hardened Image, EXDEV, mammoth.js, Claude API
+
+**🔴 n8n Docker Image ist Hardened Alpine:**
+- `apk`, `pip`, `python3` sind ENTFERNT - keine Installation moeglich
+- `localFileTrigger` Node existiert NICHT
+- Workaround DOCX: `mammoth.js` (npm) statt `python-docx`
+- Workaround File-Watch: `scheduleTrigger` v1.2 (Polling alle 5 Min)
+- npm install persistiert: `npm install mammoth --prefix /home/node/.n8n`
+- Env: `NODE_FUNCTION_ALLOW_EXTERNAL=mammoth` in docker-compose.yml
+
+**🔴 EXDEV: cross-device link not permitted:**
+- Docker-Volumes fuer `/datenbank/eingang/` und `/datenbank/verarbeitet/` sind SEPARATE Host-Mounts
+- `fs.renameSync()` zwischen Mounts → EXDEV Error
+- Fix: `fs.copyFileSync(src, dst); fs.unlinkSync(src);`
+
+**🟡 Anthropic API direkt aus n8n HTTP Request:**
+```
+specifyBody: "string"
+contentType: "raw"
+rawContentType: "application/json"
+Header: x-api-key = {{ $env.ANTHROPIC_API_KEY }}
+Body: JSON.stringify({ model: "claude-sonnet-4-5-20250929", max_tokens: 16384, ... })
+```
+- Gleiche Config wie OpenRouter (BEVORZUGT #6)
+- `max_tokens: 16384` fuer grosse Dokumente (Standard 8192 reicht nicht fuer 60+ Felder)
+
+**🟡 Claude max_tokens Truncation Recovery:**
+```javascript
+// Wenn stop_reason === 'max_tokens':
+const lastComplete = jsonStr.lastIndexOf('},');
+if (lastComplete > 0) {
+  let repaired = jsonStr.substring(0, lastComplete + 1);
+  // Offene Brackets/Braces zaehlen und schliessen
+  const openBrackets = (repaired.match(/\[/g) || []).length - (repaired.match(/\]/g) || []).length;
+  const openBraces = (repaired.match(/\{/g) || []).length - (repaired.match(/\}/g) || []).length;
+  repaired += ']'.repeat(Math.max(0, openBrackets));
+  repaired += '}'.repeat(Math.max(0, openBraces));
+  return JSON.parse(repaired);
+}
+```
+
+**🔵 n8n API JSON-Serialisierung Bug:**
+- `GET /api/v1/workflows` (ohne limit oder limit>1) gibt manchmal 400 zurueck
+- "Bad escaped character in JSON at position 294"
+- Ein Workflow in der DB hat problematische Zeichen
+- Workaround: Direkt per ID abfragen (`/workflows/{id}`) oder `?limit=1` paginieren
+
+**Formular Konverter Workflow (Referenz):**
+- ID: `Vj3rTvIoy7pmdTPY`, 14 Nodes, aktiv
+- Zwei-Pass Claude: Konvertierung + KI-Validierung
+- Pipeline: `/datenbank/eingang/` → Scan → Extract → Claude → Validate → `/datenbank/verarbeitet/`
+- Kosten: ~$0.02-0.10 pro Dokument
 
 ---
 
