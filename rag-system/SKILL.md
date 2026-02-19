@@ -438,7 +438,7 @@ ANTWORT:
        → Falsche/unpräzise Docs korrigieren → DANN Prompt tunen
     ```
 
-16. **Korrekte MediFox Stationär Menüpfade (verifiziert 2026-02-18):**
+16. **Korrekte MediFox Stationär Menüpfade (verifiziert 2026-02-19):**
     ```
     ✅ Pflegemappe:         Dokumentation → Dokumentation → [Bewohner]
     ✅ Maßnahmenplanung:    Verwaltung → Bewohner → [Bewohner] → Reiter Planung
@@ -446,11 +446,16 @@ ANTWORT:
     ✅ Checklisten erstellen: Dokumentation → Dokumentation → [Bewohner] → Stammdaten
                               → Zahnrad (Import) oder Fragebögen → Neu (Erstellen)
     ✅ Checklisten-Status:  Verwaltung → Bewohner → [Bewohner] → Bewohnercockpit → Status
+    ✅ Abwesenheiten:       Personaleinsatzplanung → Abwesenheiten
     ❌ FALSCH: Pflege/Betreuung → Dokumentation → Pflegemappe (Web-Recherche-Fehler!)
+    ❌ FALSCH: Organisation → Dienstplan → Abwesenheiten (Web-Recherche-Fehler!)
     ```
     - "Bewohnerakte" ist KEIN Menüpunkt — nur ein Konzept
     - Korrekt: "Bewohneransicht" nach Verwaltung → Bewohner → [Bewohner]
     - Fragebögen = Formulare = Checklisten (gleiche Erstellungsfunktion in MediFox)
+    - **Optionale Schritte (z.B. "Wohnbereich auswählen") NICHT als Navigationsschritt
+      im Pfad aufführen** — nur den direkten Menüpfad angeben. Kontextuelle Hinweise
+      gehören in die Schritt-Beschreibung, nicht in den Pfad selbst.
 
 17. **Dokument-Audit-Pattern** (bei neuer Verzeichnisstruktur-Info):
     ```
