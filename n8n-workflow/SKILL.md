@@ -327,15 +327,19 @@ Wie ein Wecker. Jeden Tag um 8 Uhr morgens startet der Workflow.
       → n8n liest aktive Workflows aus workflow_history!
       → Aenderung hat KEINE Wirkung!
 
-   ✅ RICHTIG: BEIDE Tabellen synchron aktualisieren:
-      1. UPDATE workflow_entity SET nodes=... WHERE id='...'
-      2. UPDATE workflow_history SET nodes=...
-         WHERE versionId=(SELECT activeVersionId FROM workflow_entity WHERE id='...')
-         AND workflowId='...'
+   ❌ AUCH FALSCH: Nur activeVersionId in workflow_history updaten
+      → API activate Endpoint waehlt EIGENE Version aus history!
+      → Kann eine AELTERE Version aktivieren!
+
+   ✅ RICHTIG: ALLE History-Versionen + workflow_entity synchron aktualisieren:
+      1. UPDATE workflow_entity SET nodes=..., connections=... WHERE id='...'
+      2. UPDATE workflow_history SET nodes=..., connections=...
+         WHERE workflowId='...'   -- ALLE Versionen!
       3. docker restart n8n-n8n-1
    ```
    → `workflow_history` ist die Source of Truth fuer aktive Workflows
-   → `activeVersionId` in `workflow_entity` zeigt auf den History-Eintrag
+   → API activate kann JEDE History-Version waehlen (nicht vorhersagbar)
+   → Sicherste Loesung: ALLE Versionen auf denselben Stand bringen
 
 10. **NIEMALS** API-Keys ohne Format-Validierung speichern!
     ```
@@ -442,6 +446,26 @@ Wie ein Wecker. Jeden Tag um 8 Uhr morgens startet der Workflow.
     ```
     → Gilt fuer ALLE Faelle wo Quell- und Zielverzeichnis verschiedene Mounts sind
 
+19. **NIEMALS** Binary-Daten via `item.binary.file.data` in Code Nodes lesen!
+    ```
+    ❌ FALSCH: Buffer.from(item.binary.file.data, 'base64')
+       → n8n v2.8+ nutzt "filesystem-v2" Storage
+       → item.binary.file.data gibt den String "filesystem-v2" zurueck, NICHT base64!
+       → Buffer.from("filesystem-v2", "base64") = Muell-Bytes!
+
+    ✅ RICHTIG: n8n Helper-Funktion nutzen:
+       const buffer = await this.helpers.getBinaryDataBuffer(0, 'file');
+       // 0 = itemIndex, 'file' = binary property name
+       // Funktioniert mit BEIDEN Storage-Backends (inline + filesystem-v2)
+
+    Fuer PDF-base64 (z.B. Claude Document API):
+       const buffer = await this.helpers.getBinaryDataBuffer(0, 'file');
+       const base64 = buffer.toString('base64');
+       return [{ json: { ...item.json, pdfBase64: base64 } }];
+       // NICHT binary weiterreichen - base64 als JSON-Feld!
+    ```
+    → Betrifft ALLE Code Nodes die Binary-Daten lesen (Extract, Convert, etc.)
+
 
 ### 🟡 BEVORZUGT
 
@@ -457,6 +481,11 @@ Wie ein Wecker. Jeden Tag um 8 Uhr morgens startet der Workflow.
 10. **mammoth.js in Code Nodes**: `npm install mammoth --prefix /home/node/.n8n` (persistiert im gemounteten Volume). Env: `NODE_FUNCTION_ALLOW_EXTERNAL=mammoth`. Import: `const mammoth = require('mammoth');`
 11. **Anthropic API direkt aus n8n**: Gleiche Config wie OpenRouter (#6): `specifyBody: "string"`, `contentType: "raw"`, `rawContentType: "application/json"`. Auth: `x-api-key` Header mit `{{ $env.ANTHROPIC_API_KEY }}`. `max_tokens: 16384` fuer grosse Dokumente.
 12. **Claude max_tokens Truncation Recovery**: Wenn `stop_reason === 'max_tokens'`: JSON ist abgeschnitten. Letzte vollstaendige `},` finden, offene Brackets/Braces schliessen, `JSON.parse()` versuchen.
+13. **responseMode "lastNode" statt "responseNode"** fuer Webhook-Responses (v2.8+):
+    - `"responseNode"` ist unzuverlaessig: gibt manchmal `{"myField":"value"}` sofort zurueck
+    - `"lastNode"` wartet auf Execution-Ende und gibt Output des letzten Nodes als JSON zurueck
+    - Nachteil: Immer HTTP 200 (kein Custom-Statuscode moeglich)
+    - Keine `respondToWebhook` Nodes noetig - Terminal-Nodes (Save, Error) liefern direkt
 
 ### 🟢 GUT ZU WISSEN
 
@@ -1216,10 +1245,44 @@ if (lastComplete > 0) {
 - Workaround: Direkt per ID abfragen (`/workflows/{id}`) oder `?limit=1` paginieren
 
 **Formular Konverter Workflow (Referenz):**
-- ID: `Vj3rTvIoy7pmdTPY`, 14 Nodes, aktiv
+- ID: `Vj3rTvIoy7pmdTPY`, 17 Nodes, aktiv
 - Zwei-Pass Claude: Konvertierung + KI-Validierung
-- Pipeline: `/datenbank/eingang/` → Scan → Extract → Claude → Validate → `/datenbank/verarbeitet/`
+- Webhook Upload: `POST /webhook/formular-konverter` (lastNode mode, webhookId: `formular-konverter-upload`)
+- Manual Trigger: Dateien aus `/datenbank/eingang/`
+- Binary: `this.helpers.getBinaryDataBuffer()` fuer v2.8+ filesystem-v2
+- Pipeline: Upload/Scan → Extract → Claude → Validate → `/datenbank/verarbeitet/`
 - Kosten: ~$0.02-0.10 pro Dokument
+
+---
+
+### 2026-02-20 - n8n v2.8.3: Binary Storage, Webhook Paths, lastNode Mode
+
+**🔴 filesystem-v2 Binary Storage (v2.8+):**
+- `item.binary.file.data` gibt `"filesystem-v2"` zurueck, NICHT base64!
+- `Buffer.from("filesystem-v2", "base64")` erzeugt Muell-Bytes (`~)^+-zo`)
+- Fix: `await this.helpers.getBinaryDataBuffer(itemIndex, 'propertyName')`
+- Fuer PDF→Claude: Buffer extrahieren, `.toString('base64')`, als JSON-Feld weiterreichen
+
+**🔴 Webhook Path Format (v2.8+):**
+- Ohne `webhookId` auf Webhook-Node: Pfad wird `{workflowId}/{nodeNameEncoded}/{path}`
+- Fix: `"webhookId": "my-simple-id"` auf dem Webhook-Node setzen
+- Dann wird der Pfad einfach `/webhook/{path}`
+
+**🔴 responseMode "responseNode" unzuverlaessig (v2.8+):**
+- Gibt manchmal `{"myField":"value"}` sofort zurueck statt auf respondToWebhook zu warten
+- Fix: `"responseMode": "lastNode"` - wartet auf Execution-Ende
+- Output des letzten ausgefuehrten Nodes wird als HTTP-Response zurueckgegeben
+- Keine respondToWebhook Nodes noetig - Terminal-Nodes liefern direkt
+
+**🔴 workflow_history: ALLE Versionen updaten!**
+- API activate waehlt EIGENE Version aus History (nicht vorhersagbar)
+- Nur activeVersionId updaten reicht NICHT
+- Fix: `UPDATE workflow_history SET nodes=..., connections=... WHERE workflowId='...'` (alle!)
+
+**🟡 execution_data Format:**
+- Tabelle `execution_data` (nicht `execution_entity`) enthaelt Execution-Daten
+- Format: flatted/devalue (Array mit nummerierten Referenzen), NICHT plain JSON
+- Fuer Debugging: Indizes manuell aufloesen oder n8n UI nutzen
 
 ---
 
