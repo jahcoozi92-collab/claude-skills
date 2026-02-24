@@ -466,6 +466,69 @@ Wie ein Wecker. Jeden Tag um 8 Uhr morgens startet der Workflow.
     ```
     → Betrifft ALLE Code Nodes die Binary-Daten lesen (Extract, Convert, etc.)
 
+20. **NIEMALS** chatTrigger ohne `public: true` fuer Production-Webhooks deployen!
+    ```
+    ❌ FALSCH: chatTrigger mit { "options": {} }
+       → Webhook wird NICHT registriert!
+       → /webhook/{webhookId}/chat gibt 404
+       → Nur im n8n Editor als Test-Webhook erreichbar
+
+    ✅ RICHTIG: chatTrigger mit { "public": true, "options": {} }
+       → Production-Webhook wird registriert
+       → /webhook/{webhookId}/chat erreichbar (GET=Chat-Widget, POST=API)
+    ```
+    → Ohne `public: true` funktioniert NUR der Test-Modus im Editor
+    → Nach API PUT: deactivate/activate noetig fuer Webhook-Registrierung
+
+21. **NIEMALS** toolHttpRequest Node-Namen mit Sonderzeichen! (v2.9+)
+    ```
+    ❌ FALSCH: "Web Search (SerpAPI)" oder "Suche & Analyse"
+       → "The name of this tool is not a valid alphanumeric string"
+       → Agent kann das Tool nicht aufrufen!
+
+    ✅ RICHTIG: "web_search" oder "suche_analyse"
+       → Nur [a-zA-Z0-9_], NICHT mit Zahl anfangend
+    ```
+    → Gilt fuer ALLE Langchain Tool-Nodes (toolHttpRequest, postgresTool, etc.)
+    → Der Node-Name wird als Tool-Name an den LLM-Agent uebergeben
+
+22. **NIEMALS** placeholderDefinitions UND $fromAI() gleichzeitig in toolHttpRequest!
+    ```
+    ❌ FALSCH:
+       url: "=https://api.example.com?q={{ $fromAI('query', 'desc', 'string') }}"
+       placeholderDefinitions: { values: [{ name: "query", ... }] }
+       → "Misconfigured placeholder 'query'"
+
+    ✅ RICHTIG (Option A - bevorzugt): Nur $fromAI() im URL
+       url: "=https://api.example.com?q={{ $fromAI('query', 'The search query', 'string') }}"
+       // KEINE placeholderDefinitions!
+
+    ✅ RICHTIG (Option B): Nur placeholderDefinitions
+       url: "=https://api.example.com?q={query}"
+       placeholderDefinitions: { values: [{ name: "query", ... }] }
+       // KEIN $fromAI() im URL!
+    ```
+    → $fromAI() und placeholderDefinitions sind ALTERNATIVE Methoden
+    → Beide zusammen verursachen "Misconfigured placeholder" Error
+    ```
+    ❌ FALSCH: Buffer.from(item.binary.file.data, 'base64')
+       → n8n v2.8+ nutzt "filesystem-v2" Storage
+       → item.binary.file.data gibt den String "filesystem-v2" zurueck, NICHT base64!
+       → Buffer.from("filesystem-v2", "base64") = Muell-Bytes!
+
+    ✅ RICHTIG: n8n Helper-Funktion nutzen:
+       const buffer = await this.helpers.getBinaryDataBuffer(0, 'file');
+       // 0 = itemIndex, 'file' = binary property name
+       // Funktioniert mit BEIDEN Storage-Backends (inline + filesystem-v2)
+
+    Fuer PDF-base64 (z.B. Claude Document API):
+       const buffer = await this.helpers.getBinaryDataBuffer(0, 'file');
+       const base64 = buffer.toString('base64');
+       return [{ json: { ...item.json, pdfBase64: base64 } }];
+       // NICHT binary weiterreichen - base64 als JSON-Feld!
+    ```
+    → Betrifft ALLE Code Nodes die Binary-Daten lesen (Extract, Convert, etc.)
+
 
 ### 🟡 BEVORZUGT
 
@@ -486,6 +549,17 @@ Wie ein Wecker. Jeden Tag um 8 Uhr morgens startet der Workflow.
     - `"lastNode"` wartet auf Execution-Ende und gibt Output des letzten Nodes als JSON zurueck
     - Nachteil: Immer HTTP 200 (kein Custom-Statuscode moeglich)
     - Keine `respondToWebhook` Nodes noetig - Terminal-Nodes (Save, Error) liefern direkt
+14. **Sticky Notes via API** fuer Workflow-Dokumentation:
+    - Node-Typ: `n8n-nodes-base.stickyNote`, typeVersion 1
+    - Farben: 2=rot, 3=gelb, 4=blau, 5=lila, 6=gruen
+    - Parameter: `content` (Markdown), `width`, `height`
+    - Position relativ zu den Nodes die sie dokumentieren
+    - Werden bei API PUT als normale Nodes im nodes-Array mitgeschickt
+15. **API-Keys via httpQueryAuth Credential** statt URL-Klartext in toolHttpRequest:
+    - API: `POST /credentials { name: "...", type: "httpQueryAuth", data: { name: "api_key", value: "..." } }`
+    - Node: `authentication: "genericCredentialType"`, `genericAuthType: "httpQueryAuth"`
+    - Key taucht nicht in Logs/Execution-Daten auf
+    - User kann Key spaeter ueber n8n UI aendern
 
 ### 🟢 GUT ZU WISSEN
 
@@ -1337,6 +1411,62 @@ put_payload = {
 # 4. POST /workflows/{id}/activate
 # → Webhooks werden erst nach Deaktivierung/Aktivierung re-registriert
 ```
+
+---
+
+### 2026-02-24 - Security Hardening: chatTrigger public, toolName, placeholders, Sticky Notes
+
+**🔴 chatTrigger braucht `public: true` fuer Production-Webhooks:**
+- Ohne `public: true` wird KEIN Production-Webhook registriert
+- Workflow zeigt `active: true` aber `/webhook/{id}/chat` gibt 404
+- Symptom: "The requested webhook is not registered" trotz Aktivierung
+- Entdeckt bei: AI Research Agent v3 (4OlKW72H47VEXV0i)
+- Vergleich: NASDAQ-Workflow (v1.1, public:true) → HTTP 200, unserer (v1.1, ohne) → 404
+
+**🔴 toolHttpRequest Node-Namen muessen alphanumerisch sein (v2.9+):**
+- "Web Search (SerpAPI)" → "The name of this tool is not a valid alphanumeric string"
+- Fix: `web_search` (nur `[a-zA-Z_][a-zA-Z0-9_]*`)
+- Der Node-Name wird 1:1 als Tool-Name an den Agent uebergeben
+- Agent versucht Tool mit dem Node-Namen aufzurufen
+
+**🔴 placeholderDefinitions + $fromAI() = Konflikt:**
+- "Misconfigured placeholder 'query'" wenn beides gesetzt
+- Fix: `placeholderDefinitions` entfernen, nur `$fromAI()` im URL nutzen
+- Alternativ: nur `placeholderDefinitions` mit `{query}` Syntax (ohne $fromAI)
+
+**🟡 Sticky Notes via API (programmatisch):**
+```json
+{
+  "type": "n8n-nodes-base.stickyNote",
+  "typeVersion": 1,
+  "parameters": {
+    "content": "## Titel\nMarkdown-Inhalt",
+    "width": 300,
+    "height": 200,
+    "color": 4
+  },
+  "position": [x, y]
+}
+```
+- Farben: 2=rot, 3=gelb, 4=blau, 5=lila, 6=gruen
+- Werden als normale Nodes im PUT payload mitgeschickt
+
+**🟡 httpQueryAuth Credential fuer API-Keys in toolHttpRequest:**
+- `POST /api/v1/credentials` mit `type: "httpQueryAuth"`, `data: { name: "api_key", value: "..." }`
+- n8n API verschluesselt die Credentials korrekt (CryptoJS AES)
+- Node-Config: `authentication: "genericCredentialType"`, `genericAuthType: "httpQueryAuth"`
+- Entfernt API-Keys aus URL-Klartext (A02:2021 Cryptographic Failures)
+
+**🟡 CWE-918 SSRF Mitigation in Input Validation:**
+```javascript
+// Vor dem Agent: URLs und Expressions aus User-Input strippen
+const sanitized = msg.trim()
+  .replace(/https?:\/\/[^\s]+/gi, '[URL entfernt]')
+  .replace(/\{\{.*?\}\}/g, '')           // n8n Expression-Syntax
+  .replace(/\$fromAI\(.*?\)/g, '');      // $fromAI() Injection
+```
+
+**n8n Version: 2.9.2** (nicht 2.8.3 wie zuvor dokumentiert)
 
 ---
 
