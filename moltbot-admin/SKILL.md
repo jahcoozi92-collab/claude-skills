@@ -7,7 +7,7 @@
 ## Scope — NUR moltbot VM
 
 Diese Skill gilt **ausschliesslich** fuer:
-- **Host:** moltbot (Debian 13, 192.168.22.206)
+- **Host:** ugreen-gateway / moltbot (Debian 13, 192.168.22.206)
 - **User:** moltbotadmin
 - **Home:** /home/moltbotadmin
 - **Zweck:** Clawdbot Gateway + Claude Code Instanz
@@ -63,6 +63,11 @@ sudo chattr -i ~/CLAUDE.md
 # ... Aenderungen vornehmen ...
 sudo chattr +i ~/CLAUDE.md
 ```
+
+**WICHTIG:** Claude Code kann `sudo` nicht ausfuehren (kein interaktives Terminal fuer Passwort-Eingabe). Der User muss per SSH selbst entsperren/sperren. Workflow:
+1. Claude Code erkennt, dass Edit fehlschlaegt (EPERM)
+2. User auffordern: `sudo chattr -i ~/CLAUDE.md` per SSH ausfuehren
+3. Nach Bestaetigung: `chmod u+w` → Edits anwenden → User auffordern zu sperren
 
 ### Schutz pruefen
 ```bash
@@ -191,3 +196,20 @@ clawdbot doctor
 **Systemd-Hinweis:**
 - Service-Datei hat noch hardcodierte API-Keys — werden durch `.env` ueberdeckt
 - Beim naechsten `clawdbot wizard` Run sollten die bereinigt werden
+
+### 2026-02-25 — CLAUDE.md /init Verbesserung
+
+**Hostname:**
+- Tatsaechlicher Hostname ist `ugreen-gateway` (nicht `moltbot`) — in CLAUDE.md und Skill korrigiert
+- `/etc/hosts` fehlte `127.0.0.1 ugreen-gateway` — ergaenzt (sudo-Warnung behoben)
+- Achtung: Doppelter Eintrag in `/etc/hosts` (harmlos, aber unsauber)
+
+**CLAUDE.md Erweiterungen (via /init):**
+- Workspace Packages Sektion: ui/, extensions/ (32+), apps/ios, apps/android
+- Pre-commit hooks: `prek` dokumentiert
+- ACP (Agent Client Protocol): IDE-Bridge-Sektion ergaenzt
+- Docker Tests: test:docker:onboard hinzugefuegt
+- Zusaetzliche Dev-Scripts: tui, rpc, plugins:sync, release:check, docs:dev
+
+**Preis-Diskrepanz:**
+- CLAUDE.md sagt $0.14/$0.28, MEMORY.md sagt $0.25/$0.38 — muss noch abgeglichen werden
