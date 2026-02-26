@@ -46,20 +46,24 @@ Diese Skill gilt **ausschliesslich** fuer:
 
 ## Schutz-Operationen
 
+**WICHTIG:** Claude kann kein `sudo` ausfuehren — User muss chattr-Befehle immer manuell im Terminal laufen lassen. Anleitung immer mit vollem Dateipfad angeben (User vergisst sonst den Pfad).
+
 ### CLAUDE.md schuetzen
 ```bash
-chmod 444 ~/CLAUDE.md
 sudo chattr +i ~/CLAUDE.md
 ```
 
 ### Schutz pruefen
 ```bash
 lsattr ~/CLAUDE.md
+# Erwartete Ausgabe: ----i---------e------- (i = immutable)
 ```
 
 ### Entsperren (fuer Updates)
 ```bash
 sudo chattr -i ~/CLAUDE.md
+# → Aenderungen vornehmen →
+sudo chattr +i ~/CLAUDE.md
 ```
 
 ---
@@ -94,3 +98,14 @@ ssh Jahcoozi@192.168.22.90 'cd ~/.claude/skills && git pull --rebase origin main
 # moltbot VM synchronisieren
 ssh moltbotadmin@192.168.22.206 'cd ~/.claude/skills && git pull --rebase origin main'
 ```
+
+### 2026-02-26 — CLAUDE.md Pflege
+
+**chattr-Workflow:**
+- Claude kann kein `sudo` — User muss chattr immer manuell im Terminal ausfuehren
+- Anleitung immer mit vollem Pfad (`~/CLAUDE.md`) angeben, User vergisst sonst den Pfad
+
+**Home-Verzeichnis Hinweise:**
+- `docker-compose.yml` im Home ist ein Shell-Script (kein echtes Compose-File) — nicht mit `docker-compose up` ausfuehren
+- Docker ist lokal NICHT installiert — n8n laeuft auf NAS (192.168.22.90)
+- Python via pyenv (`~/.pyenv/`), nicht System-Python
