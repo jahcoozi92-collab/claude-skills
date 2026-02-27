@@ -212,4 +212,33 @@ clawdbot doctor
 - Zusaetzliche Dev-Scripts: tui, rpc, plugins:sync, release:check, docs:dev
 
 **Preis-Diskrepanz:**
-- CLAUDE.md sagt $0.14/$0.28, MEMORY.md sagt $0.25/$0.38 — muss noch abgeglichen werden
+- CLAUDE.md sagte $0.14/$0.28, MEMORY.md sagte $0.25/$0.38 — korrigiert auf $0.25/$0.38
+
+### 2026-02-27 — Config-Audit + Secrets-Bereinigung
+
+**Secrets final bereinigt:**
+- 3 Skill-API-Keys waren noch im Klartext in `clawdbot.json` (bei Feb-12 Auslagerung uebersehen)
+- `nano-banana-pro` nutzt `${GEMINI_API_KEY}` (identischer Key)
+- `openai-image-gen` → `${OPENAI_IMAGE_GEN_KEY}`, `openai-whisper-api` → `${OPENAI_WHISPER_KEY}`
+- Gateway-Token war Platzhalter ("ein-langer-zufaelliger-string...") → `${CLAWDBOT_GATEWAY_TOKEN}`
+- Hooks-Token war Klartext → `${CLAWDBOT_HOOKS_TOKEN}`
+
+**Rebrand clawdbot → openclaw:**
+- Service: `openclaw-gateway.service` (nicht `clawdbot-gateway.service`)
+- Binary: `/home/moltbotadmin/.npm-global/lib/node_modules/openclaw/dist/index.js`
+- CLI-Alias: `clawdbot` (noch alter Name)
+- Config: `clawdbot.json` (noch alter Name)
+- Env-Vars in systemd: `OPENCLAW_*` Prefix
+- Env-Vars in .env: `CLAWDBOT_*` Prefix (Mischung!)
+- CLAUDE.md + MEMORY.md: alle Service-Referenzen auf `openclaw-gateway` korrigiert
+
+**SSH-Befehle fuer User — Constraints:**
+- Befehle KURZ halten (<80 Zeichen pro Zeile), Terminal-Zeilenumbruch korrumpiert Copy-Paste
+- Komplexe Operationen: mehrzeilig oder als Script-Datei
+- NIEMALS kombiniertes `sed` mit `$a` (append) fuer /etc/hosts — unzuverlaessig
+- Stattdessen: `grep -v > /tmp/h && echo >> /tmp/h && mv /tmp/h original`
+- Nach jeder /etc/hosts Aenderung sofort verifizieren mit `cat /etc/hosts`
+
+**/etc/hosts bereinigt:**
+- Doppelter `ugreen-gateway` Eintrag → auf genau einen reduziert
+- `127.0.1.1 moltbot` bleibt (alter Hostname, harmlos)
