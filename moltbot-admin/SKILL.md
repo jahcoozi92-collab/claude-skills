@@ -32,9 +32,19 @@ Diese Skill gilt **ausschliesslich** fuer:
 ### Konfiguration
 | Datei | Zweck |
 |-------|-------|
-| `~/.clawdbot/clawdbot.json` | Gateway-Runtime-Config |
+| `~/.openclaw/openclaw.json` | Gateway-Runtime-Config (aktiv, v2026.3+) |
+| `~/.openclaw/clawdbot.json` | Legacy-Config (wird noch gelesen, aber openclaw.json hat Vorrang) |
+| `~/.clawdbot/.env` | Secrets (chmod 600) |
 | `~/.claude/settings.local.json` | Claude Code Permissions |
 | `~/.claude/projects/-home-moltbotadmin/memory/MEMORY.md` | Auto-Memory |
+
+**Rebrand-Mapping (clawdbot → openclaw):**
+| Alt | Neu |
+|-----|-----|
+| `~/.clawdbot/` | `~/.openclaw/` (Symlink, gleicher Ordner) |
+| `clawdbot.json` | `openclaw.json` |
+| `clawdbot-gateway.service` | `openclaw-gateway.service` |
+| `CLAWDBOT_*` env vars | `OPENCLAW_*` (legacy vars werden ignoriert mit Warnung) |
 
 ---
 
@@ -141,11 +151,42 @@ Clawdbot kennt drei Secret-Mechanismen:
 ## Gateway-Schnellreferenz
 
 ```bash
-systemctl --user restart clawdbot-gateway.service
-systemctl --user status clawdbot-gateway.service
-journalctl --user -u clawdbot-gateway.service -f
-clawdbot doctor
+systemctl --user restart openclaw-gateway.service
+systemctl --user status openclaw-gateway.service
+journalctl --user -u openclaw-gateway.service -f
+openclaw doctor
 ```
+
+### Gateway Build-from-Source (aktueller Zustand)
+
+Der Gateway laeuft auf einem **lokalen Build** (v2026.3.3) statt dem npm-Paket (v2026.3.1), weil die npm-Version eine pnpm-Inkompatibilitaet hat.
+
+| Parameter | Wert |
+|-----------|------|
+| ExecStart | `/usr/bin/node ~/clawdbot-src/dist/index.js gateway --port 18789 --bind loopback` |
+| `OPENCLAW_BUNDLED_PLUGINS_DIR` | `/home/moltbotadmin/clawdbot-src/extensions` |
+| `plugins.load.paths` (openclaw.json) | `["/home/moltbotadmin/clawdbot-src/extensions"]` |
+
+**Nach `pnpm install` oder Version-Update:** `cd ~/clawdbot-src && pnpm build` ausfuehren, dann Gateway neu starten.
+
+**`--bind` Werte (v2026.3.3+):** `loopback`, `lan`, `tailnet`, `auto`, `custom` (keine IP-Adressen mehr)
+
+### Troubleshooting
+
+**502 von Cloudflare:**
+1. `systemctl --user status openclaw-gateway.service` — laeuft der Service?
+2. `curl -sI http://127.0.0.1:18789/` — antwortet der Gateway lokal?
+3. `pgrep -af cloudflared` — laeuft der Tunnel? (System-Service, PID ~836)
+
+**"unsafe plugin manifest path" Crash-Loop:**
+- Ursache: pnpm Content-Addressable-Store nutzt Hardlinks, die die Boundary-Pruefung (`openBoundaryFileSync`) nicht bestehen
+- Fix: `OPENCLAW_BUNDLED_PLUGINS_DIR` in der systemd-Unit auf `~/clawdbot-src/extensions` setzen
+- Alternativ: `plugins.load.paths` in `openclaw.json` auf das Extensions-Verzeichnis zeigen lassen
+
+**"Unrecognized key: path" in plugins.entries:**
+- `plugins.entries.*.path` wurde in v2026.3+ entfernt
+- Stattdessen: `plugins.load.paths` als globales Array nutzen
+- Falls vorhanden: manuell entfernen (doctor --fix kann fehlschlagen wenn andere Validierungsfehler vorliegen)
 
 ---
 
@@ -242,3 +283,26 @@ clawdbot doctor
 **/etc/hosts bereinigt:**
 - Doppelter `ugreen-gateway` Eintrag → auf genau einen reduziert
 - `127.0.1.1 moltbot` bleibt (alter Hostname, harmlos)
+
+### 2026-03-08 — Gateway Crash-Loop + pnpm-Inkompatibilitaet
+
+**Symptom:** openclaw.forensikzentrum.com liefert HTTP 502, Gateway in Crash-Loop (22+ Restarts)
+
+**Ursache (mehrstufig):**
+1. `plugins.entries.*.path` Keys in `openclaw.json` — v2026.3+ kennt dieses Feld nicht mehr (strict schema)
+2. Nach Entfernung: "unsafe plugin manifest path" fuer ALLE gebundelten Extensions
+3. Grund: pnpm Content-Addressable-Store nutzt Hardlinks, die `openBoundaryFileSync` als Boundary-Escape erkennt
+4. `doctor --fix` konnte die path-Keys nicht entfernen (brach bei Plugin-Manifest-Validierung ab)
+
+**Fix-Kette:**
+1. `path`-Keys manuell per Python-Script aus `openclaw.json` entfernt
+2. `pnpm build` → lokaler Build v2026.3.3 (Source neuer als npm v2026.3.1)
+3. Service-Datei umgestellt: ExecStart auf `dist/index.js`, `--bind loopback` (statt IP)
+4. `OPENCLAW_BUNDLED_PLUGINS_DIR=/home/moltbotadmin/clawdbot-src/extensions` in systemd-Unit
+5. `plugins.load.paths` in `openclaw.json` auf Extensions-Verzeichnis gesetzt
+
+**Erkenntnisse:**
+- `resolveBundledPluginsDir()` in `src/plugins/bundled-dir.ts` geht von `import.meta.url` aufwaerts und sucht `extensions/` — im pnpm-Store findet es die falschen
+- `OPENCLAW_BUNDLED_PLUGINS_DIR` env var uebersteuert die Pfadaufloesung komplett
+- Cloudflare-Tunnel (`cloudflared`) laeuft als System-Service, nicht als user-unit
+- `~/.openclaw/` und `~/.clawdbot/` sind derselbe Ordner (Symlink vom Rebrand)
