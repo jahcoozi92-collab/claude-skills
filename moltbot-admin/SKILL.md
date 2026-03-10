@@ -164,17 +164,40 @@ openclaw doctor
 
 ### Gateway Build-from-Source (aktueller Zustand)
 
-Der Gateway laeuft auf einem **lokalen Build** (v2026.3.3) statt dem npm-Paket (v2026.3.1), weil die npm-Version eine pnpm-Inkompatibilitaet hat.
+Der Gateway laeuft auf einem **lokalen Build** statt dem npm-Paket, weil die npm-Version eine pnpm-Inkompatibilitaet hat.
 
 | Parameter | Wert |
 |-----------|------|
-| ExecStart | `/usr/bin/node ~/clawdbot-src/dist/index.js gateway --port 18789 --bind loopback` |
+| ExecStart | `/usr/bin/node ~/clawdbot-src/dist/entry.js gateway --port 18789` |
+| bind | `"lan"` (in openclaw.json, nicht als CLI-Flag) |
 | `OPENCLAW_BUNDLED_PLUGINS_DIR` | `/home/moltbotadmin/clawdbot-src/extensions` |
 | `plugins.load.paths` (openclaw.json) | `["/home/moltbotadmin/clawdbot-src/extensions"]` |
 
 **Nach `pnpm install` oder Version-Update:** `cd ~/clawdbot-src && pnpm build` ausfuehren, dann Gateway neu starten.
 
 **`--bind` Werte (v2026.3.3+):** `loopback`, `lan`, `tailnet`, `auto`, `custom` (keine IP-Adressen mehr)
+
+### Model-Aliases (`~/.clawdbot-model-aliases.sh`)
+
+Schnelles Model-Switching per Shell-Funktion. Wird in `.bashrc` gesourced.
+
+**WICHTIG:** Kein `clawdbot`/`openclaw` Binary im PATH — Aliases nutzen:
+```bash
+OPENCLAW_CLI="/usr/bin/node /home/moltbotadmin/clawdbot-src/dist/entry.js"
+```
+
+| Alias | Modell | Kosten |
+|-------|--------|--------|
+| `clawdbot-use-free` | Gemini 2.0 Flash | FREE |
+| `clawdbot-use-cheap` | DeepSeek V3.2 | $0.25/$0.38 |
+| `clawdbot-use-gpt` | GPT-5.4 (OpenAI) | $$ |
+| `clawdbot-use-balanced` | Sonnet 4 | $3/$15 |
+| `clawdbot-use-premium` | Opus 4.6 | $15/$75 |
+
+**OpenAI-Modelle (Built-in Provider):**
+- `openai/gpt-5.4` — 1M+ Kontext, 128K Output, Reasoning, Text+Bild
+- `openai/gpt-5.4-pro` — Premium mit xhigh Thinking
+- API-Key per Auto-Fill aus `OPENAI_API_KEY` (in `~/.openclaw/.env`)
 
 ### Troubleshooting
 
@@ -322,7 +345,7 @@ Der Gateway laeuft auf einem **lokalen Build** (v2026.3.3) statt dem npm-Paket (
 **Fix-Kette:**
 1. `path`-Keys manuell per Python-Script aus `openclaw.json` entfernt
 2. `pnpm build` → lokaler Build v2026.3.3 (Source neuer als npm v2026.3.1)
-3. Service-Datei umgestellt: ExecStart auf `dist/index.js`, `--bind loopback` (statt IP)
+3. Service-Datei umgestellt: ExecStart auf `dist/entry.js` (kein --bind Flag, Config nutzt `"bind": "lan"`)
 4. `OPENCLAW_BUNDLED_PLUGINS_DIR=/home/moltbotadmin/clawdbot-src/extensions` in systemd-Unit
 5. `plugins.load.paths` in `openclaw.json` auf Extensions-Verzeichnis gesetzt
 
@@ -331,3 +354,19 @@ Der Gateway laeuft auf einem **lokalen Build** (v2026.3.3) statt dem npm-Paket (
 - `OPENCLAW_BUNDLED_PLUGINS_DIR` env var uebersteuert die Pfadaufloesung komplett
 - Cloudflare-Tunnel (`cloudflared`) laeuft als System-Service, nicht als user-unit
 - `~/.openclaw/` und `~/.clawdbot/` sind derselbe Ordner (Symlink vom Rebrand)
+
+### 2026-03-10 — GPT-5.4 Provider + Model-Aliases Fix
+
+**OpenAI GPT-5.4 als Primary konfiguriert:**
+- `openai/gpt-5.4` als `agents.defaults.model.primary` gesetzt
+- DeepSeek auf Fallback 1 verschoben (war Primary)
+- OpenAI ist Built-in Provider — kein Eintrag in `models.providers` noetig
+- API-Key per Auto-Fill aus `OPENAI_API_KEY` (bereits in `.env`)
+
+**Model-Aliases Rebrand-Fix (`.clawdbot-model-aliases.sh`):**
+- Alle Funktionen nutzten `clawdbot` CLI-Command → existiert nicht nach Rebrand
+- Service-Name war `clawdbot-gateway.service` → `openclaw-gateway.service`
+- Fix: `OPENCLAW_CLI` und `OPENCLAW_SERVICE` Variablen am Anfang des Scripts
+- `OPENCLAW_CLI="/usr/bin/node /home/moltbotadmin/clawdbot-src/dist/entry.js"`
+- Neuer Alias: `clawdbot-use-gpt` fuer GPT-5.4 Switching
+- Nach Aenderung: `source ~/.clawdbot-model-aliases.sh` noetig (bestehende SSH-Sessions haben alte Version gecached)
