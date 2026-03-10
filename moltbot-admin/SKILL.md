@@ -74,10 +74,13 @@ sudo chattr -i ~/CLAUDE.md
 sudo chattr +i ~/CLAUDE.md
 ```
 
-**WICHTIG:** Claude Code kann `sudo` nicht ausfuehren (kein interaktives Terminal fuer Passwort-Eingabe). Der User muss per SSH selbst entsperren/sperren. Workflow:
-1. Claude Code erkennt, dass Edit fehlschlaegt (EPERM)
-2. User auffordern: `sudo chattr -i ~/CLAUDE.md` per SSH ausfuehren
-3. Nach Bestaetigung: `chmod u+w` → Edits anwenden → User auffordern zu sperren
+**WICHTIG:** Claude Code kann `sudo` nicht ausfuehren (kein interaktives Terminal fuer Passwort-Eingabe). Der User muss per SSH selbst entsperren/sperren.
+
+**Workflow (lsattr-first!):**
+1. **IMMER ZUERST** `lsattr ~/CLAUDE.md` pruefen — BEVOR ein Edit versucht wird
+2. Wenn `i`-Flag gesetzt: User auffordern `sudo chattr -i ~/CLAUDE.md` per SSH auszufuehren
+3. Nach Bestaetigung erneut `lsattr` pruefen — erst dann editieren
+4. Nach Edits: User auffordern zu sperren (`sudo chattr +i ~/CLAUDE.md`)
 
 ### Schutz pruefen
 ```bash
@@ -107,9 +110,11 @@ sudo chattr +i <datei>         # Immutable (nur root kann aufheben)
 
 ## Secrets-Management
 
-**Regel: Keine API-Keys in `clawdbot.json`!** Alle Secrets gehoeren in `~/.clawdbot/.env` (chmod 600).
+**Regel: Keine API-Keys in `openclaw.json` oder `clawdbot.json`!** Alle Secrets gehoeren in `~/.openclaw/.env` (chmod 600).
 
-Clawdbot kennt drei Secret-Mechanismen:
+**⚠ REGRESSION (Stand 2026-03-10):** `openclaw.json` hat noch Plaintext-API-Keys (OpenRouter, Telegram Bot-Token, GitHub PAT, Gateway/Hooks-Tokens, Skill-Keys). Die Secrets-Migration wurde nur fuer `clawdbot.json` durchgefuehrt — `openclaw.json` muss noch migriert werden!
+
+OpenClaw kennt drei Secret-Mechanismen:
 
 | Mechanismus | Wann nutzen | Beispiel |
 |-------------|-------------|---------|
@@ -283,6 +288,26 @@ Der Gateway laeuft auf einem **lokalen Build** (v2026.3.3) statt dem npm-Paket (
 **/etc/hosts bereinigt:**
 - Doppelter `ugreen-gateway` Eintrag → auf genau einen reduziert
 - `127.0.1.1 moltbot` bleibt (alter Hostname, harmlos)
+
+### 2026-03-10 — Sub-Agenten, Cron, Feedback-Loop + Workarounds
+
+**Neue Features konfiguriert:**
+- Sub-Agenten in `openclaw.json`: `researcher` (DeepSeek), `coder` (Opus), `organizer` (DeepSeek)
+- Subagent-Config: allowAgents, maxSpawnDepth: 2, maxChildrenPerAgent: 5, archiveAfterMinutes: 60
+- Kompaktierung erweitert: qualityGuard (enabled, maxRetries: 1), identifierPolicy: strict
+- Cron-Jobs in `~/.openclaw/cron/jobs.json`: Morgenbriefing (07:30), Woechentlicher Review (So 10:00)
+- Governance in `clawd/AGENTS.md`: Sub-Agent-Regeln, Feedback & Lernintegration
+- Learnings-Review in `clawd/HEARTBEAT.md`: 5 Review-Kriterien (Kontext-Erhalt, Wiederholungsfehler, Korrektur-Reaktionszeit, Skill-Nutzung, Eigeninitiative-Balance)
+- CLAUDE.md: 4 neue Sektionen (Sub-Agenten, Autonome Workflows, Kompaktierung, Selbstverbesserung)
+
+**CLI-Workaround:**
+- `openclaw` Binary nicht verfuegbar (dist/ nicht gebaut, kein globales npm-Paket)
+- Cron-Jobs direkt in `~/.openclaw/cron/jobs.json` editieren statt `openclaw cron add` CLI
+- Gateway muss nach Config-Aenderungen neu gestartet werden
+
+**CLAUDE.md immutable — Lesson:**
+- 3 fehlgeschlagene Edit-Versuche bevor `lsattr` geprueft wurde
+- Neuer Workflow: IMMER `lsattr` zuerst, dann entsperren lassen, dann editieren
 
 ### 2026-03-08 — Gateway Crash-Loop + pnpm-Inkompatibilitaet
 
