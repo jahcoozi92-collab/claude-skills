@@ -112,7 +112,7 @@ sudo chattr +i <datei>         # Immutable (nur root kann aufheben)
 
 **Regel: Keine API-Keys in `openclaw.json` oder `clawdbot.json`!** Alle Secrets gehoeren in `~/.openclaw/.env` (chmod 600).
 
-**⚠ REGRESSION (Stand 2026-03-10):** `openclaw.json` hat noch Plaintext-API-Keys (OpenRouter, Telegram Bot-Token, GitHub PAT, Gateway/Hooks-Tokens, Skill-Keys). Die Secrets-Migration wurde nur fuer `clawdbot.json` durchgefuehrt — `openclaw.json` muss noch migriert werden!
+**✅ ERLEDIGT (2026-03-12):** Alle Plaintext-Keys aus `openclaw.json` entfernt. OpenRouter-apiKey und Telegram-botToken entfernt (Auto-Fill). Gateway/Hooks-Token, alle Skill-Keys auf `${VAR}` umgestellt. `GITHUB_PAT` und `SAG_API_KEY` zu `.env` hinzugefuegt.
 
 OpenClaw kennt drei Secret-Mechanismen:
 
@@ -142,14 +142,14 @@ OpenClaw kennt drei Secret-Mechanismen:
 - [ ] `queue.mode: "collect"` + `debounceMs: 1500` — Schnellnachrichten buendeln
 - [ ] `session.reset.mode: "idle"` + `idleMinutes` — stale Sessions vermeiden
 - [ ] `userTimezone` + `timeFormat: "24"` — Zeitbewusstsein
-- [ ] Fallback-Kette: guenstigstes Modell zuerst (Gemini Free vor Opus $75/M)
+- [ ] Fallback-Kette: Sonnet primary → DeepSeek → Opus → Gemini Flash → Qwen3 local
 - [ ] `contextPruning.keepLastAssistants: 3` — schuetzt letzte Antworten
 - [ ] `heartbeat.activeHours` — nur waehrend Wachzeiten
 - [ ] Telegram: `linkPreview: false`, `markdown.tables: "code"`, `dmHistoryLimit: 50`
 
 ### Level 3 — Features
 - [ ] TTS: `messages.tts.auto: "inbound"` + Edge TTS (kostenlos, kein API-Key)
-- [ ] Deutsche Stimmen: `de-DE-FlorianMultilingualNeural` (multilingual) oder `de-DE-KatjaNeural`
+- [ ] Deutsche Stimmen: `de-DE-ConradNeural` (aktuell konfiguriert) oder `de-DE-KatjaNeural`
 
 ---
 
@@ -191,13 +191,13 @@ OPENCLAW_CLI="/usr/bin/node /home/moltbotadmin/clawdbot-src/dist/entry.js"
 | `clawdbot-use-free` | Gemini 2.0 Flash | FREE |
 | `clawdbot-use-cheap` | DeepSeek V3.2 | $0.25/$0.38 |
 | `clawdbot-use-gpt` | GPT-5.4 (OpenAI) | $$ |
-| `clawdbot-use-balanced` | Sonnet 4 | $3/$15 |
+| `clawdbot-use-balanced` | Sonnet 4 | $3/$15 | ← **aktuell Primary** |
 | `clawdbot-use-premium` | Opus 4.6 | $15/$75 |
 
-**OpenAI-Modelle (Built-in Provider):**
-- `openai/gpt-5.4` — 1M+ Kontext, 128K Output, Reasoning, Text+Bild
-- `openai/gpt-5.4-pro` — Premium mit xhigh Thinking
-- API-Key per Auto-Fill aus `OPENAI_API_KEY` (in `~/.openclaw/.env`)
+**Aktuelles Primary Model (Stand 2026-03-12):** `anthropic/claude-sonnet-4-20250514`
+- Vorher: GPT-5.4 → umgestellt auf Sonnet fuer natives Anthropic-Format (Prompt Caching, Extended Thinking)
+- Main Agent + Coder: weiterhin Opus (explizit in agents.list konfiguriert)
+- Researcher/Organizer/Cron/Heartbeat: weiterhin DeepSeek V3.2
 
 ### Troubleshooting
 
@@ -256,7 +256,7 @@ OPENCLAW_CLI="/usr/bin/node /home/moltbotadmin/clawdbot-src/dist/entry.js"
 **Edge TTS aktiviert:**
 - `messages.tts.auto: "inbound"` — antwortet per Audio wenn User Sprachnachricht schickt
 - Provider: Edge TTS (kostenlos, kein API-Key, <1s Latenz)
-- Stimme: `de-DE-FlorianMultilingualNeural` (gut fuer gemischte DE/EN-Texte)
+- Stimme: `de-DE-ConradNeural` (Stand 2026-03-12, vorher FlorianMultilingualNeural)
 - Voice-Samples generieren: `cd ~/clawdbot-src && node /tmp/voice-test.mjs`
 
 **Preis-Korrektur:**
@@ -370,3 +370,55 @@ OPENCLAW_CLI="/usr/bin/node /home/moltbotadmin/clawdbot-src/dist/entry.js"
 - `OPENCLAW_CLI="/usr/bin/node /home/moltbotadmin/clawdbot-src/dist/entry.js"`
 - Neuer Alias: `clawdbot-use-gpt` fuer GPT-5.4 Switching
 - Nach Aenderung: `source ~/.clawdbot-model-aliases.sh` noetig (bestehende SSH-Sessions haben alte Version gecached)
+
+### 2026-03-12 — Grosses Config-Update (Guide-basiert)
+
+**Secrets-Migration ABGESCHLOSSEN:**
+- Alle 9 Plaintext-Keys aus `openclaw.json` entfernt
+- OpenRouter-apiKey + Telegram-botToken: komplett entfernt (Auto-Fill)
+- Gateway/Hooks-Token: `${CLAWDBOT_GATEWAY_TOKEN}` / `${CLAWDBOT_HOOKS_TOKEN}`
+- Skill-Keys: `${GEMINI_API_KEY}`, `${OPENAI_IMAGE_GEN_KEY}`, `${OPENAI_WHISPER_KEY}`, `${GITHUB_PAT}`, `${SAG_API_KEY}`
+- Achtung: Skill-Keys in openclaw.json hatten ANDERE Werte als in .env (openai-image-gen, openai-whisper) — .env-Werte sind die aktuellen
+
+**Primary Model: GPT-5.4 → Sonnet:**
+- `anthropic/claude-sonnet-4-20250514` als `agents.defaults.model.primary`
+- Vorteil: natives Anthropic-Format → Prompt Caching (spart ~90% bei wiederholten Workspace-Dateien)
+- Main/Coder bleiben Opus (explizit in agents.list)
+- GPT-5.4 Alias bleibt nutzbar (`clawdbot-use-gpt`)
+
+**Cron-Job Telegram-Delivery Fix:**
+- `delivery.to: "2061281331"` fehlte in beiden Cron-Jobs (morning-briefing + weekly-review)
+- Ohne `to` Feld: "Delivering to Telegram requires target <chatId>" Fehler
+- Die chatId ist identisch mit der Telegram-User-ID aus `channels.telegram.allowFrom`
+
+**Governance-Regeln erweitert:**
+- AGENTS.md: Operative Limits (Fehlerlimit 3x, Zeitlimit 10min, Netzwerk-Genehmigung, Prompt Injection Schutz)
+- AGENTS.md: Model Routing Tabelle (dokumentiert welches Modell wofuer)
+- SOUL.md: Anti-Exfiltration (keine Offenlegung interner Dateien), Anti-Jailbreak (Instruktions-Overrides ignorieren)
+
+**Edge TTS Stimme geaendert:**
+- `de-DE-ConradNeural` statt `de-DE-FlorianMultilingualNeural` (User-Praeferenz)
+
+**Backup-System eingerichtet:**
+- Script: `~/bin/openclaw-backup.sh`
+- Cron: taeglich 03:00 Uhr
+- Inhalt: openclaw.json, .env, cron/, clawd/ (ohne canvas/ und .git/)
+- Ziel: lokal ~/backups/ + NAS (Jahcoozi@192.168.22.90:/volume1/backups/openclaw/)
+- Retention: 30 Tage lokal
+
+**OPENCLAW_BUNDLED_PLUGINS_DIR:**
+- Fehlte in systemd-Unit nach v2026.3.11 Update (war in .bak aber nicht in aktueller Unit)
+- Wieder hinzugefuegt — verhindert "unsafe plugin manifest path" Crash-Loops
+
+**Source-Build Update-Workflow (bewaehrt):**
+```bash
+cd ~/clawdbot-src
+git fetch origin --tags
+git pull --rebase origin main
+pnpm install
+pnpm build
+pnpm ui:build
+# systemd-Unit Version + BUNDLED_PLUGINS_DIR pruefen!
+systemctl --user daemon-reload
+systemctl --user restart openclaw-gateway.service
+```
