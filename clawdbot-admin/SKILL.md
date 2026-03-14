@@ -422,3 +422,34 @@ pnpm ui:build
 systemctl --user daemon-reload
 systemctl --user restart openclaw-gateway.service
 ```
+
+### 2026-03-14 — Ontology Skill + ClawHub Workflow
+
+**ClawHub Skill-Management (Workflow):**
+1. URL-Slug (`oswalpalash/ontology`) ≠ CLI-Slug (`ontology`) — CLI nutzt nur den Skill-Namen
+2. IMMER zuerst in Temp-Verzeichnis inspizieren: `clawhub install <slug> --workdir /tmp/skill-inspect --no-input`
+3. Dateien lesen (SKILL.md + scripts/) — auf Malware pruefen (curl, eval, base64, subprocess)
+4. Wenn sauber: `clawhub install <slug> --workdir ~/clawd --no-input`
+5. ClawHub CLI Flags: `--no-input` fuer install, `--yes` fuer uninstall (inkonsistent!)
+6. Rate Limiting: bei Fehler kurz warten und erneut versuchen
+
+**Malware-Bereinigung:**
+- `coding-agent-g7z` war noch in ClawHub-Lockfile (Ordner laengst geloescht)
+- `clawhub uninstall coding-agent-g7z --workdir ~/clawd --yes` entfernt Lockfile-Eintrag
+
+**Ontology Knowledge Graph installiert (v1.0.4):**
+- Skill: `~/clawd/skills/ontology/` (SKILL.md + scripts/ontology.py + references/)
+- Storage: `~/clawd/memory/ontology/graph.jsonl` (append-only JSONL)
+- Schema: `~/clawd/memory/ontology/schema.yaml` (Typ-Constraints, Relationen, Kardinalitaet)
+- **CWD muss `~/clawd/` sein** beim Ausfuehren (Path-Traversal-Schutz im Script)
+- Aufruf: `cd ~/clawd && python3 skills/ontology/scripts/ontology.py <command>`
+- Commands: create, get, query, list, update, delete, relate, related, validate, schema-append
+- Abhaengigkeit: PyYAML (nur fuer Schema-Ops, CRUD geht ohne)
+- Initialisiert mit 9 Entitaeten (Person, 2x Device, 3x Project, 3x Account) + 10 Relationen
+- Schema-Typen: Person, Device, Project, Task, Account, Credential (mit forbidden_properties)
+
+**Python-Dependencies auf Debian 13:**
+- PEP 668 blockiert `pip3 install` und `pip3 install --user`
+- `python3-venv` Paket nicht installiert, `pipx` nicht vorhanden
+- Fallback: `pip3 install --break-system-packages <paket>` (funktioniert, aber nicht ideal)
+- Besser (wenn sudo verfuegbar): `sudo apt install python3-<paket>`
