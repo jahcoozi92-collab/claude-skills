@@ -2,7 +2,7 @@
 
 | name | description |
 |------|-------------|
-| nas-instance | Verwaltung der NAS-Instanz DXP4800PLUS-30E (192.168.22.90): CLAUDE.md, Architektur-Locks, Docker-Stack-Schutz, Service-Topologie. Nicht fuer moltbot VM, Yoga7 oder andere Maschinen. |
+| nas-instance | Verwaltung der NAS-Instanz DXP4800PLUS-30E (192.168.22.90): CLAUDE.md, Architektur-Locks, Docker-Stack-Schutz, Service-Topologie. Nicht fuer Clawbot VM, Yoga7 oder andere Maschinen. |
 
 ## Scope — NUR NAS DXP4800PLUS-30E
 
@@ -15,7 +15,7 @@ Diese Skill gilt **ausschliesslich** fuer:
 - **Zweck:** Docker-Services, Ollama, n8n, Open WebUI, AI-Infrastruktur
 
 **Nicht** fuer:
-- moltbot VM (192.168.22.206, User: moltbotadmin)
+- Clawbot VM (192.168.22.206, User: moltbotadmin)
 - Yoga7 (Dianas Laptop)
 - Windows-Systeme
 - exe.dev VMs
@@ -132,7 +132,7 @@ docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 | `nas-instance` (dieser) | Claude Code Instanz-Verwaltung, Architektur-Locks | — |
 | `nas-homelab` | NAS-Operationen (Volumes, Shares, Hardware) | Ergaenzt sich |
 | `docker-admin` | Container-Management (generisch) | Nutzt nas-instance Topologie |
-| `moltbot-admin` | moltbot VM Instanz (andere Maschine\!) | Klar getrennt |
+| `clawdbot-admin` | Clawbot VM Instanz (andere Maschine\!) | Klar getrennt |
 
 ---
 
@@ -202,7 +202,7 @@ Unterstuetzt: Schmidt-Meier, von der Heide, Oezdemir, étranger-Varianten
 ### 2026-02-08 — Initiale Einrichtung
 
 **Instanz-Differenzierung:**
-- NAS und moltbot VM haben unterschiedliche User, Pfade, Services
+- NAS und Clawbot VM haben unterschiedliche User, Pfade, Services
 - Skills muessen pro Maschine differenziert werden
 - Architecture Locks dokumentieren welche Strukturen stabil sind
 

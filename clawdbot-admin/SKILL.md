@@ -1,13 +1,13 @@
-# Skill: moltbot-admin
+# Skill: clawdbot-admin
 
 | name | description |
 |------|-------------|
-| moltbot-admin | Verwaltung der moltbot VM-Instanz (192.168.22.206): CLAUDE.md, Architektur-Locks, Agent-Guardrails, System-Hardening. Nicht fuer NAS, Yoga7 oder andere Maschinen. |
+| clawdbot-admin | Verwaltung der Clawbot VM-Instanz (192.168.22.206): CLAUDE.md, Architektur-Locks, Agent-Guardrails, System-Hardening. Nicht fuer NAS, Yoga7 oder andere Maschinen. |
 
-## Scope — NUR moltbot VM
+## Scope — NUR Clawbot VM
 
 Diese Skill gilt **ausschliesslich** fuer:
-- **Host:** ugreen-gateway / moltbot (Debian 13, 192.168.22.206)
+- **Host:** ugreen-gateway / Clawbot VM (Debian 13, 192.168.22.206)
 - **User:** moltbotadmin
 - **Home:** /home/moltbotadmin
 - **Zweck:** Clawdbot Gateway + Claude Code Instanz
@@ -269,7 +269,7 @@ OPENCLAW_CLI="/usr/bin/node /home/moltbotadmin/clawdbot-src/dist/entry.js"
 ### 2026-02-25 — CLAUDE.md /init Verbesserung
 
 **Hostname:**
-- Tatsaechlicher Hostname ist `ugreen-gateway` (nicht `moltbot`) — in CLAUDE.md und Skill korrigiert
+- Tatsaechlicher Hostname ist `ugreen-gateway` — in CLAUDE.md und Skill korrigiert
 - `/etc/hosts` fehlte `127.0.0.1 ugreen-gateway` — ergaenzt (sudo-Warnung behoben)
 - Achtung: Doppelter Eintrag in `/etc/hosts` (harmlos, aber unsauber)
 

@@ -1,8 +1,9 @@
-# Reflect Skill – Selbstverbesserung für Diana's Skills
+---
+name: reflect
+description: Analysiere die aktuelle Session und schlage Verbesserungen für Skills vor. Nutze wenn Diana sagt "reflect", "lerne daraus", "merk dir das", oder am Ende skill-intensiver Sessions.
+---
 
-| name | description |
-|------|-------------|
-| reflect | Analysiere die aktuelle Session und schlage Verbesserungen für Skills vor. Nutze wenn Diana sagt "reflect", "lerne daraus", "merk dir das", oder am Ende skill-intensiver Sessions. |
+# Reflect Skill – Selbstverbesserung für Diana's Skills
 
 ## Was ist dieser Skill?
 
@@ -200,9 +201,6 @@ reflect status  # Aktuellen Status anzeigen
 
 ## Gelernte Lektionen
 
-<!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
-## Gelernte Lektionen
-
 ### 2026-01-11 - Setup-Session
 
 **GitHub-Authentifizierung:**
@@ -214,140 +212,10 @@ reflect status  # Aktuellen Status anzeigen
 - Repository: `github.com/jahcoozi92-collab/claude-skills`
 
 **Systeme:**
-- Yoga7: `~/claude-skills` (Original) + Symlink `~/.claude/skills` → Instanz-Skill: `yoga7-admin`
-- Windows: `$HOME\.claude\skills` → Instanz-Skill: `windows-admin`
-- NAS: `/home/Jahcoozi/.claude/skills` → Instanz-Skill: `nas-instance`
-- Clawbot VM: `/home/moltbotadmin/.claude/skills` → Instanz-Skill: `clawdbot-admin`
+- Yoga7: `~/claude-skills` (Original) + Symlink `~/.claude/skills`
+- Windows: `$HOME\.claude\skills`
+- NAS: `/home/Jahcoozi/.claude/skills`
 
 **Workarounds:**
 - GNOME Keyring umgehen: `GIT_ASKPASS="" git push`
 - Windows hat kein nano → `notepad` nutzen
-
----
-
-### 2026-02-08 - Instanz-Skills + Architecture Locks
-
-**Multi-Maschinen Instanz-Verwaltung:**
-- Jede Maschine bekommt einen eigenen Instanz-Skill mit klarer Scope-Sektion
-- Shared Git Repo (`jahcoozi92-collab/claude-skills`) — alle Maschinen sehen alle Skills
-- Scope-Sektion am Anfang jedes Instanz-Skills verhindert Cross-Machine Verwechslungen
-
-**Instanz-Skills erstellt:**
-| Skill | Maschine | IP | User |
-|-------|----------|-----|------|
-| `clawdbot-admin` | Clawbot VM | 192.168.22.206 | moltbotadmin |
-| `nas-instance` | NAS DXP4800 | 192.168.22.90 | Jahcoozi |
-| `yoga7-admin` | Yoga7 Laptop | 192.168.22.86 | yoga7 |
-| `windows-admin` | Windows 11 PC | 192.168.2.38 | Diana |
-
-**CLAUDE.md Schutz-Eskalation:**
-- `chmod 444` — Basis, Owner kann umgehen
-- `chattr +i` — Stark, braucht sudo zum Aufheben (Linux)
-- Windows: `Set-ItemProperty IsReadOnly` oder NTFS ACLs
-
-**Architecture Lock Pattern:**
-- `~/architecture/ARCHITECTURE_LOCK.md` dokumentiert gelockte Strukturen
-- Erstellt auf: Clawbot VM, NAS (Yoga7 + Windows manuell)
-
-**CLAUDE.md Rewrite (Clawbot VM):**
-- Module-Tabelle (20 Zeilen, 14 fehlend) ersetzt durch Message-Flow-Diagramm
-- Coverage-Threshold korrigiert (55% → 70% Branches)
-- Workspace-Sektion ergaenzt (Memory-Konzept war undokumentiert)
-- Drei-Stufen Hierarchie: Root → clawd/ → clawdbot-src/AGENTS.md
-
----
-
-### 2026-02-08 - Always-On Constraints Pattern
-
-**Problem:** Skill-Lektionen sind nur aktiv wenn der Skill aufgerufen wird.
-
-**Lösung: Zwei-Stufen-System**
-```
-~/CLAUDE.md (immutable, immer geladen)
-├── ## Always-On Constraints ← Kritische Regeln
-│   ├── Credentials (supabase-prod, nextcloud-nas)
-│   ├── n8n Kern-Regeln (Webhook statt HTTP Request)
-│   ├── Instanzen-Tabelle (alle 4 Maschinen)
-│   └── Code Style Präferenzen
-│
-└── Skills (bei /skill-name Aufruf geladen)
-    └── Detaillierte, skill-spezifische Regeln
-```
-
-**Wann gehört etwas in Always-On Constraints?**
-- Credential-Namen (werden überall gebraucht)
-- Instanzen-Verwechslungsgefahr (IP, User)
-- Kritische NIEMALS-Regeln die skill-übergreifend gelten
-- Allgemeine Präferenzen (deutsche Variablen, Commit-Style)
-
-**Wann bleibt es im Skill?**
-- Skill-spezifische Details (n8n Node-Konfiguration)
-- Kontext-abhängige Regeln
-- Ausführliche Beispiele und Patterns
-
-**Workflow für neue Always-On Constraints:**
-1. `sudo chattr -i ~/CLAUDE.md` (entsperren)
-2. Regel zur "Always-On Constraints" Sektion hinzufügen
-3. `sudo chattr +i ~/CLAUDE.md` (sperren)
-
----
-
-### 2026-02-01 - RAG-System Optimierung
-
-**Supabase Vektor-Architektur:**
-- HNSW-Index mit `halfvec(3072)` umgeht das 2000-Dim Limit von pgvector
-- Index-Parameter: `m = 16, ef_construction = 64`
-- Suchzeit: 3032ms → 22ms (134x schneller)
-- Auto-Sync Trigger: `trg_sync_embedding_half` synchronisiert embedding → embedding_half
-
-**match_documents Boost-System:**
-| Bedingung | Boost |
-|-----------|-------|
-| source = 'system_reference' | +0.20 |
-| priority = 'critical' | +0.15 |
-| quality = 'high' | +0.05 |
-| source = 'manual_enrichment' | +0.03 |
-
-**HNSW Query-Optimierung:**
-```sql
-SET LOCAL hnsw.ef_search = 100;
-```
-
-**n8n Chat-History Persistenz:**
-- Von `memoryBufferWindow` → `memoryPostgresChat`
-- Credentials: NAS PostgreSQL (ID: cx83gXjDOqCuXZtm)
-- Tabelle: `n8n_chat_histories`
-- SessionKey: `={{ $json.sessionId || 'default' }}`
-
-**MD Stationär - Korrekte Menüpfade:**
-- Maßnahmenplanung: `Verwaltung → Bewohner → [Bewohner] → Reiter Planung`
-- Textbausteine: `Administration → Dokumentation → Kataloge/Textbausteine`
-- Pflegemappe: `Dokumentation → Dokumentation → [Bewohner]`
-- Checklisten erstellen/importieren: `Dokumentation → Dokumentation → [Bewohner] → Stammdaten → Zahnrad (Import) oder Fragebögen → Neu`
-- Checklisten-Status einsehen: `Verwaltung → Bewohner → [Bewohner] → Bewohnercockpit → Status`
-- Fragebögen = Formulare = Checklisten (gleiche Erstellungsfunktion)
-- FALSCH war: `Pflege/Betreuung → Dokumentation → Pflegemappe` (Web-Recherche lieferte falsches Ergebnis)
-
-**Architektur-Insight:**
-- Hybrid Search = Vektor-Ähnlichkeit (HNSW) + Full-Text-Search (FTS) + Boost-System
-- `system_reference` Dokumente werden für autoritative Antworten priorisiert
-
-**Credentials (Referenz):**
-- Supabase Project: `wfklkrgeblwdzyhuyjrv`
-- n8n Workflow: `SJ47UX9mv8wh1Wwy`
-- Navigationsdokument ID: `368297`
-- Korrigiertes Dokument ID: `368064`
-
----
-
-### 2026-02-12 - Reflect auf Nicht-Skill-Sessions
-
-**Instanz-Skill als Fallback:**
-- Wenn eine Session keinen expliziten Skill nutzt (z.B. reine Config-Optimierung, System-Administration), ist der jeweilige **Instanz-Skill** der richtige Ziel-Skill fuer Reflect
-- Instanz-Skills: `clawdbot-admin`, `nas-instance`, `yoga7-admin`, `windows-admin`
-- Heuristik: Betrifft die Arbeit eine bestimmte Maschine? → Instanz-Skill. Betrifft sie ein Fach-Thema? → Fach-Skill
-
-**JSON-Config und Learn-by-Doing:**
-- JSON unterstuetzt keine Kommentare → `TODO(human)` kann nicht inline platziert werden
-- Workaround: Helper-Script (z.B. `/tmp/voice-test.mjs`) erstellen, TODO(human) dort platzieren
-- Config mit funktionierendem Default schreiben, User passt ueber Script/CLI an

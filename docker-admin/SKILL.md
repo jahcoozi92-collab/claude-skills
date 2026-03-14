@@ -700,30 +700,18 @@ docker ps --format "{{.Ports}}" | tr ',' '\n' | grep -oE ':[0-9]+' | sort -u
 curl --resolve "host.domain.com:443:104.21.30.51" https://host.domain.com
 ```
 
-### 2026-01-27 - Moltbot/Clawdbot Installation & Migration
+### 2026-01-27 - Clawdbot Installation & Migration
 
 **VOR Docker-Setup immer prüfen ob Container existiert:**
 ```bash
 # IMMER zuerst prüfen!
-docker ps -a | grep -E 'claw|molt'
+docker ps -a | grep -E 'claw'
 
 # Falls Container existiert → nicht neu installieren
 # Stattdessen: docker compose up -d im bestehenden Verzeichnis
 ```
 
-**Nach Verzeichnis-Umbenennung (.env aktualisieren):**
-```bash
-# Nach: mv /volume1/docker/clawdbot /volume1/docker/moltbot
-# IMMER .env auf alte Pfade prüfen!
-
-# ❌ FALSCH (alter Pfad)
-CLAWDBOT_CONFIG_DIR=/volume1/docker/clawdbot/config
-
-# ✅ RICHTIG (neuer Pfad)
-CLAWDBOT_CONFIG_DIR=/volume1/docker/moltbot/config
-```
-
-**Moltbot WhatsApp deaktivieren:**
+**Clawdbot WhatsApp deaktivieren:**
 ```bash
 # ❌ config "enabled: false" reicht NICHT
 # ✅ Credentials verschieben:
@@ -739,13 +727,7 @@ docker compose restart clawdbot-gateway
 3. Name: `clawdbot` → Target: `[tunnel-id].cfargotunnel.com`
 4. Dann: `docker restart cloudflared`
 
-**Moltbot Naming (Rebrand):**
-- Neuer Name: **Moltbot** (docs.molt.bot)
-- CLI heißt noch: `clawdbot`
-- Container-Namen: `moltbot-clawdbot-gateway-1`
-- Funktionalität identisch, nur Marketing-Name geändert
-
-**Moltbot Gateway Token:**
+**Clawdbot Gateway Token:**
 - Liegt in `.env` als `CLAWDBOT_GATEWAY_TOKEN`
 - Control UI: http://192.168.22.90:18789/
 - Token in UI-Settings eingeben für Zugriff
@@ -788,7 +770,7 @@ docker exec ollama ollama create pflege-assistent -f /root/.ollama/Modelfile-pfl
 
 **VM-Architektur auf dem NAS:**
 - `192.168.22.206` ist eine VM auf dem NAS `192.168.22.90` (kein separates Gerät!)
-- Hostname: `moltbot`, User: `moltbotadmin`
+- Hostname: `ugreen-gateway`, User: `moltbotadmin`
 - Docker ist auf der VM NICHT installiert
 - Dienste laufen als systemd User-Services, nicht als Container
 

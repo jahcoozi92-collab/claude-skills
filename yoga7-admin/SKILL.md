@@ -2,7 +2,7 @@
 
 | name | description |
 |------|-------------|
-| yoga7-admin | Verwaltung der Yoga7-Instanz (Dianas Laptop): CLAUDE.md, Architektur-Locks, lokale Entwicklungsumgebung. Nicht fuer NAS oder moltbot VM. |
+| yoga7-admin | Verwaltung der Yoga7-Instanz (Dianas Laptop): CLAUDE.md, Architektur-Locks, lokale Entwicklungsumgebung. Nicht fuer NAS oder Clawbot VM. |
 
 ## Scope — NUR Yoga7
 
@@ -13,7 +13,7 @@ Diese Skill gilt **ausschliesslich** fuer:
 
 **Nicht** fuer:
 - NAS DXP4800PLUS-30E (192.168.22.90, User: Jahcoozi)
-- moltbot VM (192.168.22.206, User: moltbotadmin)
+- Clawbot VM (192.168.22.206, User: moltbotadmin)
 - exe.dev VMs
 
 ---
@@ -39,7 +39,7 @@ Diese Skill gilt **ausschliesslich** fuer:
 | Skill | Maschine | IP |
 |-------|----------|-----|
 | yoga7-admin (dieser) | Yoga7 Laptop | 192.168.22.86 |
-| moltbot-admin | moltbot VM | 192.168.22.206 |
+| clawdbot-admin | Clawbot VM | 192.168.22.206 |
 | nas-instance | NAS DXP4800 | 192.168.22.90 |
 
 ---
@@ -79,9 +79,9 @@ sudo chattr +i ~/CLAUDE.md
 ### 2026-02-08 — SSH-Setup & Claude Update
 
 **SSH-Konnektivität:**
-- SSH-Key (`id_ed25519`) auf moltbot VM (.206) eingerichtet
+- SSH-Key (`id_ed25519`) auf Clawbot VM (.206) eingerichtet
 - NAS (.90) hatte bereits SSH-Key-Zugang
-- fail2ban ist auf moltbot VM nicht installiert
+- fail2ban ist auf Clawbot VM nicht installiert
 - Passwortloser Zugang: `ssh moltbotadmin@192.168.22.206`
 
 **Claude Code Installation:**
@@ -95,7 +95,7 @@ sudo chattr +i ~/CLAUDE.md
 # NAS synchronisieren
 ssh Jahcoozi@192.168.22.90 'cd ~/.claude/skills && git pull --rebase origin main'
 
-# moltbot VM synchronisieren
+# Clawbot VM synchronisieren
 ssh moltbotadmin@192.168.22.206 'cd ~/.claude/skills && git pull --rebase origin main'
 ```
 
