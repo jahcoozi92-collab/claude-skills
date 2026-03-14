@@ -68,6 +68,36 @@ sudo chattr +i ~/CLAUDE.md
 
 ---
 
+## Terminal-Eigenheiten
+
+**KRITISCH:** Das Yoga7-Terminal bricht Zeilen >80 Zeichen um und zerstoert dabei Befehle!
+- Betrifft: Shell-Einzeiler, fstab-Eintraege, heredocs, UND nano (!)
+- **Sofort** zu Script-Dateien eskalieren statt lange Einzeiler zu versuchen
+- Variablen-Trick: `H=user@host` + `sshfs $H:/path /mnt` statt alles in eine Zeile
+- Heredoc-Terminatoren (`EOF`, `S`) muessen am Zeilenanfang stehen (ohne Leerzeichen)
+
+**SSHFS niemals mit sudo mounten** — sudo nutzt root's SSH-Keys, nicht die des Users.
+Immer als User mounten (fstab: `user`-Option, oder `mount` ohne sudo).
+
+---
+
+## Remote-Mounts
+
+### moltbot VM (SSHFS)
+| Was | Pfad/Wert |
+|-----|-----------|
+| Mountpoint | `~/moltbot-remote` |
+| Remote | `moltbotadmin@192.168.22.206:/home/moltbotadmin` |
+| Script | `~/mount-moltbot.sh` |
+| Service | `~/.config/systemd/user/moltbot-sshfs.service` (enabled) |
+| Steuerung | `systemctl --user start/stop/restart moltbot-sshfs` |
+
+**Use Case:** Claude Code mit `/voice` auf Yoga7 laufen lassen und gleichzeitig moltbot-Dateien bearbeiten (`cd ~/moltbot-remote && claude`).
+
+**Hinweis:** `/voice` funktioniert nur auf Geraeten mit Mikrofon — nicht ueber SSH auf headless Server.
+
+---
+
 ## Gelernte Lektionen
 
 ### 2026-02-08 — Initiale Einrichtung
@@ -126,3 +156,15 @@ ssh moltbotadmin@192.168.22.206 'cd ~/.claude/skills && git pull --rebase origin
 - System-Usernames (moltbotadmin, /home/moltbotadmin/) NICHT ändern — das sind echte Credentials auf der VM
 - Betroffene Dateien: CLAUDE.md + 5 Skill-Dateien (clawdbot-admin, yoga7-admin, nas-instance, reflect, docker-admin)
 - `git pull --rebase origin main` vor Push wenn Remote neuere Commits hat
+
+### 2026-03-14 — SSHFS-Mount & Terminal-Breite
+
+**Terminal-Breite-Problem:**
+- Yoga7-Terminal bricht bei ~80 Zeichen um — zerstoert Shell-Befehle, fstab, heredocs, sogar nano
+- 8+ fehlgeschlagene Versuche bis zur Loesung (Script mit Variablen-Trick)
+- Lektion: Sofort zu Script-Datei eskalieren, keine langen Einzeiler probieren
+
+**SSHFS-Setup:**
+- `~/moltbot-remote` gemountet via systemd user service (`moltbot-sshfs.service`)
+- Zweck: Claude Code mit `/voice` auf Yoga7 + moltbot-Dateien bearbeiten
+- `/voice` funktioniert nicht ueber SSH (kein Audio-Forwarding, Server hat kein Mikrofon)
