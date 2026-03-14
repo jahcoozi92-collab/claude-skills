@@ -890,6 +890,27 @@ loginctl enable-linger moltbotadmin
 ```
 Oder Interval sehr hoch setzen: `"every": "8760h"` (1 Jahr)
 
+### 2026-03-14 - Kontext-Erkennung & SSH-User
+
+**SSH-User IMMER aus Instanzen-Tabelle (CLAUDE.md) prüfen:**
+- NAS: `Jahcoozi@192.168.22.90` (NICHT `yoga7@`)
+- Clawbot: `moltbotadmin@192.168.22.206`
+- Fehler in dieser Session: `ssh yoga7@192.168.22.90` → Timeout/Fehler
+
+**Kontext-Erkennung bei "Docker aktualisieren":**
+- Docker ist auf Yoga7 NICHT installiert → keine Rückfrage nötig
+- n8n läuft auf NAS (steht in CLAUDE.md) → direkt NAS ansteuern
+- Regel: Wenn Docker lokal nicht existiert UND CLAUDE.md sagt "Docker auf NAS" → sofort NAS-SSH
+
+**Standard Docker-Update-Workflow (bewährt):**
+1. `docker ps` — alle Container auflisten
+2. `docker images` — alle Images auflisten (nur Remote-Images pullen, lokale Builds skippen)
+3. `docker pull` für jedes Remote-Image
+4. Vergleich: laufender Container-Image-Hash vs. gepullter Hash
+5. Falls Update nötig: `docker compose up -d` im jeweiligen Compose-Verzeichnis
+6. Cleanup: `docker image prune -f && docker builder prune -f`
+7. `docker system df` — Ergebnis zeigen
+
 ### 2026-02-10 - Container-Update-Session (Reflect)
 
 **Container-zu-Compose-Mapping ist kritisch:**
