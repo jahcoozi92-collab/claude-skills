@@ -109,3 +109,20 @@ ssh moltbotadmin@192.168.22.206 'cd ~/.claude/skills && git pull --rebase origin
 - `docker-compose.yml` im Home ist ein Shell-Script (kein echtes Compose-File) — nicht mit `docker-compose up` ausfuehren
 - Docker ist lokal NICHT installiert — n8n laeuft auf NAS (192.168.22.90)
 - Python via pyenv (`~/.pyenv/`), nicht System-Python
+
+### 2026-03-14 — Naming-Bereinigung + Workflow-Learnings
+
+**CWD-Löschung blockiert Shell:**
+- NIEMALS das aktuelle Arbeitsverzeichnis (`cwd`) löschen während Claude Code darin läuft
+- Bash-Tool kann danach nicht mehr starten — keine Workarounds möglich
+- Lösung: IMMER zuerst `cd` woanders hin, dann löschen — oder User bitten, Claude neu zu starten
+
+**Edit-Tool nach mv/rename:**
+- Nach `mv dir_alt/ dir_neu/` erfordert das Edit-Tool einen erneuten `Read` am NEUEN Pfad
+- Der alte Read-Cache (vor dem Rename) gilt nicht — Edit schlägt sonst fehl mit "File has not been read yet"
+
+**Naming-Bereinigung (moltbot → Clawbot VM):**
+- Display-Namen und Skill-Namen umbenennen: `moltbot-admin` → `clawdbot-admin`, "moltbot VM" → "Clawbot VM"
+- System-Usernames (moltbotadmin, /home/moltbotadmin/) NICHT ändern — das sind echte Credentials auf der VM
+- Betroffene Dateien: CLAUDE.md + 5 Skill-Dateien (clawdbot-admin, yoga7-admin, nas-instance, reflect, docker-admin)
+- `git pull --rebase origin main` vor Push wenn Remote neuere Commits hat
