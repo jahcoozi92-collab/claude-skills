@@ -453,3 +453,19 @@ systemctl --user restart openclaw-gateway.service
 - `python3-venv` Paket nicht installiert, `pipx` nicht vorhanden
 - Fallback: `pip3 install --break-system-packages <paket>` (funktioniert, aber nicht ideal)
 - Besser (wenn sudo verfuegbar): `sudo apt install python3-<paket>`
+
+**Ontology Live-Visualisierung (Deepen.AI-Style):**
+- Live-Server: `skills/ontology/scripts/live_server.py` (SSE + HTTP, Port 8090)
+- Template: `skills/ontology/scripts/live_template.html`
+- systemd-Unit: `ontology-live.service` (enabled, auto-restart)
+- URL: `http://192.168.22.206:8090/`
+- Daten-Refresh: `cd ~/clawd && python3 -c "..."` (re-embed Script, siehe live_template.html)
+- Cron-Job `self-improve` triggert Agent 3x taeglich (09:00, 14:00, 19:00), loggt in Ontology
+
+**KRITISCH — Live-Viz Lessons Learned:**
+- SSE fuer Initial-Load verursacht Standbild im Browser → Daten IMMER inline einbetten, SSE nur fuer nachtraegliche Live-Updates
+- Canvas `wheel`-Events brauchen `addEventListener('wheel', fn, {passive:false})` — `onwheel` + `preventDefault()` wird von Chrome/Firefox ignoriert
+- Python `http.server` ist single-threaded — SSE-Handler blockiert alle anderen Requests waehrend der Verbindung
+- Sichtbarkeits-Default viel zu niedrig: Opacity-Werte fuer Edges/Nodes/Glows muessen bei 0.7-1.0 starten, nicht bei 0.1-0.3. User musste 4x "heller" sagen
+- ES5-kompatibler Code (var, function) als sicherer Fallback — Template-Literals und Arrow-Functions koennen in manchen Browser-Setups Probleme machen
+- Zweite Canvas mit `mix-blend-mode: screen` crashte die Animation — einfache Single-Canvas-Loesung ist stabiler
