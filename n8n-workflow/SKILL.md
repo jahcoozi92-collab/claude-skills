@@ -700,6 +700,26 @@ return [{
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
 
+### 2026-03-15 - Anthropic API Billing + Credential-Divergenz
+
+**🔴 "Bad request" maskiert oft Billing-Probleme:**
+- Anthropic API gibt `Bad request - please check your parameters` zurück, wenn das Guthaben leer ist
+- NICHT sofort Modellnamen oder Parameter debuggen → ZUERST Guthaben prüfen auf console.anthropic.com
+- Fehlerkette: `credit balance too low` → n8n zeigt nur `Bad request`
+
+**🔴 n8n Credentials ≠ .env Keys (ZWEI getrennte Welten):**
+- `/volume1/docker/n8n/.env` enthält `ANTHROPIC_API_KEY` → wird von Scripts genutzt
+- n8n Credential DB (verschlüsselt, AES) enthält eigenen Key → wird von Workflow-Nodes genutzt
+- Diese Keys sind NICHT synchron und können unterschiedliche Accounts/Guthaben haben
+- Debugging: Immer in **n8n UI → Settings → Credentials** prüfen, nicht in `.env`
+- Key-Ende-Vergleich hilft: `grep ANTHROPIC_API_KEY ... | sed 's/=.*\(.\{4\}\)$/=...\1/'`
+
+**🟡 Modell-Referenz aktualisiert:**
+- RAG_Masterclass_Chat_hybrid nutzt `claude-sonnet-4-5-20250929` (Anthropic Chat Model Node)
+- Credential-ID: `8vuwy9VrY5EheWYB` ("Anthropic account")
+
+---
+
 ### 2026-02-08 - workflow_history + Credential Encryption + Chat-Frontend
 
 **🔴 workflow_history ist Source of Truth:**
@@ -974,7 +994,7 @@ CREATE OR REPLACE FUNCTION check_file_exists(
 
 2. **KI-Agent Architektur**
    - Supabase KI-Agent: GPT-4o + 4889 Zeichen System Prompt
-   - Lightrag KI-Agent: Claude Sonnet 4.5 + 879 Zeichen System Prompt
+   - Lightrag KI-Agent: Claude Sonnet 4.5 (`claude-sonnet-4-5-20250929`) + 879 Zeichen System Prompt
    - Tools: Datei_inhalt, Query_tabellen_daten, Alle_dateien
 
 3. **Reranker-Integration**
