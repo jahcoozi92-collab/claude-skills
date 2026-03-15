@@ -34,7 +34,7 @@ Diese Skill gilt **ausschliesslich** fuer:
 |-------|-------|
 | `~/.openclaw/openclaw.json` | Gateway-Runtime-Config (aktiv, v2026.3+) |
 | `~/.openclaw/clawdbot.json` | Legacy-Config (wird noch gelesen, aber openclaw.json hat Vorrang) |
-| `~/.clawdbot/.env` | Secrets (chmod 600) |
+| `~/.openclaw/.env` | Secrets (chmod 600) |
 | `~/.claude/settings.local.json` | Claude Code Permissions |
 | `~/.claude/projects/-home-moltbotadmin/memory/MEMORY.md` | Auto-Memory |
 
@@ -215,6 +215,28 @@ OPENCLAW_CLI="/usr/bin/node /home/moltbotadmin/clawdbot-src/dist/entry.js"
 - `plugins.entries.*.path` wurde in v2026.3+ entfernt
 - Stattdessen: `plugins.load.paths` als globales Array nutzen
 - Falls vorhanden: manuell entfernen (doctor --fix kann fehlschlagen wenn andere Validierungsfehler vorliegen)
+
+**Context Overflow / "prompt too large for the model":**
+- Symptom: Bot antwortet nicht, Eingaben werden "verschluckt"
+- Logs zeigen: `embedded run timeout` alle 10min + `timed out during compaction`
+- Ursache: Session-JSONL ist zu gross fuer Kompaktierung (Kompaktierung braucht selbst LLM-Call → scheitert ebenfalls am Kontextlimit → Endlosschleife)
+- **Gateway-Restart allein reicht NICHT** — die Session-Datei wird beim Start wieder geladen
+- Fix:
+  ```bash
+  # 1. Session archivieren (nicht loeschen!)
+  mv ~/.openclaw/agents/main/sessions/<session-id>.jsonl \
+     ~/.openclaw/agents/main/sessions/<session-id>.jsonl.reset.$(date -u +%Y-%m-%dT%H-%M-%S)Z
+  rm -f ~/.openclaw/agents/main/sessions/<session-id>.jsonl.lock
+  # 2. Gateway neustarten
+  systemctl --user restart openclaw-gateway.service
+  ```
+- Session-ID finden: `journalctl --user -u openclaw-gateway.service | grep "embedded run timeout"` → `sessionId=...`
+- Praeventiv: Aufgaben mit grossen Tool-Outputs (FFmpeg-Metadaten, Datei-Listings) koennen Sessions schnell aufblaehenhen
+
+**Sicherheit: .env Datei lesen:**
+- NIEMALS `cat` oder `Read` auf `~/.openclaw/.env` — zeigt alle API-Keys im Klartext
+- Stattdessen: `grep -c "KEY_NAME" ~/.openclaw/.env` (prueft Existenz ohne Wert anzuzeigen)
+- Oder: `grep "^[A-Z_]*=" ~/.openclaw/.env | cut -d= -f1` (zeigt nur Schluessel-Namen)
 
 ---
 
@@ -469,3 +491,25 @@ systemctl --user restart openclaw-gateway.service
 - Sichtbarkeits-Default viel zu niedrig: Opacity-Werte fuer Edges/Nodes/Glows muessen bei 0.7-1.0 starten, nicht bei 0.1-0.3. User musste 4x "heller" sagen
 - ES5-kompatibler Code (var, function) als sicherer Fallback — Template-Literals und Arrow-Functions koennen in manchen Browser-Setups Probleme machen
 - Zweite Canvas mit `mix-blend-mode: screen` crashte die Animation — einfache Single-Canvas-Loesung ist stabiler
+
+### 2026-03-15 — Context Overflow + Session-Reset + Anthropic Auth
+
+**Symptom:** Bot antwortet nicht, Eingaben werden "verschluckt", Log zeigt `embedded run timeout` alle 10min
+
+**Ursache (mehrstufig):**
+1. Session akkumulierte grosse Tool-Outputs (FFmpeg-Analyse, Bild-Metadaten) → 3.5 MB JSONL
+2. Kompaktierung scheiterte am Kontextlimit (braucht selbst LLM-Call) → Endlosschleife
+3. Gateway-Restart reichte nicht — Session wird von Disk neu geladen
+4. Anthropic-Auth fehlte: `ANTHROPIC_API_KEY` war nicht in `.env` → Fallback auf DeepSeek (kleineres Kontextfenster)
+
+**Fix-Kette:**
+1. `ANTHROPIC_API_KEY` in `~/.openclaw/.env` eingetragen (Auto-Fill, kein Feld in JSON noetig)
+2. Session archiviert: `mv <id>.jsonl <id>.jsonl.reset.<ts>` + Lock entfernt
+3. Gateway neugestartet → frische Session, kein Overflow
+
+**Erkenntnisse:**
+- `auth-profiles.json` hatte Key unter `anthropic:manual`, System suchte `anthropic:default` → Env-Var ist zuverlaessiger (provider-weit)
+- Session-Dateien: `~/.openclaw/agents/main/sessions/<uuid>.jsonl` (+ `.lock`)
+- Archivierte Sessions bekommen `.reset.TIMESTAMP` Suffix (OpenClaw-Konvention)
+- Memory-Verbrauch als Indikator: 750MB (stuck) vs 300MB (frisch) — grosser Sprung deutet auf festgefahrene Session
+- `.env` nie mit Read/cat anzeigen — nur Key-Namen pruefen
