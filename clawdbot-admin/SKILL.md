@@ -565,3 +565,59 @@ systemctl --user restart openclaw-gateway.service
 - Von ~130 auf ~380 Zeilen (alle Sektionen: overview, login, cron komplett)
 - Hardcodierte Strings in command-palette.ts, bottom-tabs.ts, config.ts, skills-grouping.ts sind noch NICHT i18n'd
 - i18n-System: Lit Web Components + Lazy Loading, localStorage-Persistenz, Fallback auf Englisch
+
+### 2026-03-16 — Tiefenoptimierung (Level 1–Godmode)
+
+**Plugin-Config-Architektur (KRITISCH):**
+- `plugins.entries.<id>` Core-Schema erlaubt NUR: `enabled`, `hooks`, `config`
+- Plugin-spezifische Keys (embedding, autoRecall, etc.) gehoeren in `plugins.entries.<id>.config` (Passthrough)
+- Keys direkt auf Entry-Ebene verursachen Validierungsfehler und Gateway-Crash
+- Schema-Referenz: `src/config/types.plugins.ts` Zeile 7: `config?: Record<string, unknown>`
+
+**LanceDB Semantisches Gedaechtnis aktiviert:**
+- Slot: `plugins.slots.memory = "memory-lancedb"` (vorher: memory-core/SQLite)
+- Config: `plugins.entries.memory-lancedb.config.embedding.apiKey = "${OPENAI_API_KEY}"`
+- Model: `text-embedding-3-small` (1536 Dim, ~$0.02/1M Tokens)
+- `autoRecall: true` — injiziert relevante Erinnerungen vor jedem Response
+- `autoCapture: true` — speichert wichtige Infos nach jedem Gespraech
+- DB-Pfad: `~/.openclaw/memory/lancedb/` (lazy init beim ersten Zugriff)
+- OPENAI_API_KEY war bereits in .env (fuer Whisper/Image-Gen), wird jetzt auch fuer Embeddings genutzt
+
+**Bash-Gotcha: set -e + (( var++ )):**
+- `(( 0++ ))` evaluiert zu 0 (falsy) → `set -e` bricht Script ab
+- Fix: `var=$((var + 1))` statt `(( var++ ))`
+- Betrifft NUR den Fall var=0, ab var=1 funktioniert `(( var++ ))` korrekt
+- Gleiches Problem bei `(( total++ ))`, `(( errors++ ))` etc.
+
+**Glob-Pattern: *.jsonl matcht auch *.jsonl.reset.*:**
+- `find -name "*.jsonl"` matcht auch archivierte Dateien wie `session.jsonl.reset.2026-03-16`
+- Fix: IMMER `-not -name "*.reset.*"` hinzufuegen
+- Oder: `-print0` + `while IFS= read -r -d '' f` (mit `|| true` am done wegen set -e)
+
+**Session-Management (Overflow-Praevention):**
+- `session.maintenance.mode: "enforce"` — aktive Durchsetzung
+- `session.maintenance.maxEntries: 300`, `pruneAfter: "14d"`, `rotateBytes: "5mb"`, `maxDiskBytes: "200mb"`
+- `compaction.recentTurnsPreserve: 4` — schuetzt letzte 4 Turns
+- `compaction.memoryFlush.forceFlushTranscriptBytes: "1mb"` — fruehzeitiger Memory-Flush
+- 5 uebergrosse Sessions (2.3MB, 789K, 625K, 503K, 433K) archiviert
+
+**Neue Monitoring-Scripts:**
+- `~/bin/session-health-guard.sh` — Auto-Archivierung bei >2MB, Telegram-Alert, alle 15min via Watchdog-Timer
+- `~/bin/system-digest.sh` — Taeglicher Bericht (07:00): Gateway, Sessions, Cron, LanceDB, Kosten, Disk
+- Crontab: `0 7 * * *` system-digest, `0 3 * * *` backup (bestehend)
+- Watchdog erweitert: `ExecStartPost=-session-health-guard.sh`
+
+**Fallback-Kette korrigiert:**
+- Vorher: Sonnet → DeepSeek → Opus → Gemini → Qwen
+- Nachher: Sonnet → **Opus** → DeepSeek → Gemini → Qwen (bestes Modell zuerst als Fallback)
+
+**Sonnet Thinking aktiviert:**
+- `thinking: "low"` + `maxTokens: 16384` fuer Primary Model
+- Verbessert Reasoning-Qualitaet bei minimalem Kosten-Overhead
+
+**Gemini Flash contextWindow korrigiert:**
+- Von 32768 auf 1048576 (1M Tokens) — Gateway kuerzte Kontext unnoetig
+
+**Workspace-Audit im Weekly Review:**
+- Cron-Prompt erweitert um automatische Konsistenzpruefung
+- Prueft: Redundanz, Owner-Verletzungen, Widersprueche, Secrets, stale Dateien
