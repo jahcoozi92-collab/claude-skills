@@ -621,3 +621,39 @@ systemctl --user restart openclaw-gateway.service
 **Workspace-Audit im Weekly Review:**
 - Cron-Prompt erweitert um automatische Konsistenzpruefung
 - Prueft: Redundanz, Owner-Verletzungen, Widersprueche, Secrets, stale Dateien
+
+### 2026-03-16 — Godmode-II + Voice-Call Setup
+
+**Godmode-II Config-Keys (alle validiert, keine Schema-Fehler):**
+- `tools.loopDetection`: enabled, warn@8, stop@15, history 30 — verhindert endlose Tool-Schleifen
+- `contextPruning.softTrim`: maxChars 8000, head/tail 500 — kuerzt grosse Tool-Outputs
+- `compaction.postCompactionSections`: ["Session Startup", "Red Lines"] — re-injiziert nach Komprimierung
+- `messages.statusReactions.enabled`: true — visuelles Feedback (Denken/Tool/Web)
+- `session.typingMode`: "instant" — sofortiger Typing-Indicator
+- `agents.defaults.thinkingDefault`: "low" — Standard-Thinking wenn kein /think
+- `agents.defaults.envelopeTimezone`: "user", `timeFormat`: "24" — konsistente Timestamps
+- `tools.web.search.provider`: "gemini" mit GEMINI_API_KEY — kostenlose Web-Suche
+- `tools.web.fetch.timeoutSeconds`: 30, `maxChars`: 30000 — Fetch-Limits
+- `tools.exec.timeoutSec`: 120, `backgroundMs`: 3000 — Exec-Hardening
+- `logging.level`: "info", `redactSensitive`: "tools" — strukturierte Logs
+- `plugins.allow`: + "llm-task" — Background-LLM-Aufgaben
+- `hooks.internal.entries.boot-md.enabled`: true — Startup-Validierung
+- `heartbeat.lightContext`: true — schnellere Heartbeats
+- `channels.telegram.replyToMode`: "first" — Thread-Antworten
+- `channels.telegram.reactionLevel`: "minimal" — reichere Reaktionen
+
+**Voice-Call System (Twilio):**
+- Account: Trial mit $15.50 Guthaben
+- Nummer: +17712532921 (Washington DC, US) — $1.15/Monat
+- Deutsche Nummern brauchen registrierte Adresse (AddressSid) — US-Nummern nicht
+- Credentials in `~/.openclaw/.env`: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET, TWILIO_PHONE_NUMBER
+- Config: `plugins.entries.voice-call.config` (Provider, TTS, Inbound-Policy)
+- Webhook: `http://127.0.0.1:3334/voice/webhook` (eigenstaendiger HTTP-Server)
+- publicUrl: `https://voice.forensikzentrum.com/voice/webhook`
+- **OFFEN: Cloudflare Tunnel-Route** `voice.forensikzentrum.com → localhost:3334` im Dashboard anlegen
+- TTS: OpenAI `alloy` Voice (nicht Edge TTS — Telefonie braucht 8kHz mu-law)
+- Response-Model: Sonnet (voller Workspace-Zugriff inkl. Tools)
+- Inbound: allowlist (leer = niemand kann anrufen, Nummern hinzufuegen fuer Zugang)
+- Outbound: conversation-Modus (interaktiv, nicht nur Durchsage)
+- Kosten: ~$0.02/Min US, ~$0.10/Min nach DE + OpenAI TTS ~$0.015/1K Zeichen
+- ngrok installiert (~/bin/ngrok v3.37.2) als Fallback-Tunnel falls Cloudflare nicht geht
