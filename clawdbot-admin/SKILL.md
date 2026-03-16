@@ -657,3 +657,28 @@ systemctl --user restart openclaw-gateway.service
 - Outbound: conversation-Modus (interaktiv, nicht nur Durchsage)
 - Kosten: ~$0.02/Min US, ~$0.10/Min nach DE + OpenAI TTS ~$0.015/1K Zeichen
 - ngrok installiert (~/bin/ngrok v3.37.2) als Fallback-Tunnel falls Cloudflare nicht geht
+
+**Webhook-Security Fix (KRITISCH):**
+- Cloudflare Tunnel strippt den `X-Twilio-Signature` Header → alle Webhooks gaben 401
+- Symptom: Calls werden initiiert (Status: queued), aber sofort beendet (Duration: 0s)
+- Log: `[voice-call] Webhook verification failed: Missing X-Twilio-Signature header`
+- Fix: `webhookSecurity.trustForwardingHeaders: true` + `trustedProxyIPs: ["127.0.0.1", "::1"]`
+- Nach Fix: Calls verbinden korrekt (Duration: 13s+)
+
+**Twilio Trial-Account Limits:**
+- Trial kann nur an verifizierte Nummern anrufen
+- Verifizierung neuer Nummern braucht Full Account (Upgrade mit Zahlungsmethode)
+- Die Registrierungs-Nummer (+491736075456) ist automatisch verifiziert
+- Upgrade-URL: https://www.twilio.com/console/billing/upgrade
+
+**Zweiter Cloudflare Tunnel (lokal konfiguriert):**
+- Tunnel 688f91d0 hat lokale Config: `~/.cloudflared/kanban-config.yml`
+- Service: `cloudflared-local.service` (systemd user, enabled, auto-start)
+- Ingress: kanban.forensikzentrum.com → :3847, voice.forensikzentrum.com → :3334
+- Neue Routes: einfach YAML-Datei editieren + Service neustarten
+- DNS-Route anlegen: `cloudflared tunnel route dns --overwrite-dns 688f91d0 subdomain.forensikzentrum.com`
+
+**Voice-Call Testing:**
+- NICHT per manuellen Twilio API curl-Calls testen — das Plugin braucht interne callId-Parameter
+- IMMER ueber das `voice_call` Tool des Agents testen (via Telegram: "Ruf mich an")
+- Manuelle API-Calls erzeugen Calls die das Plugin nicht zuordnen kann
