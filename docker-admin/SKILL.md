@@ -62,6 +62,8 @@ Nicht jeder Container hat sein eigenes Compose-Verzeichnis. Diese Zuordnung ist 
 | vaultwarden | `/volume1/docker/vaultwarden/` | Eigenständig |
 | dify-* | `/volume1/docker/dify/` | Gepinnt auf 0.15.3 (Feb 2025), Major Update separat prüfen! |
 | open-webui | `/volume1/docker/open-webui/` | Eigenständig |
+| magic-video-db | `~/magic-video-backend/` | PostgreSQL 16, Port 5438 |
+| magic-video-redis | `~/magic-video-backend/` | Redis 7, Port 6380 |
 
 ---
 

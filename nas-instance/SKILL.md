@@ -52,6 +52,11 @@ Internet → Cloudflare Tunnel (cloudflared Container)
   ├── ssh.forensikzentrum.com     → SSH (:22)
   ├── admin.forensikzentrum.com   → Admin Panel (:9443)
   └── forensikzentrum.com         → PflegeAssist Pro (:8085)
+
+Lokal (kein Tunnel):
+  magic-video-backend (:3001) → NestJS API
+    ├── magic-video-db (:5438) → PostgreSQL 16
+    └── magic-video-redis (:6380) → Redis 7
 ```
 
 ### Docker-Netzwerk-Isolation (nicht aendern)
@@ -60,6 +65,7 @@ Internet → Cloudflare Tunnel (cloudflared Container)
 | `openwebui-network` | Open WebUI, Ollama, SearXNG, OpenAPI-Server |
 | `n8n_default` | n8n, verbundene Automationen |
 | `livekit-net` | LiveKit Server, Agent, Playground |
+| `default` (magic-video) | magic-video-db, magic-video-redis |
 
 ### Daten-Pfade (kritisch)
 | Pfad | Inhalt |
@@ -231,3 +237,23 @@ Unterstuetzt: Schmidt-Meier, von der Heide, Oezdemir, étranger-Varianten
 - N8N_RUNNERS_TASK_TIMEOUT=2400000 crasht Task Runner (32-bit Overflow) → 1800000
 - `var status` in sandboxed Webhook-Page → `statusBox` (window.status Konflikt)
 - PDF-Extraktion mit pdfjs-dist funktioniert fuer Medifox-Exporte
+
+### 2026-03-16 — Magic Video Backend E2E
+
+**Neues Projekt:** `~/magic-video-backend`
+- NestJS + Prisma + BullMQ + fal.ai (Kling Video v2.5 Turbo Pro)
+- Image-to-Video-Generierung mit Credit-System
+- Compose: PostgreSQL (:5438), Redis (:6380), Backend (:3001)
+- Compose-Verzeichnis: `~/magic-video-backend/`
+
+**Zombie-Prozess-Problem:**
+- `nest start --watch` hinterlaesst Zombie-Prozesse wenn Terminal geschlossen wird
+- 11 Zombies fraßen ~4GB RAM
+- Pruefung: `ps aux | grep "nest start" | grep -v grep | wc -l`
+- Aufraumen: `pkill -f "nest start"`
+
+**fal.ai Kling Video Constraints:**
+- Bilder muessen mindestens ~512x512 sein, sonst `ValidationError: Unprocessable Entity`
+- Bilder muessen ueber fal.ai CDN hochgeladen werden (POST /api/upload → fal.storage.upload)
+- Generierung dauert ~60-90 Sekunden pro 10s-Video
+- Error-Logging: `error.body` muss explizit geloggt werden (fal.ai SDK wirft ValidationError mit body-Property)
