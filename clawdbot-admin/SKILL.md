@@ -541,3 +541,27 @@ systemctl --user restart openclaw-gateway.service
 - In dieser Session wurden API-Keys versehentlich durch `Read` auf `~/.openclaw/.env` im Klartext angezeigt
 - IMMER stattdessen: `grep "^[A-Z_]*=" ~/.openclaw/.env | cut -d= -f1` (nur Key-Namen)
 - Oder: `grep -c "ANTHROPIC_API_KEY" ~/.openclaw/.env` (Existenz-Check)
+
+### 2026-03-16 — UI-Lokalisierung + Cron-Fixes
+
+**localStorage ueberschreibt Code-Defaults bei Web-Apps:**
+- `resolveNavigatorLocale()` Fallback auf "de" aendern reichte NICHT — Browser hatte `openclaw.i18n.locale=en` in localStorage gespeichert
+- `resolveInitialLocale()` liest localStorage ZUERST, Code-Default wird nie erreicht
+- Fix: localStorage-Wert "en" explizit ignorieren wenn Deutsch-Default gewuenscht
+- **Regel:** Bei Locale-/Settings-Aenderungen IMMER beide Pfade behandeln: Erstbesucher (kein localStorage) UND Rueckkehrer (gespeicherter Wert)
+
+**Build-Performance — UI vs Backend:**
+- `pnpm ui:build` = ~3 Sekunden (nur Vite, nur Frontend)
+- `pnpm openclaw <cmd>` = ~50 Sekunden Full-Rebuild wenn dist stale (tsdown, alle Plugins)
+- Bei reinen UI-Aenderungen: NUR `pnpm ui:build` + Gateway-Restart
+- Fuer schnelle Cron-/Config-Queries: Dateien direkt lesen (`~/.openclaw/cron/jobs.json`) statt CLI
+
+**Cron-Job-Prompts — Zustellungs-Anweisungen vermeiden:**
+- "Liefere per Telegram" im Prompt verwirrte Gemini Flash (dachte es muss manuell senden)
+- Zustellung wird automatisch durch `delivery`-Config im Job gehandhabt
+- Prompt soll NUR den Inhalt beschreiben, NICHT den Zustellungsweg
+
+**de.ts (UI-Uebersetzung) vervollstaendigt:**
+- Von ~130 auf ~380 Zeilen (alle Sektionen: overview, login, cron komplett)
+- Hardcodierte Strings in command-palette.ts, bottom-tabs.ts, config.ts, skills-grouping.ts sind noch NICHT i18n'd
+- i18n-System: Lit Web Components + Lazy Loading, localStorage-Persistenz, Fallback auf Englisch
