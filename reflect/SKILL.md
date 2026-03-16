@@ -118,6 +118,16 @@ Diese Änderungen anwenden? [J]a / [N]ein / oder Anpassungen beschreiben
    git push origin main
    ```
 4. Bestätige: "Skill aktualisiert und zu GitHub gepusht"
+5. **Ontology aktualisieren** — PFLICHT nach jedem Reflect:
+   ```bash
+   cd ~/clawd
+   # Checkliste durchgehen:
+   # 1) Neue Software/Tools? → ontology.py create --type Software
+   # 2) Neue Patterns/Erkenntnisse? → ontology.py create --type Pattern
+   # 3) Neue Tasks (open/blocked)? → ontology.py create --type Task
+   # 4) Relationen? → ontology.py relate --from <id> --rel <rel> --to <id>
+   ```
+   GRANULAR anlegen: eine Entity pro Konzept/Tool/Erkenntnis, nicht eine Meta-Entity pro Session.
 
 ### Step 5: Falls abgelehnt
 
@@ -351,3 +361,14 @@ SET LOCAL hnsw.ef_search = 100;
 - JSON unterstuetzt keine Kommentare → `TODO(human)` kann nicht inline platziert werden
 - Workaround: Helper-Script (z.B. `/tmp/voice-test.mjs`) erstellen, TODO(human) dort platzieren
 - Config mit funktionierendem Default schreiben, User passt ueber Script/CLI an
+
+---
+
+### 2026-03-16 - Ontology-Pflicht + Granularitaet
+
+**Ontology-Update ist PFLICHT nach jedem Reflect:**
+- Erste Ontology-Runde dieser Session hatte nur 5 Entities — User fragte "Warum nicht mehr?"
+- Korrekte Runde: 16 Entities (7 Software, 6 Patterns, 3 Tasks) + 12 Relationen
+- Regel: Eine Entity pro Konzept/Tool/Erkenntnis, nicht eine Meta-Entity pro Session
+- Checkliste nach jedem Reflect: Neue Software? Patterns? Tasks? Relationen?
+- Step 4 im Workflow um Ontology-Pflichtschritt erweitert
