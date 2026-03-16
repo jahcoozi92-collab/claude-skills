@@ -513,3 +513,31 @@ systemctl --user restart openclaw-gateway.service
 - Archivierte Sessions bekommen `.reset.TIMESTAMP` Suffix (OpenClaw-Konvention)
 - Memory-Verbrauch als Indikator: 750MB (stuck) vs 300MB (frisch) — grosser Sprung deutet auf festgefahrene Session
 - `.env` nie mit Read/cat anzeigen — nur Key-Namen pruefen
+
+### 2026-03-16 — Ontology Template Update-Workflow + Viz-Praeferenzen
+
+**Ontology Live-Template aktualisieren (Schritt-fuer-Schritt):**
+1. Graph-Daten aus JSONL exportieren:
+   ```python
+   # ACHTUNG: create-Ops haben entity-Wrapper!
+   e = obj.get('entity', obj)  # NICHT obj direkt
+   ```
+2. JSON in `live_template.html` ersetzen: `var DATA={...};`
+3. `systemctl --user restart ontology-live.service`
+
+**JSONL-Format Gotcha:**
+- `{"op":"create","entity":{"id":"...","type":"...","properties":{...}}}`
+- Das `entity`-Feld umschliesst die eigentlichen Daten — direkter Zugriff auf `obj['id']` gibt KeyError
+- Relationen haben KEIN entity-Wrapper: `{"op":"relate","from":"...","rel":"...","to":"..."}`
+
+**Visualisierungs-Praeferenzen (Diana):**
+- Atome muessen GROSS sein — 2x Vergroesserung war "nicht genug", erst ~3.5x war akzeptabel
+- Aktuelle Werte: Pattern/Device=38, Project=44, Software=34, Account=30, Task/Cred=26, Note=22
+- Labels: 18px bold 700, Typ-Badge: 16px bold, Edge-Labels: 14px
+- Repulsion: 15000 (proportional zu Atom-Groesse, sonst Ueberlappung)
+- Faustregel: Bei Atom-Groessen-Aenderung auch Repulsion, Label-Offset und Badge-Font anpassen
+
+**Sicherheitslektion (.env Exposition):**
+- In dieser Session wurden API-Keys versehentlich durch `Read` auf `~/.openclaw/.env` im Klartext angezeigt
+- IMMER stattdessen: `grep "^[A-Z_]*=" ~/.openclaw/.env | cut -d= -f1` (nur Key-Namen)
+- Oder: `grep -c "ANTHROPIC_API_KEY" ~/.openclaw/.env` (Existenz-Check)
