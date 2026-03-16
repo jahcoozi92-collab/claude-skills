@@ -177,6 +177,70 @@ Beim ersten Mal muss der User manuell einen Test auf fal.ai durchführen:
 
 ---
 
+## Suno Audio Post-Processing & Remastering
+
+### Suno-spezifische Artefakte
+
+Suno's "Extend"-Feature erzeugt charakteristische Splice-Artefakte:
+
+| Artefakt | Symptom | Erkennung |
+|----------|---------|-----------|
+| **Stereo-Kollaps** | L/R-Korrelation fällt auf -0.39 (Anti-Phase!) | Frame-Korrelation < 0.3 |
+| **L/R Balance-Drift** | Ein Kanal bis +7.8dB lauter | \|Balance\| > 3dB |
+| **Spectral Holes** | Ganze Frequenzbänder fehlen am Splice | Multi-Band STFT-Analyse |
+| **Level-Dips** | 5-11dB Löcher an Sektions-Grenzen | RMS < Median - 5dB |
+| **Über-Kompression** | LRA 3.8-4.4 LU, Crest Factor ~5 | Loudnorm Pass 1 |
+
+### Analyse-Pipeline (Godmode)
+
+```
+Phase 1: STFT Deep-Analysis
+  - 20ms Blöcke, 2049 Freq-Bins (0-24kHz)
+  - 4-Band RMS-Envelope (Sub/Low/Mid/High)
+  - Onset-Detection via Spectral Flux
+  - Frame-Level Stereo-Korrelation + Balance
+  - Multi-dimensionaler Anomalie-Score
+
+Phase 2: Surgical Repair (Frequenzdomäne!)
+  - Per-Frequency-Bin Volume Correction (Target = 70% Referenz-Median)
+  - Adaptive Spectral Crossblend bei Korr < 0.6
+  - Spectral Interpolation aus Nachbar-Frames bei Holes
+  - ISTFT Rekonstruktion
+
+Phase 3: Musical Mastering
+  - Cubic-Spline Gain-Automation (NICHT Stufen-Funktion!)
+  - Automatische Sektions-Erkennung (Onset-Density + Energie-Perzentile)
+  - Multi-Band Spectral Balance Verifikation
+  - Soft-Knee tanh-Limiter
+
+Phase 4: EBU R128 Normalisierung
+  - Loudnorm Pass 1 (Messung)
+  - Loudnorm Pass 2 (linear=true, kein Re-Compress)
+  - Ziel: -14 LUFS, -1dB TP, LRA 8-11 LU
+```
+
+### Constraints (Audio-Mastering)
+
+- ❌ NIEMALS nur RMS für Anomalie-Erkennung — IMMER Stereo-Korrelation + Balance + Spectral
+- ❌ NIEMALS überlappende Gaussians multiplizieren — Envelope-basiert (Target vs Ist)
+- ❌ NIEMALS ffmpeg `compand` für Sektions-Dynamik — arbeitet auf Sample-Ebene, nicht Sektions-Ebene
+- ❌ NIEMALS `loudnorm` ohne `linear=true` im Pass 2 — komprimiert die Expansion zurück
+- ✅ IMMER Stereo-Phase reparieren VOR Volume-Korrektur
+- ✅ IMMER in Frequenzdomäne (STFT) arbeiten statt Zeitdomäne für Artefakt-Reparatur
+- ✅ IMMER Section-Dynamics mit smooth Gain-Automation (Gaussian-Smoothing, Cubic Spline)
+- ✅ IMMER Soft-Knee Limiter (tanh) statt Hard-Clip
+
+### Preview-Schnitt Strategie
+
+Für Geburtstagslieder / Überraschungs-Teaser:
+- **Bridge bevorzugen**: Persönlich, intim, verrät nicht den Chorus-Hook
+- **Verse 2 als Alternative**: Poetisch, nicht repetitiv
+- **NICHT**: Intro (zu erwartbar), Chorus (Überraschung bewahren), Climax (Höhepunkt aufsparen)
+- Fade: 2s In, 3s Out — länger Out für Mystery-Effekt
+- Länge: 20-25s
+
+---
+
 ## Gelernte Lektionen
 
 ### 2026-01-30 - Initiale Session
@@ -207,6 +271,36 @@ Beim ersten Mal muss der User manuell einen Test auf fal.ai durchführen:
 - Bei deutschen Lyrics: `prompt` MUSS "German vocals" oder "sung in German" enthalten
 - Zusätzlich: `lyrics_prompt` mit Sprach-Prefix versehen: `[GERMAN LYRICS - SING IN GERMAN]`
 - Dreifache Absicherung: Gemini-Prompt, Fallback-Check, fal.ai-Service-Check
+
+### 2026-03-16 - Suno Audio Remastering Session
+
+**Suno Artefakt-Erkennung (3 Analyse-Levels):**
+- Level 1 (RMS only): Findet 3 von 19 Artefakten — unzureichend
+- Level 2 (RMS + Stereo + Balance, 50ms): Findet 9 von 19 — besser
+- Godmode (STFT + Multi-Band + Onset + M/S, 20ms): Findet alle 19 — vollständig
+- Lektion: Multi-dimensionale Analyse ist PFLICHT, nicht optional
+
+**Stereo-Reparatur ist kritisch:**
+- Suno Extend erzeugt Anti-Phase (Korrelation bis -0.39!)
+- Volume-Boost allein hilft NICHT bei Phase-Problemen
+- STFT-Domain Crossblend repariert Stereo ohne Artefakte
+- Korrelation 0.03 → 0.95 möglich mit spectral crossblend
+
+**Section-Based Dynamics funktioniert, compand nicht:**
+- ffmpeg `compand` arbeitet auf Sample-Ebene → kann Sektions-Kompression nicht aufbrechen
+- LRA-Verbesserung mit compand: 3.8 → 4.3 LU (marginal)
+- LRA-Verbesserung mit Section-Gains: 3.8 → 9.7 LU (massiv)
+- Cubic-Spline Automation statt Step-Functions für unhörbare Übergänge
+
+**Gaussian-Stacking Bug:**
+- Mehrere Gaussians im Volume-Filter MULTIPLIZIEREN sich
+- Peak bei 4.24x FS (statt erwartet ~1.0x) weil 5 Gaussians überlappten
+- Lösung: Envelope-basiert arbeiten (Target vs Ist pro Block, max-Operator statt Multiplikation)
+
+**Spectral Interpolation:**
+- Bei Splice-Artefakten fehlen ganze Frequenzbänder
+- Nachbar-Frames (±2) können als Interpolations-Quelle dienen
+- Gewichtung: 30% × fade / Abstand — natürlich klingend
 
 ### 2026-01-31 - Lyrics & URL-Analyse Session
 
