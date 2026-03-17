@@ -157,6 +157,25 @@ ssh moltbotadmin@192.168.22.206 'cd ~/.claude/skills && git pull --rebase origin
 - Betroffene Dateien: CLAUDE.md + 5 Skill-Dateien (clawdbot-admin, yoga7-admin, nas-instance, reflect, docker-admin)
 - `git pull --rebase origin main` vor Push wenn Remote neuere Commits hat
 
+### 2026-03-18 — Magic Video App (React Native + NAS Backend)
+
+**Metro Web Kompatibilität (kritisch):**
+- Zustand v5 ESM (.mjs) nutzt `import.meta.env` → Metro Web crasht → Custom resolver in metro.config.js nötig
+- Firebase v10+ modular SDK nutzt `import.meta` → `firebase/compat/*` verwenden
+- NativeWind v4 `className` auf `Text` funktioniert nicht auf Web → Inline Styles
+- `Alert.alert` Callbacks auf Web unzuverlässig → `window.confirm` als Fallback
+- FlatList `scrollToIndex` auf Web broken → State-basiertes Rendering
+- FormData: RN URI-Objekt vs Web Blob → Platform.OS Check
+
+**Android Build:**
+- Java 17 nötig für Gradle: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64`
+- Emulator (Pixel 3a) hat SDK-Image-Probleme — APK direkt bauen: `./gradlew assembleDebug`
+
+**NAS Backend Management:**
+- Backend-Pfad: `/home/Jahcoozi/magic-video-backend`
+- Port freimachen + starten: `fuser -k 3001/tcp; nohup node dist/main.js >> backend.log 2>&1 &`
+- Prisma Migrations: `npx prisma migrate dev --name xyz` oder `npx prisma db push`
+
 ### 2026-03-14 — SSHFS-Mount & Terminal-Breite
 
 **Terminal-Breite-Problem:**
