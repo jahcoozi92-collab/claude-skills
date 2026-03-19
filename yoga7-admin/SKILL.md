@@ -157,6 +157,39 @@ ssh moltbotadmin@192.168.22.206 'cd ~/.claude/skills && git pull --rebase origin
 - Betroffene Dateien: CLAUDE.md + 5 Skill-Dateien (clawdbot-admin, yoga7-admin, nas-instance, reflect, docker-admin)
 - `git pull --rebase origin main` vor Push wenn Remote neuere Commits hat
 
+### 2026-03-19 — Magic Video App Session (59 Commits, 4060 LOC)
+
+**Diana's UI-Präferenzen (KRITISCH):**
+- NIEMALS Emojis in App-UIs — Diana hasst das
+- JEDER Sub-Screen braucht Zurück-Button — sonst "hängt" die App
+- Cleanes Premium-Design bevorzugt (Linear/Raycast Stil)
+- Borderradius 10-12px, nicht 24px
+
+**Prompt-Handling (KRITISCH):**
+- User-Prompts >100 Zeichen NIEMALS mit Suffix modifizieren
+- Kling versteht keine XML-Tags — Prompt-Cleaner entfernt sie
+- Zeichenlimit großzügig setzen (500 statt 200) — sonst blockiert Paste
+- RN Web TextInput blockt Paste → natives DOM textarea verwenden
+
+**React Native Hooks:**
+- useRef/useEffect in FlatList renderItem = "Invalid hook call" Crash
+- Hooks nur in Function Components, NIEMALS in Callbacks
+- Lösung: Separate Component statt inline renderItem
+
+**Gradle Lock Problem:**
+- ~/.gradle/caches Lock blockiert alle Builds
+- Fix: `GRADLE_USER_HOME=/tmp/gradle-fresh` für frischen Build
+- Oder: `find ~/.gradle -name "*.lock" -delete && pkill -9 gradle`
+
+**fal.ai:**
+- Balance läuft regelmäßig leer → 500er "Forbidden" Fehler
+- 3x passiert in einer Session
+- Backend sollte "Forbidden" als spezifische Meldung weitergeben
+
+**scp auf NAS funktioniert nicht:**
+- `scp` gibt "dest open: No such file" obwohl Datei existiert
+- Workaround: `cat file | ssh user@host "cat > /path/file"`
+
 ### 2026-03-18 — Magic Video App (React Native + NAS Backend)
 
 **Metro Web Kompatibilität (kritisch):**
