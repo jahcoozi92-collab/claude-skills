@@ -50,8 +50,11 @@ Internet → Cloudflare Tunnel (cloudflared Container)
   ├── playground.forensikzentrum.com → LiveKit Playground (:8090)
   ├── livekit-ws.forensikzentrum.com → LiveKit WS (:7880)
   ├── ssh.forensikzentrum.com     → SSH (:22)
-  ├── admin.forensikzentrum.com   → Admin Panel (:9443)
-  └── forensikzentrum.com         → PflegeAssist Pro (:8085)
+  ├── searxng.forensikzentrum.com → SearXNG (:8081)
+  ├── songcraft.forensikzentrum.com → SongCrafter (:3080/:8002)
+  ├── crawl.forensikzentrum.com   → Crawl4AI (:18800)
+  ├── freqtrade.forensikzentrum.com → Freqtrade (:8085)
+  └── ... (24 Routes total, Stand 2026-03-24)
 
 Lokal (kein Tunnel):
   magic-video-backend (:3001) → NestJS API

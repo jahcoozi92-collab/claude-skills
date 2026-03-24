@@ -60,7 +60,8 @@ Nicht jeder Container hat sein eigenes Compose-Verzeichnis. Diese Zuordnung ist 
 | nextcloud_app | `/volume1/docker/nextcloud/` | Eigenständig |
 | nextcloud_db | `/volume1/docker/nextcloud/` | MariaDB, Teil des NC-Stacks |
 | vaultwarden | `/volume1/docker/vaultwarden/` | Eigenständig |
-| dify-* | `/volume1/docker/dify/` | Gepinnt auf 0.15.3 (Feb 2025), Major Update separat prüfen! |
+| faster-whisper | `/volume1/docker/speechreader-backend/` | Image: `ghcr.io/speaches-ai/speaches:0.8.3-cpu` (ehem. fedirz/faster-whisper-server) |
+| crawl4ai | `/volume1/docker/Crawl4AI/` | Image: `unclecode/crawl4ai:0.8.5` |
 | open-webui | `/volume1/docker/open-webui/` | Eigenständig |
 | magic-video-db | `~/magic-video-backend/` | PostgreSQL 16, Port 5438 |
 | magic-video-redis | `~/magic-video-backend/` | Redis 7, Port 6380 |
@@ -607,30 +608,14 @@ RUN npm install
 
 ### 2026-01-16 - AI Container Stack & Cloudflare Automation
 
-**AI Container Installation:**
+**AI Container (aktiv, Stand 2026-03-24):**
 | Container | Port | Besonderheiten |
 |-----------|------|----------------|
-| Dify | 3100 | Nach Start: `docker exec dify-api flask db upgrade` |
-| OpenHands | 3200 | SANDBOX_USER_ID=0, FILE_STORE_PATH Volume nötig |
-| Langflow | 7860 | `user: root` in docker-compose.yml |
 | CrewAI | 3400 | Kein offizielles Image → Custom Dockerfile |
-| AutoGPT | 8100 | Braucht OPENAI_API_KEY (kein Ollama-Support) |
-| vLLM | - | ❌ Benötigt GPU - auf CPU nicht nutzbar |
 
-**Dify Setup-Workflow:**
-```bash
-# 1. Stack starten
-cd /volume1/docker/dify && docker compose up -d
-
-# 2. Warten bis DB healthy
-docker ps --filter "name=dify-db" --format "{{.Status}}"
-
-# 3. Migration ausführen (WICHTIG!)
-docker exec dify-api flask db upgrade
-
-# 4. API neustarten
-docker restart dify-api dify-worker
-```
+**Entfernte AI-Container (2026-03-24):**
+- Dify (nie genutzt), OpenHands (nie genutzt), Langflow (nie genutzt), AutoGPT (nie installiert)
+- vLLM (benötigt GPU)
 
 **CrewAI Custom Build:**
 ```dockerfile
@@ -687,8 +672,11 @@ curl -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records" \
 **Zwei Cloudflare Tokens benötigt:**
 | Zweck | Template | Berechtigung |
 |-------|----------|--------------|
-| Tunnel Routes | Custom | Account → Cloudflare Tunnel → Edit |
+| Tunnel Routes | **Benutzerdefiniert** (kein Template!) | Konto → Cloudflare Tunnel → Bearbeiten |
 | DNS Records | Edit zone DNS | Zone → DNS → Edit |
+
+**ACHTUNG:** Template "Edit Cloudflare Zero Trust" existiert NICHT auf der Token-Seite!
+Immer "Benutzerdefiniertes Token erstellen" wählen.
 
 **Port-Kollisionen vermeiden:**
 ```bash
@@ -933,9 +921,10 @@ Oder Interval sehr hoch setzen: `"every": "8760h"` (1 Jahr)
 - Patch-Updates (z.B. MariaDB 11.4.9→11.4.10) sind sicher
 - Sensible Services (Vaultwarden, Datenbanken) nur nach Bestätigung
 
-**Dify sehr veraltet:**
-- Gepinnt auf 0.15.3 (Feb 2025) — über 1 Jahr alt
-- Major Update separat behandeln (Breaking Changes möglich)
+**Dify entfernt (2026-03-24):**
+- War nie genutzt (0 Workflows, 0 Apps, 1x eingeloggt am 17.01.2026)
+- Alle 7 Container, 3 Volumes, Images entfernt
+- Cloudflare Route `dify.forensikzentrum.com` entfernt
 
 **n8n Image-Registry:**
 - Tatsächliches Image: `docker.n8n.io/n8nio/n8n:latest` (nicht `n8nio/n8n`)
@@ -951,6 +940,41 @@ Oder Interval sehr hoch setzen: `"every": "8760h"` (1 Jahr)
 | qwen3:8b (5GB) | ~25-30 tok/s | - | ✅ Lokal OK |
 
 **Faustregel:** Modelle >8GB = API nutzen (Z.AI, Moonshot, OpenRouter)
+
+### 2026-03-24 - Bulk Update, Prune & Cloudflare Route Cleanup
+
+**Docker Image Update-Check — zuverlässige Methode:**
+```bash
+# FALSCH: docker manifest inspect Digest ≠ RepoDigests → False Positives
+# RICHTIG: Pull + Image-ID-Vergleich (vorher/nachher)
+OLD_ID=$(docker inspect --format='{{.Id}}' "$img" | cut -c8-19)
+docker pull "$img"
+NEW_ID=$(docker inspect --format='{{.Id}}' "$img" | cut -c8-19)
+[ "$OLD_ID" != "$NEW_ID" ] && echo "UPDATE"
+```
+
+**Projekt-Renames beachten:**
+- `fedirz/faster-whisper-server` → `ghcr.io/speaches-ai/speaches` (Jan 2025)
+- Alte Docker Hub Images werden nicht mehr aktualisiert
+- Volume-Pfade können sich ändern (`/root/` → `/home/ubuntu/`)
+
+**Cloudflare api-upload-routes-v2.sh Bugs (gefixt):**
+1. jq: Backslash `\` am Zeilenende in Single Quotes → jq interpretiert als Literal, nicht Zeilenfortsetzung → Entfernen
+2. API: Timeout-Strings `"30s"` → API erwartet Integer `30` → jq `to_secs` Konvertierung
+
+**Cloudflare Route Audit — Container-Abgleich:**
+```bash
+# Für jeden Route-Port prüfen ob ein Container lauscht:
+docker ps --format "{{.Ports}}" | grep "0.0.0.0:${PORT}->"
+# Host-Network Container (HA, Jellyfin) separat prüfen
+# Remote-Hosts (andere IPs) per ping testen
+# SSH-Tunnel-Ports per ss -tlnp prüfen
+```
+
+**Entfernte Services & Routes (2026-03-24):**
+- Dify (7 Container, ~800 MB RAM, ~4 GB Disk)
+- Coqui TTS / piper-tts (Projekt eingestellt 2023)
+- Cloudflare Routes: portainer, aura, auto-claude, openhands, langflow, moltbot, openclaw
 
 **Custom Modelfile für CPU-Optimierung (+25% Speed):**
 ```bash
