@@ -148,6 +148,7 @@ OpenClaw kennt drei Secret-Mechanismen:
 - [ ] `session.reset.mode: "idle"` + `idleMinutes` — stale Sessions vermeiden
 - [ ] `userTimezone` + `timeFormat: "24"` — Zeitbewusstsein
 - [ ] Fallback-Kette (kosten-optimiert): Sonnet primary → DeepSeek → Gemini Flash → Opus → Qwen3 local
+- [ ] **Cron-Jobs NICHT auf Gemini Free** — 20 req/Tag global geteilt, 429-Errors bei >2 Jobs. DeepSeek ($0.25/M) fuer alle automatisierten Tasks.
 - [ ] `contextPruning.keepLastAssistants: 3` — schuetzt letzte Antworten
 - [ ] `heartbeat.activeHours` — nur waehrend Wachzeiten
 - [ ] Telegram: `linkPreview: false`, `markdown.tables: "code"`, `dmHistoryLimit: 50`
@@ -211,6 +212,25 @@ OPENCLAW_CLI="/usr/bin/node /home/moltbotadmin/clawdbot-src/dist/entry.js"
 - Main Agent + Coder: weiterhin Opus (explizit in agents.list konfiguriert)
 - Researcher/Organizer/Cron/Heartbeat: weiterhin DeepSeek V3.2
 
+### Ontology Knowledge Graph
+
+| Zugriff | Pfad/URL |
+|---------|----------|
+| CLI | `cd ~/clawd && python3 skills/ontology/scripts/ontology.py <cmd>` |
+| Graph-Daten | `~/clawd/memory/ontology/graph.jsonl` (append-only JSONL) |
+| Statische HTML | `~/clawd/canvas/ontology.html` (muss nach Aenderungen regeneriert werden) |
+| Live-Server | Port 8090 (SSE, auto-update aus graph.jsonl) |
+| HTML-Export | `python3 ~/clawd/skills/ontology/scripts/export_html.py` |
+
+**Cron: Ontology Daily Update** (ID: `0fe558a6`, 23:00 Berlin, DeepSeek):
+Analysiert taeglich Memory-Files + Git-Commits, erstellt Entities, regeneriert HTML.
+
+**HTML-Regeneration** (Regex-Replace, da kein Placeholder):
+```python
+cd ~/clawd && python3 -c "import json,re;from pathlib import Path; ..."
+# Ersetzt 'const graphData = {...};' mit aktuellem graph.jsonl Inhalt
+```
+
 ### Troubleshooting
 
 **502 von Cloudflare:**
@@ -218,6 +238,16 @@ OPENCLAW_CLI="/usr/bin/node /home/moltbotadmin/clawdbot-src/dist/entry.js"
 2. `curl -sI http://127.0.0.1:18789/` — antwortet der Gateway lokal?
 3. `pgrep -af cloudflared` — laeuft der Tunnel? (System-Service, PID ~836)
 4. Wenn Gateway `inactive (dead)` mit `status=0/SUCCESS`: wurde sauber gestoppt (SIGTERM), systemd startet dann nicht automatisch neu → `systemctl --user start openclaw-gateway.service`
+5. **Tunnel-Ingress-Port pruefen** (haeufigste Ursache bei "wiedermal 502"):
+   ```bash
+   # Ingress-Config via API abrufen und Port fuer betroffene Subdomain pruefen
+   curl -sS "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/cfd_tunnel/${CF_TUNNEL_ID}/configurations" \
+     -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" | python3 -c "
+   import json,sys; [print(f'{r.get(\"hostname\",\"catch-all\")} → {r[\"service\"]}')
+     for r in json.load(sys.stdin)['result']['config']['ingress']]"
+   # Vergleichen mit: ss -tlnp | grep 1879
+   ```
+6. **Falls Port falsch** → Fix via API PUT (siehe Cloudflare Tunnel API Referenz unten)
 
 **ERR_MODULE_NOT_FOUND Crash-Loop (pnpm-Symlink fehlt):**
 - Symptom: `Cannot find package 'chalk' imported from dist/subsystem-*.js` (oder anderes Paket)
@@ -699,6 +729,15 @@ systemctl --user restart openclaw-gateway.service
 - Ingress: kanban.forensikzentrum.com → :3847, voice.forensikzentrum.com → :3334
 - Neue Routes: einfach YAML-Datei editieren + Service neustarten
 - DNS-Route anlegen: `cloudflared tunnel route dns --overwrite-dns 688f91d0 subdomain.forensikzentrum.com`
+
+**Cloudflare Tunnel API Referenz (Token-basierter Tunnel `backup-yoga7`):**
+- Account-ID: `fe9ccc0b8c75b763124554a9f0bab48c`
+- Tunnel-ID: `d770b289-dc1b-498e-9387-dff9edbea572`
+- API-Token: `CLOUDFLARE_API_TOKEN` aus `~/.openclaw/.env`
+- Config lesen: `GET /accounts/{account}/cfd_tunnel/{tunnel}/configurations`
+- Config schreiben: `PUT /accounts/{account}/cfd_tunnel/{tunnel}/configurations` mit Body `{"config": {...}}`
+- **WICHTIG:** PUT ersetzt die GESAMTE Config — immer zuerst GET, Feld aendern, dann PUT mit vollem Payload
+- Token-basierte Tunnels haben KEINE lokale Config-Datei — Ingress-Regeln liegen ausschliesslich in der Cloudflare-API/Dashboard
 
 **Voice-Call Testing:**
 - NICHT per manuellen Twilio API curl-Calls testen — das Plugin braucht interne callId-Parameter
