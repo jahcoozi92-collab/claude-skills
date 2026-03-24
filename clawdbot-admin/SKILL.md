@@ -831,3 +831,22 @@ systemctl --user restart openclaw-gateway.service
 **discovery.wideArea deaktiviert:**
 - `enabled: true` ohne `domain` erzeugt Warnung bei jedem Start
 - Deaktiviert bis eine Domain konfiguriert wird (Unicast-DNS-SD)
+
+### 2026-03-24 — Tunnel Port-Mismatch (openclaw.forensikzentrum.com 502)
+
+**Symptom:** openclaw.forensikzentrum.com liefert HTTP 502, Gateway laeuft aber lokal einwandfrei (HTTP 200 auf :18789)
+
+**Ursache:** Cloudflare-Tunnel Ingress-Regel fuer `openclaw.forensikzentrum.com` zeigte auf `http://127.0.0.1:18790` — Port 18790 existiert nicht. Gateway lauscht auf 18789.
+
+**Diagnose-Pfad:**
+1. DNS OK (Cloudflare-IPs), curl → 502, Gateway lokal → 200, cloudflared laeuft
+2. Tunnel-Config via API abgefragt (`GET .../configurations`) → falscher Port entdeckt
+3. Vergleich: `moltbot.forensikzentrum.com` → `:18789` (korrekt), `openclaw.*` → `:18790` (falsch)
+
+**Fix:** Tunnel-Config via API PUT korrigiert: `:18790` → `:18789`. Sofort wirksam (kein Tunnel-Restart noetig).
+
+**Erkenntnisse:**
+- Token-basierte Tunnel-Configs sind anfaellig fuer "stille" Port-Drift — keine lokale Datei zum Pruefen
+- Bei wiederholtem 502: IMMER zuerst Ingress-Port via API pruefen (Schritt 5 im Troubleshooting)
+- Cloudflare API PUT ersetzt die GESAMTE Config → GET-modify-PUT Workflow zwingend
+- Tunnel-Config-Aenderungen sind sofort wirksam, kein cloudflared-Restart noetig
