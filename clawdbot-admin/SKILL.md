@@ -46,6 +46,8 @@ Diese Skill gilt **ausschliesslich** fuer:
 | `clawdbot-gateway.service` | `openclaw-gateway.service` |
 | `CLAWDBOT_*` env vars | `OPENCLAW_*` (legacy vars werden ignoriert mit Warnung) |
 
+**Rebrand-Regel fuer Dokumentation:** CLI-Befehle in CLAUDE.md/Docs IMMER als `openclaw` schreiben (nicht `clawdbot`). Shell-Aliase (`clawdbot-use-*`, `clawdbot-model-*`) behalten ihren Namen — das sind Benutzerfunktionen, kein offizielles CLI.
+
 ---
 
 ## Architektur-Constraints
@@ -110,7 +112,7 @@ sudo chattr +i <datei>         # Immutable (nur root kann aufheben)
 
 ## Secrets-Management
 
-**Regel: Keine API-Keys in `openclaw.json` oder `clawdbot.json`!** Alle Secrets gehoeren in `~/.openclaw/.env` (chmod 600).
+**Regel: Keine API-Keys in `openclaw.json`, `clawdbot.json` oder `.bashrc`!** Alle Secrets gehoeren in `~/.openclaw/.env` (chmod 600). Shell-Umgebung laedt Keys via `set -a; source ~/.openclaw/.env; set +a` in `.bashrc` — NIEMALS Keys direkt in `.bashrc` hardcoden.
 
 **✅ ERLEDIGT (2026-03-12):** Alle Plaintext-Keys aus `openclaw.json` entfernt. OpenRouter-apiKey und Telegram-botToken entfernt (Auto-Fill). Gateway/Hooks-Token, alle Skill-Keys auf `${VAR}` umgestellt. `GITHUB_PAT` und `SAG_API_KEY` zu `.env` hinzugefuegt.
 
@@ -722,3 +724,25 @@ systemctl --user restart openclaw-gateway.service
 **Build vs Install Klarstellung:**
 - `pnpm install` (Dependency-Aenderungen): kein Rebuild (`pnpm build`) noetig — nur Gateway-Restart
 - `pnpm build` nur noetig nach Source-Code-Aenderungen oder Version-Updates
+
+### 2026-03-24 — Secrets-Hygiene + Rebrand-Konsistenz
+
+**API Key aus .bashrc entfernt:**
+- `OPENAI_API_KEY` stand als Klartext-String in `~/.bashrc` Zeile 124 — seit Ersteinrichtung
+- Key war bereits korrekt in `~/.openclaw/.env` vorhanden (doppelt!)
+- Ersetzt durch: `set -a; source ~/.openclaw/.env; set +a` — laedt ALLE Keys aus .env
+- Vorteil `set -a` Pattern: neue Keys in .env werden automatisch als Env-Vars exportiert, ohne .bashrc anzufassen
+- ACHTUNG: Key koennte in `.bash_history` sichtbar sein falls er jemals manuell eingegeben wurde
+
+**CLAUDE.md Rebrand-Bereinigung:**
+- 5x `clawdbot` CLI-Aufrufe in Root-CLAUDE.md durch `openclaw` ersetzt (Gateway Mgmt, ACP, Troubleshooting)
+- `claude-skills/` zur Directory-Tabelle hinzugefuegt (20+ Claude Code Skills, war nicht dokumentiert)
+- Gateway-Sektion: Hinweis auf lokalen Build + `OPENCLAW_BUNDLED_PLUGINS_DIR`
+- Model-Sektion: Shell-Alias-Namen und Quelldatei explizit dokumentiert
+- `clawd/CLAUDE.md` aktualisiert: "Clawdbot" → "OpenClaw", Config-Pfade korrigiert
+- `CLAUDE.md.proposed` geloescht (veraltet, noch alte Clawdbot-Referenzen)
+
+**Erkenntnisse:**
+- Bei /init auf bestehendem CLAUDE.md: Review+Improve statt Neuanlage (war korrekt)
+- README.md im Home-Dir gehoert zu `sag` (Go TTS-Tool) — nicht zum moltbot-System
+- Shell-Aliase (`clawdbot-use-*`) behalten ihren Namen — das sind Benutzerfunktionen, kein offizielles CLI
