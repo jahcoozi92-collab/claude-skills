@@ -144,7 +144,7 @@ OpenClaw kennt drei Secret-Mechanismen:
 - [ ] `queue.mode: "collect"` + `debounceMs: 1500` — Schnellnachrichten buendeln
 - [ ] `session.reset.mode: "idle"` + `idleMinutes` — stale Sessions vermeiden
 - [ ] `userTimezone` + `timeFormat: "24"` — Zeitbewusstsein
-- [ ] Fallback-Kette: Sonnet primary → DeepSeek → Opus → Gemini Flash → Qwen3 local
+- [ ] Fallback-Kette (kosten-optimiert): Sonnet primary → DeepSeek → Gemini Flash → Opus → Qwen3 local
 - [ ] `contextPruning.keepLastAssistants: 3` — schuetzt letzte Antworten
 - [ ] `heartbeat.activeHours` — nur waehrend Wachzeiten
 - [ ] Telegram: `linkPreview: false`, `markdown.tables: "code"`, `dmHistoryLimit: 50`
@@ -190,7 +190,7 @@ Der Gateway laeuft auf einem **lokalen Build** statt dem npm-Paket, weil die npm
 
 Schnelles Model-Switching per Shell-Funktion. Wird in `.bashrc` gesourced.
 
-**WICHTIG:** Kein `clawdbot`/`openclaw` Binary im PATH — Aliases nutzen:
+**`openclaw` Binary:** Wrapper-Script in `~/.local/bin/openclaw` (exec node dist/entry.js). Aliases nutzen `OPENCLAW_CLI` Variable:
 ```bash
 OPENCLAW_CLI="/usr/bin/node /home/moltbotadmin/clawdbot-src/dist/entry.js"
 ```
@@ -363,10 +363,10 @@ OPENCLAW_CLI="/usr/bin/node /home/moltbotadmin/clawdbot-src/dist/entry.js"
 - Learnings-Review in `clawd/HEARTBEAT.md`: 5 Review-Kriterien (Kontext-Erhalt, Wiederholungsfehler, Korrektur-Reaktionszeit, Skill-Nutzung, Eigeninitiative-Balance)
 - CLAUDE.md: 4 neue Sektionen (Sub-Agenten, Autonome Workflows, Kompaktierung, Selbstverbesserung)
 
-**CLI-Workaround:**
-- `openclaw` Binary nicht verfuegbar (dist/ nicht gebaut, kein globales npm-Paket)
-- Cron-Jobs direkt in `~/.openclaw/cron/jobs.json` editieren statt `openclaw cron add` CLI
-- Gateway muss nach Config-Aenderungen neu gestartet werden
+**CLI-Workaround (VERALTET — seit 2026-03-24 behoben):**
+- `openclaw` Binary jetzt verfuegbar via Wrapper-Script in `~/.local/bin/openclaw`
+- Cron-Jobs koennen per CLI oder direkt in `~/.openclaw/cron/jobs.json` editiert werden
+- Gateway erkennt viele Config-Aenderungen dynamisch (hot-reload), manche erfordern Restart
 
 **CLAUDE.md immutable — Lesson:**
 - 3 fehlgeschlagene Edit-Versuche bevor `lsattr` geprueft wurde
@@ -625,9 +625,10 @@ systemctl --user restart openclaw-gateway.service
 - Crontab: `0 7 * * *` system-digest, `0 3 * * *` backup (bestehend)
 - Watchdog erweitert: `ExecStartPost=-session-health-guard.sh`
 
-**Fallback-Kette korrigiert:**
+**Fallback-Kette korrigiert (2026-03-16):**
 - Vorher: Sonnet → DeepSeek → Opus → Gemini → Qwen
 - Nachher: Sonnet → **Opus** → DeepSeek → Gemini → Qwen (bestes Modell zuerst als Fallback)
+- **Erneut korrigiert (2026-03-24):** Sonnet → DeepSeek → Gemini → Opus → Qwen (kosten-optimiert: guenstig vor teuer)
 
 **Sonnet Thinking aktiviert:**
 - `thinking: "low"` + `maxTokens: 16384` fuer Primary Model
@@ -746,3 +747,45 @@ systemctl --user restart openclaw-gateway.service
 - Bei /init auf bestehendem CLAUDE.md: Review+Improve statt Neuanlage (war korrekt)
 - README.md im Home-Dir gehoert zu `sag` (Go TTS-Tool) — nicht zum moltbot-System
 - Shell-Aliase (`clawdbot-use-*`) behalten ihren Namen — das sind Benutzerfunktionen, kein offizielles CLI
+
+### 2026-03-24 — Log-Analyse, safeBinProfiles, Tool-Deny, Symlink-Sicherheit
+
+**openclaw Binary erstellt:**
+- Wrapper-Script `~/.local/bin/openclaw` (exec node ~/clawdbot-src/dist/entry.js "$@")
+- Agent konnte `openclaw` nicht ausfuehren — war nicht im PATH
+- Wrapper-Ansatz besser als Symlink, da Node-Interpreter explizit gesetzt wird
+
+**safeBinProfiles — PFLICHT fuer alle safeBins:**
+- Bins OHNE Profil werden IGNORIERT (nicht nur Warnung, sondern tatsaechlich deaktiviert)
+- 26 Bins waren betroffen: ps, netstat, ss, lsof, top, htop, df, du, free, uptime, whoami, id, pwd, ls, cat, find, which, curl, wget, ping, dig, nslookup, journalctl
+- Auch Built-in-Profile (grep, head, tail) brauchen Custom-Eintraege fuer sauberen Doctor-Output
+- Profil-Konzept: `maxPositional` (verhindert Datei-Argumente), `deniedFlags` (blockiert gefaehrliche Flags), `allowedValueFlags` (Whitelist)
+- Kritische deniedFlags: `find -exec/-delete`, `curl -o/--upload-file`, `wget -O/--post-data`
+- Config-Pfad: `tools.exec.safeBinProfiles.<bin>` in `openclaw.json`
+
+**Fallback-Kette kosten-optimiert:**
+- Alt: Sonnet → Opus ($15/$75) → DeepSeek → Gemini → Qwen
+- Neu: Sonnet → DeepSeek ($0.25) → Gemini (guenstig) → Opus ($15/$75) → Qwen (lokal)
+- Opus wird jetzt nur noch als letzter Cloud-Fallback genutzt
+
+**Per-Agent Tool-Deny Pattern (Least Privilege):**
+- `gateway` Tool nur fuer main + coder verfuegbar
+- researcher, organizer, searcher: `"tools": { "deny": ["gateway"] }` in agents.list
+- Spawned Sub-Agenten: `tools.subagents.tools.deny: ["gateway"]` (global)
+- Hintergrund: Schwaecher Modelle (DeepSeek, Gemini Flash) generieren fehlerhafte config.apply Calls (fehlender `raw`-Parameter → "Rohdaten erforderlich" Fehler)
+- gateway Tool umfasst: config.get, config.schema.lookup, config.apply, config.patch, restart, update.run
+
+**Symlink-Sicherheit (Skills):**
+- OpenClaw lehnt Skills ab deren aufgeloester Pfad ausserhalb des konfigurierten Skill-Root liegt
+- Beispiel: `clawd/skills/claude-learnings` → `~/.claude/skills` → `~/claude-skills` → aufgeloest ausserhalb `~/clawd/skills/`
+- Warnung: "Ueberspringe den Skill-Pfad, der ausserhalb seines konfigurierten Verzeichnisses aufgeloest wird"
+- Fix: Symlink entfernt (war fehlkonfiguriert, zeigte auf Claude Code Skills statt auf einen OpenClaw-Skill)
+
+**Telegram Adressierung:**
+- Agent versuchte Telefonnummer (+491736075456) statt Chat-ID (2061281331) zu nutzen
+- Hinweis in AGENTS.md ergaenzt: "Immer numerische Chat-IDs, nie Telefonnummern"
+- Cron-Jobs waren korrekt konfiguriert — Fehler kam aus einem Agent-Tool-Call
+
+**discovery.wideArea deaktiviert:**
+- `enabled: true` ohne `domain` erzeugt Warnung bei jedem Start
+- Deaktiviert bis eine Domain konfiguriert wird (Unicast-DNS-SD)
