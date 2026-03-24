@@ -127,6 +127,9 @@ OpenClaw kennt drei Secret-Mechanismen:
 **Auto-Fill Env-Variablen (kein Feld in JSON noetig):**
 `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `CLAWDBOT_GATEWAY_TOKEN`
 
+**Externe Service-Tokens (in `.env`, genutzt von MCP-Servern/Tools):**
+`CLOUDFLARE_API_TOKEN` (cfut_-Prefix, User API Token mit Scope-Beschraenkung)
+
 ---
 
 ## Config-Optimierung Checkliste
