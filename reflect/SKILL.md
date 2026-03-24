@@ -119,15 +119,18 @@ Diese Änderungen anwenden? [J]a / [N]ein / oder Anpassungen beschreiben
    ```
 4. Bestätige: "Skill aktualisiert und zu GitHub gepusht"
 5. **Ontology aktualisieren** — PFLICHT nach jedem Reflect:
+   - Ontology liegt auf **Clawbot VM** (192.168.22.206), NICHT auf NAS
+   - Script: `~/clawd/skills/ontology/scripts/ontology.py` (NICHT `~/clawd/ontology.py`)
+   - **Via SSH selbst ausführen** (nicht User zum Copy-Pasten auffordern):
    ```bash
-   cd ~/clawd
-   # Checkliste durchgehen:
-   # 1) Neue Software/Tools? → ontology.py create --type Software
-   # 2) Neue Patterns/Erkenntnisse? → ontology.py create --type Pattern
-   # 3) Neue Tasks (open/blocked)? → ontology.py create --type Task
-   # 4) Relationen? → ontology.py relate --from <id> --rel <rel> --to <id>
+   ssh moltbotadmin@192.168.22.206 'cd ~/clawd/skills/ontology/scripts && \
+   python3 ontology.py create -t Software -p "{\"name\":\"X\",\"desc\":\"Y\"}" && \
+   python3 ontology.py create -t Pattern -p "{\"name\":\"X\",\"desc\":\"Y\"}" && \
+   python3 ontology.py create -t Task -p "{\"name\":\"X\",\"desc\":\"Y\"}"'
    ```
-   GRANULAR anlegen: eine Entity pro Konzept/Tool/Erkenntnis, nicht eine Meta-Entity pro Session.
+   - **CLI-Syntax**: `-t TYPE -p '{"name":"...","desc":"..."}'` (NICHT `--name`/`--desc`)
+   - GRANULAR: eine Entity pro Konzept/Tool/Erkenntnis, nicht eine Meta-Entity pro Session
+   - Checkliste: Neue Software? Patterns? Tasks? Relationen?
 
 ### Step 5: Falls abgelehnt
 
@@ -372,3 +375,19 @@ SET LOCAL hnsw.ef_search = 100;
 - Regel: Eine Entity pro Konzept/Tool/Erkenntnis, nicht eine Meta-Entity pro Session
 - Checkliste nach jedem Reflect: Neue Software? Patterns? Tasks? Relationen?
 - Step 4 im Workflow um Ontology-Pflichtschritt erweitert
+
+### 2026-03-24 - Ontology CLI-Syntax + VM-Pfad
+
+**ontology.py CLI-Syntax (KRITISCH):**
+- FALSCH: `python3 ontology.py create --type Software --name "X" --desc "Y"`
+- RICHTIG: `python3 ontology.py create -t Software -p '{"name":"X","desc":"Y"}'`
+- Properties werden als JSON-String via `-p`/`--props` übergeben, nicht als einzelne Flags
+
+**Ontology-Pfad auf Clawbot VM:**
+- FALSCH: `~/clawd/ontology.py`
+- RICHTIG: `~/clawd/skills/ontology/scripts/ontology.py`
+
+**VM-Befehle selbst ausführen:**
+- Diana bevorzugt, dass Claude komplexe Multi-Befehle via SSH selbst ausführt
+- Grund: Terminal-Pasting bricht bei Zeilenumbrüchen, Quoting und Sonderzeichen
+- Pattern: `ssh moltbotadmin@192.168.22.206 'cd ... && python3 ...'`
