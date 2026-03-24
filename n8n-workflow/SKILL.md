@@ -700,6 +700,44 @@ return [{
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
 
+### 2026-03-24 - RAG Workflow Deep-Repair + Agent v3 Upgrade
+
+**🔴 Agent Node v2 → v3 (Pflicht fuer neue Modelle):**
+- Agent v2 (`@n8n/n8n-nodes-langchain.agent` typeVersion=2) unterstuetzt GPT 5.4 NICHT
+- Fehlermeldung: "This model is not supported in 2 version of the Agent node"
+- Fix: `typeVersion: 3` im Workflow-JSON setzen via API PUT
+- OpenAI Chat Model ebenfalls upgraden: typeVersion 1.3 → 1.6
+
+**🔴 Alle 4 Vector Store Nodes IMMER zusammen aendern:**
+- RAG_Masterclass_Chat_hybrid hat 4 vectorStoreSupabase Nodes:
+  - Supabase Vector Store_Upload (Text/CSV Pfad)
+  - Supabase Vector Store_upload (OCR Pfad)
+  - Form Vector Store (Formular-Upload)
+  - Supabase - Vector Store_Abruf (Chat-Query)
+- ALLE muessen gleiche tableName + queryName haben
+- Tabelle: `rag_chunks` (NICHT `documents`), Query: `match_qm_chunks`
+
+**🔴 Datei_inhalt Tool SQL aktualisieren bei Tabellenwechsel:**
+- PostgresTool `Datei_inhalt` hatte SQL: `SELECT ... FROM documents WHERE ...`
+- documents-Tabelle war leer → Tool gab IMMER nichts zurueck
+- Fix: SQL auf `rag_chunks` umstellen + title/url Fallback-Suche
+
+**🟡 Schedule Trigger → Manueller Trigger (Diana-Praeferenz):**
+- Diana will keinen automatischen 6h-Trigger fuer Reindexierung
+- Fix: Schedule Trigger Node entfernen, Manueller Start behalten
+- API: Node aus `nodes[]` Array entfernen + Connection loeschen + PUT
+
+**🟡 Log_Answer_Trace Modell-Name anpassen:**
+- Hardcoded `claude-sonnet-4-5-20250929` → `gpt-5.4` nach Modellwechsel
+- Sonst falsche Eintraege in answer_traces Tabelle
+
+**🔵 n8n-hybrid Edge Function (TODO):**
+- Supabase Edge Function `n8n-hybrid` sucht noch in `documents` mit `trust_level` Filter
+- Gibt 0 Ergebnisse → nicht kritisch (Vector Store uebernimmt)
+- Muss im Supabase Dashboard aktualisiert werden
+
+---
+
 ### 2026-03-15 - Anthropic API Billing + Credential-Divergenz
 
 **🔴 "Bad request" maskiert oft Billing-Probleme:**

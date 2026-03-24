@@ -106,7 +106,7 @@ rollen, rechte, benutzerverwaltung, rechtepaket
 ### Dokument mit strukturiertem Content aktualisieren
 
 ```sql
-UPDATE documents SET
+UPDATE rag_chunks SET
   content = $c$# Startsaldo bearbeiten
 
 **Quelle:** MediFox Stationär Wissensdatenbank
@@ -167,6 +167,47 @@ MediFox-Original: https://wissen.medifoxdan.de/pages/viewpage.action?pageId=[id]
 
 ## Gelernte Lektionen
 
+### 2026-03-24 - Komplette DB-Neuaufbau + Deep Audit
+
+**Tabellen-Wechsel: `documents` → `rag_chunks`**
+- Alte `documents`-Tabelle enthielt nur Metadaten-Muell (5 Rows pro Datei: Dateiname, URL, Timestamp, Extension, Pfad)
+- Neue `rag_chunks`-Tabelle: saubere, deduplizierte Chunks mit echtem Content
+- Funktion: `match_qm_chunks(vector(3072), int, jsonb)` - NIEMALS zwei Overloads (PostgREST kann nicht disambiguieren)
+- Trigger: `trg_rag_chunks_sync_half` konvertiert `embedding → embedding_half` automatisch
+
+**5 Quellen, dedupliziert:**
+
+| Quelle | Chunks | Artikel |
+|--------|--------|---------|
+| Confluence Wiki (wissen.medifoxdan.de) | 725 | 228 |
+| NextCloud QM-Handbuch | 245 | 109 |
+| Strukturierte Klickpfade (click_paths → text) | 68 | 66 |
+| Support-FAQs (manuell erstellt) | 8 | 8 |
+| **Gesamt** | **1046** | **406** |
+
+**Deduplizierung:**
+- Content-Hash: SHA256 der ersten 500 normalisierten Zeichen
+- Cross-Source: Wiki-Version behalten, NextCloud-Duplikate entfernt
+- _COMBINED_ALL_ARTICLES (375 Chunks) + LightRAG-Batch (597 Chunks) = reine Duplikate → entfernt
+
+**Confluence 🎞-Seiten:**
+- 26 Seiten mit 🎞 im Titel sind reine Video-Embeds (0 Zeichen Textinhalt)
+- Braeuchten Transkription fuer RAG - existiert nicht in MSKB
+
+**click_paths → rag_chunks Konvertierung:**
+- 68 strukturierte Klickpfade per SQL INSERT konvertiert
+- Format: `# Klickpfad: Titel\n**Menüpfad:**...\n**Schritte:**...`
+- Massiv bessere Antwortqualitaet fuer Navigationsfragen
+
+**Support-FAQ-Dokumente (8 Stueck):**
+- Passwort vergessen, Druckprobleme, DTA-Fehler, Berechtigungen
+- Bewohnerdaten aendern, Performance, Backup, Pflegegrad-Wechsel
+- Format: Problem → Loesung → Schritte → Hinweis
+
+**DB-Status (2026-03-24): 1046 Chunks, 406 Artikel, 44 MB (8.8% vom Limit), 100% Embeddings**
+
+---
+
 ### 2026-02-08 - Level 2 Deep-Audit: Komplett-Inventar Wiki
 
 **247 Wiki-Seiten in der DB (von 301 im Wiki gesamt):**
@@ -181,7 +222,7 @@ MediFox-Original: https://wissen.medifoxdan.de/pages/viewpage.action?pageId=[id]
 GET https://wissen.medifoxdan.de/rest/api/content?spaceKey=MSKB&limit=500
 
 # Einzelne Seite mit HTML-Body:
-GET https://wissen.medifoxdan.de/rest/api/content/{PAGE_ID}?expand=body.storage
+GET https://wissen.medifoxdan.de/rest/api/content/{PAGE_ID}?expand=body.view
 
 # Kein Auth nötig (öffentliches Wiki)
 ```
@@ -192,7 +233,7 @@ GET https://wissen.medifoxdan.de/rest/api/content/{PAGE_ID}?expand=body.storage
 - Tabellen: Confluence-Tabellen → Pipe-Tabellen (vereinfacht)
 - Standard-Header: `# Titel\n\n**Quelle:** MediFox Stationär Wissensdatenbank\n**URL:** ...`
 
-**DB-Status (2026-02-08): 1369 Docs total, 100% Embeddings**
+**DB-Status (2026-02-08): 1369 Docs total, 100% Embeddings** (VOR Neuaufbau)
 
 ---
 
@@ -223,9 +264,9 @@ GET https://wissen.medifoxdan.de/rest/api/content/{PAGE_ID}?expand=body.storage
 │ FTS:        to_tsvector('german', 'keywords')          │
 │ Tags:       pep, mze, urlaub, stundenkonto, etc.       │
 │ Quelle:     wissen.medifoxdan.de                       │
-│ Storage:    NextCloud → Supabase documents table       │
+│ Storage:    NextCloud → Supabase rag_chunks table      │
 ├────────────────────────────────────────────────────────┤
-│ Total Docs: 1369 (247 Wiki, 88 ME, 1033 Blob)          │
+│ Total Docs: 1046 (725 Wiki, 245 NC, 68 KP, 8 FAQ)     │
 │ Sprache:    Deutsch (IMMER 'german' für tsvector!)     │
 └────────────────────────────────────────────────────────┘
 ```

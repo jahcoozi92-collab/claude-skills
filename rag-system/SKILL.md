@@ -1033,6 +1033,55 @@ const { data } = await supabase.rpc('fast_search_text', {
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
 
+### 2026-03-24 - Komplette DB-Architektur: documents → rag_chunks
+
+**🔴 Tabellen-Migration: `documents` → `rag_chunks`**
+- Alte `documents`-Tabelle hatte Muell-Content (Metadaten-Fragments statt echtem Text)
+- Ursache: n8n Workflow routete .md-Dateien in OCR-Pipeline → Metadaten-Explosion
+- Neue Tabelle: `rag_chunks` mit sauberem, dedupliziertem Content
+
+**🔴 Supabase-Funktionen: NIEMALS Function Overloads!**
+- `match_qm_chunks(halfvec, int, jsonb)` + `match_qm_chunks(vector, int, jsonb)` = PostgREST Error
+- "Could not choose the best candidate function" → PostgREST kann Overloads nicht disambiguieren
+- Loesung: NUR die `vector(3072)` Version behalten, intern zu `halfvec` casten
+
+**🔴 halfvec Trigger-Pattern (bewaehrt):**
+```sql
+CREATE TRIGGER trg_rag_chunks_sync_half
+  BEFORE INSERT OR UPDATE OF embedding ON rag_chunks
+  FOR EACH ROW EXECUTE FUNCTION sync_rag_chunks_embedding_half();
+-- Funktion: NEW.embedding_half := NEW.embedding::halfvec(3072)
+```
+- n8n LangChain schreibt `vector(3072)`, Trigger konvertiert zu `halfvec(3072)`
+- HNSW Index liegt auf `embedding_half` → halfvec = halber Speicher, gleiche Qualitaet
+
+**🔴 Content-Hash Deduplizierung:**
+```python
+def content_hash(text):
+    normalized = re.sub(r'\s+', ' ', text[:500]).strip().lower()
+    return hashlib.sha256(normalized.encode()).hexdigest()[:16]
+```
+- In metadata als `content_hash` gespeichert
+- Cross-Source Dedup: Wiki-Version behalten, NextCloud-Duplikate entfernen
+
+**🟡 System-Prompt Optimierung:**
+- Von 8917 → 4218 Zeichen (halbiert)
+- Weniger defensiv: Agent nutzt RAG-Ergebnisse aktiv statt abzustainen
+- topK: 8 → 12, Cohere Reranker topN=5
+
+**🟡 Supabase DB-Groesse:**
+- 518 MB (104%) → 44 MB (8.8%) nach: Muell-Daten entfernt, VACUUM FULL, Duplikate bereinigt
+- WAL-Bloat war Hauptursache der Ueberfuellung (nicht Tabellendaten)
+
+**DB-Status (2026-03-24):**
+- Tabelle: `rag_chunks` (1046 Chunks, 406 Artikel)
+- Funktion: `match_qm_chunks(vector(3072), int, jsonb)`
+- Alias: `match_documents(vector(3072), int, jsonb)` → gleiche Funktion auf rag_chunks
+- Index: HNSW auf `embedding_half halfvec_cosine_ops` (m=16, ef=64)
+- FTS: `GENERATED ALWAYS AS (to_tsvector('german', content)) STORED`
+
+---
+
 ### 2026-02-10 - marked.js + MediFox Wunddoku + Service-Key Pattern
 
 **Chat-Frontend: marked.js ersetzt Custom-Parser:**
