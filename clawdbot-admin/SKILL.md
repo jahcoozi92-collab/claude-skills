@@ -173,9 +173,16 @@ Der Gateway laeuft auf einem **lokalen Build** statt dem npm-Paket, weil die npm
 | `OPENCLAW_BUNDLED_PLUGINS_DIR` | `/home/moltbotadmin/clawdbot-src/extensions` |
 | `plugins.load.paths` (openclaw.json) | `["/home/moltbotadmin/clawdbot-src/extensions"]` |
 
-**Nach `pnpm install` oder Version-Update:** `cd ~/clawdbot-src && pnpm build` ausfuehren, dann Gateway neu starten.
+**Nach Code-Aenderungen oder Version-Update:** `cd ~/clawdbot-src && pnpm build` ausfuehren, dann Gateway neu starten.
+**Nach reinem `pnpm install` (nur Dependency-Aenderungen):** Kein Rebuild noetig — nur Gateway neustarten.
 
 **`--bind` Werte (v2026.3.3+):** `loopback`, `lan`, `tailnet`, `auto`, `custom` (keine IP-Adressen mehr)
+
+**post-merge Hook (automatisch nach git pull):**
+- Datei: `~/clawdbot-src/.git/hooks/post-merge`
+- Prueft ob `pnpm-lock.yaml` oder `package.json` sich geaendert haben
+- Falls ja: `pnpm install` + `systemctl --user restart openclaw-gateway.service`
+- ACHTUNG: Liegt in `.git/hooks/` — wird nicht ins Repo committed. Bei Neuklonen manuell einrichten.
 
 ### Model-Aliases (`~/.clawdbot-model-aliases.sh`)
 
@@ -205,6 +212,15 @@ OPENCLAW_CLI="/usr/bin/node /home/moltbotadmin/clawdbot-src/dist/entry.js"
 1. `systemctl --user status openclaw-gateway.service` — laeuft der Service?
 2. `curl -sI http://127.0.0.1:18789/` — antwortet der Gateway lokal?
 3. `pgrep -af cloudflared` — laeuft der Tunnel? (System-Service, PID ~836)
+4. Wenn Gateway `inactive (dead)` mit `status=0/SUCCESS`: wurde sauber gestoppt (SIGTERM), systemd startet dann nicht automatisch neu → `systemctl --user start openclaw-gateway.service`
+
+**ERR_MODULE_NOT_FOUND Crash-Loop (pnpm-Symlink fehlt):**
+- Symptom: `Cannot find package 'chalk' imported from dist/subsystem-*.js` (oder anderes Paket)
+- Ursache: `pnpm-lock.yaml` und `package.json` `overrides` sind out-of-sync → pnpm-Symlinks in `node_modules/` fehlen
+- Passiert nach `git pull` wenn sich Dependencies geaendert haben ohne `pnpm install`
+- Fix: `cd ~/clawdbot-src && pnpm install` (NICHT `--frozen-lockfile` — schlaegt bei overrides-Mismatch fehl)
+- Danach: `systemctl --user restart openclaw-gateway.service`
+- Praevention: post-merge Hook (siehe Gateway Build-from-Source Sektion)
 
 **"unsafe plugin manifest path" Crash-Loop:**
 - Ursache: pnpm Content-Addressable-Store nutzt Hardlinks, die die Boundary-Pruefung (`openBoundaryFileSync`) nicht bestehen
@@ -682,3 +698,27 @@ systemctl --user restart openclaw-gateway.service
 - NICHT per manuellen Twilio API curl-Calls testen — das Plugin braucht interne callId-Parameter
 - IMMER ueber das `voice_call` Tool des Agents testen (via Telegram: "Ruf mich an")
 - Manuelle API-Calls erzeugen Calls die das Plugin nicht zuordnen kann
+
+### 2026-03-24 — pnpm-Symlink Crash + post-merge Hook
+
+**Gateway Crash-Loop (11920 Restarts!):**
+- Symptom: `ERR_MODULE_NOT_FOUND: Cannot find package 'chalk'` in `dist/subsystem-DVwhOlEq.js`
+- Ursache: `pnpm-lock.yaml` hatte overrides-Mismatch → `node_modules/chalk` Symlink fehlte
+- `pnpm install --frozen-lockfile` schlug fehl (overrides geaendert) → musste ohne `--frozen-lockfile` laufen
+- Paket `chalk@5.6.2` war im pnpm-Store (`node_modules/.pnpm/chalk@5.6.2/`) vorhanden, nur der Symlink fehlte
+
+**Gateway-Restart Falle:**
+- Nach cleanem SIGTERM (Exit Code 0) und `systemctl stop`: systemd startet NICHT automatisch neu (obwohl `Restart=always`)
+- `systemctl stop` setzt internen "stop requested" State → blockiert auto-restart
+- Fix: `systemctl --user start` (nicht restart) noetig
+
+**post-merge Hook eingerichtet:**
+- Datei: `~/clawdbot-src/.git/hooks/post-merge` (chmod +x)
+- Nutzt `git diff-tree ORIG_HEAD HEAD` um geaenderte Dateien zu ermitteln
+- Triggert `pnpm install` + Gateway-Restart NUR wenn `pnpm-lock.yaml` oder `package.json` betroffen
+- Liegt in `.git/hooks/` → wird NICHT ins Repo committed → bei Neuklonen manuell einrichten
+- Praevention: Szenario von heute (git pull ohne pnpm install) kann nicht mehr passieren
+
+**Build vs Install Klarstellung:**
+- `pnpm install` (Dependency-Aenderungen): kein Rebuild (`pnpm build`) noetig — nur Gateway-Restart
+- `pnpm build` nur noetig nach Source-Code-Aenderungen oder Version-Updates
