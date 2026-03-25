@@ -172,6 +172,33 @@ formatMessage() → parseStructuredResponse()
 3. DANN Platzhalter zu `<code>` Tags restaurieren
 4. Dann rest: HR, Blockquotes, Bold/Italic, Headers, Listen, Paragraphs
 
+### Antwortqualitaet: Faktentreue vor Kreativitaet
+
+- KI darf NUR Inhalte nennen, die sie aus der Wissensbasis abgerufen hat
+- Kein Extrapolieren, kein Allgemeinwissen ueber Pflegesoftware einfliessen lassen
+- Konkrete Dokumenttitel nennen statt generische Kategorielisten
+- NIEMALS die Frage des Nutzers paraphrasieren ("Sie fragen...", "Sie moechten wissen...")
+- Direkt mit der Antwort starten
+
+### Embedding-Pipeline: Dokumente in rag_chunks einfuegen
+
+1. Dokument in Chunks splitten (nach ## Sektionen, max ~2000 chars)
+2. Embeddings generieren: **text-embedding-3-large** (3072 dim) — NICHT text-embedding-3-small (1536)!
+3. Einfuegen via Supabase REST API: POST `/rest/v1/rag_chunks` mit `{content, metadata, embedding}`
+4. Trigger `sync_rag_chunks_embedding_half` konvertiert automatisch zu halfvec
+5. FTS-Spalte ist auto-generated (kein manuelles UPDATE moeglich)
+6. OpenAI-Key: aus n8n Credentials entschluesseln (EVP_BytesToKey, AES-256-CBC, Salted__ prefix)
+
+**Metadata-Felder:**
+```json
+{"source": "screenshot_documentation", "file_name": "...", "section": "...", "priority": "critical", "quality": "high"}
+```
+
+### MD Stationaer: 8 Ribbon-Tabs (NICHT 7!)
+
+Die Hauptnavigation hat 8 Tabs. "Pflege/Betreuung" ist KEIN Tab, sondern eine Wissensdatenbank-Kategorie:
+1. Datei, 2. Organisation, 3. Verwaltung, 4. Abrechnung, 5. Dokumentation, 6. Personaleinsatzpl., 7. Controlling, 8. Administration (Sonderlayout)
+
 ### Korrekte MediFox Menuepfade (NIEMALS abweichen!)
 
 | Funktion | Korrekter Pfad | FALSCH |
@@ -179,8 +206,8 @@ formatMessage() → parseStructuredResponse()
 | Dienstplan | `Personaleinsatzplanung > Dienstplan` | ~~Planung > Dienstplanung~~ |
 | Stundenkonto | `Personaleinsatzplanung > Stundenkonto` | ~~Verwaltung > Stundenkonto~~ |
 | Urlaub | `Personaleinsatzplanung > Urlaubsverwaltung` | ~~Organisation > Urlaub~~ |
-| Pflegedoku | `Pflege/Betreuung > Dokumentation > Dokumentation` | ~~Dokumentation > Pflegedokumentation~~ |
-| Abrechnung | `Verwaltung > Abrechnung` | ~~Abrechnung > Abrechnung~~ |
+| Pflegedoku | `Dokumentation > Dokumentation` | ~~Pflege/Betreuung > Dokumentation~~ |
+| Abrechnung | `Abrechnung > Abrechnung der Aufträge` | ~~Verwaltung > Abrechnung~~ |
 | Bewohner | `Verwaltung > Bewohner` | |
 | Mitarbeiter | `Verwaltung > Mitarbeiter` | |
 | Benutzerverwaltung | `Administration > Benutzerverwaltung` | |
@@ -218,6 +245,29 @@ MediFox-Original: https://wissen.medifoxdan.de/pages/viewpage.action?pageId=[id]
 ---
 
 ## Gelernte Lektionen
+
+### 2026-03-25 - Faktentreue + Embedding-Pipeline + Tab-Korrektur
+
+**Faktentreue als oberste Regel:**
+- KI halluzinierte Inhalte wie "DTA-Verfahren", "Offline-Modus", "Reportvorlagen" ohne Beleg
+- Fix: Prompt-Regel "NUR belegte Aussagen aus abgerufenen Dokumenten"
+- Fix: Schlechtes Beispiel (halluziniert) vs. gutes Beispiel (nur belegte Fakten) im Prompt
+- Fix: "Frage nicht wiederholen" — kein "Sie fragen..." am Anfang
+
+**Embedding-Pipeline aufgebaut:**
+- 29 Chunks aus Screenshot-Dokumentation (md_stationaer_level2_vollstaendig.md) embedded
+- FEHLER: Erst text-embedding-3-small (1536 dim) → DB erwartet 3072 dim → Fix: text-embedding-3-large
+- OpenAI-Key: Aus n8n-Credentials entschluesselt (EVP_BytesToKey, AES-256-CBC)
+- Supabase REST API: POST /rest/v1/rag_chunks mit apikey + Authorization Header
+- Source: `screenshot_documentation`, Priority: `critical`, Quality: `high`
+
+**Tab-Struktur korrigiert (Screenshot-Beweis):**
+- 8 Ribbon-Tabs: Datei, Organisation, Verwaltung, Abrechnung, Dokumentation, Personaleinsatzpl., Controlling, Administration
+- "Pflege/Betreuung" ist KEIN Tab der Hauptnavigation (Wissensdatenbank-Kategorie)
+- Administration hat Sonderlayout (kein Ribbon, Navigationsbaum)
+- Bewohnerakte hat eigene 8 Tabs: Stammdaten, Planung, Verlauf, Arzt, Risiken, Vitalwerte, Wunde, Ernaehrung
+
+---
 
 ### 2026-03-25 - High-End Chat-Widget Redesign + Menuepfad-Korrektur
 
