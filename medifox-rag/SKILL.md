@@ -137,6 +137,58 @@ WHERE id = 347453;
 
 ## Constraints – Was ich IMMER beachten muss
 
+### Chat-Widget Architektur (KRITISCH)
+
+**Der Medifox-Chat (`/webhook/medifox-chat`) ist NICHT das n8n Chat-Trigger Widget!**
+- Es ist eine eigene HTML-Anwendung (3900+ Zeilen) im **Respond to Webhook** Node
+- CSS/JS-Aenderungen muessen im `responseBody` dieses Nodes gemacht werden
+- Der n8n Chat-Trigger (`customCss`) ist ein separates Widget und NICHT das, was User sehen
+- Aktiver Workflow: `SJ47UX9mv8wh1Wwy` (Name: `RAG_Masterclass_Chat_hybrid`)
+
+### Deployment: n8n Workflow-Updates
+
+Aenderungen IMMER direkt per n8n API deployen, nicht als Dateien/Anleitung:
+1. API-Key aus DB holen: `SELECT apiKey FROM user_api_keys WHERE label = 'claude_desktop_linux'`
+2. GET `/api/v1/workflows/{id}` → Workflow lesen
+3. Nodes patchen (im JSON)
+4. PUT `/api/v1/workflows/{id}` mit `{name, nodes, connections, settings}` zurueckschreiben
+5. **settings darf nur erlaubte Felder enthalten**: `executionOrder`, `callerPolicy` (sonst 400 Error)
+6. Nach CLI-Import (`n8n import:workflow`): Workflow per API POST `/activate` reaktivieren
+7. Neuere n8n-Versionen brauchen published versions (`workflow_published_version` Tabelle)
+
+### Chat-HTML Rendering-Pipeline
+
+```
+formatMessage() → parseStructuredResponse()
+  ├── formatAsCards() (bei 2+ Sektionen: summary, steps, notice, sources)
+  │     ├── formatSimpleMessage() (fuer summary, notice, sources)
+  │     └── formatSteps() (fuer steps — eigene OL/Blockquote/HR Logik)
+  └── formatSimpleMessage() (Fallback bei einfachen Antworten)
+```
+
+**KRITISCH: Reihenfolge in formatSimpleMessage:**
+1. Backtick-Code-Spans ZUERST als Platzhalter schuetzen (`%%CODE0%%`)
+2. DANN `formatClickpaths()` ausfuehren (greift sonst `>` in Code-Blocks auf)
+3. DANN Platzhalter zu `<code>` Tags restaurieren
+4. Dann rest: HR, Blockquotes, Bold/Italic, Headers, Listen, Paragraphs
+
+### Korrekte MediFox Menuepfade (NIEMALS abweichen!)
+
+| Funktion | Korrekter Pfad | FALSCH |
+|----------|---------------|--------|
+| Dienstplan | `Personaleinsatzplanung > Dienstplan` | ~~Planung > Dienstplanung~~ |
+| Stundenkonto | `Personaleinsatzplanung > Stundenkonto` | ~~Verwaltung > Stundenkonto~~ |
+| Urlaub | `Personaleinsatzplanung > Urlaubsverwaltung` | ~~Organisation > Urlaub~~ |
+| Pflegedoku | `Pflege/Betreuung > Dokumentation > Dokumentation` | ~~Dokumentation > Pflegedokumentation~~ |
+| Abrechnung | `Verwaltung > Abrechnung` | ~~Abrechnung > Abrechnung~~ |
+| Bewohner | `Verwaltung > Bewohner` | |
+| Mitarbeiter | `Verwaltung > Mitarbeiter` | |
+| Benutzerverwaltung | `Administration > Benutzerverwaltung` | |
+| Dienstarten | `Administration > Personaleinsatzplanung > Dienstarten` | |
+| Kataloge | `Administration > Kataloge > Verwaltung/Pflege` | |
+
+Menuepfade NIEMALS erfinden — nur aus Wissensbasis oder dieser Tabelle verwenden.
+
 ### Bei MediFox-Artikeln formatieren
 
 1. **Titel** muss als H1 (`#`) beginnen
@@ -166,6 +218,34 @@ MediFox-Original: https://wissen.medifoxdan.de/pages/viewpage.action?pageId=[id]
 ---
 
 ## Gelernte Lektionen
+
+### 2026-03-25 - High-End Chat-Widget Redesign + Menuepfad-Korrektur
+
+**System-Prompt v2.0 deployed:**
+- Vollstaendige MediFox Menuestruktur als Tabelle im Prompt (7 Haupt-Reiter, 20+ Sub-Pfade)
+- Formatierungsregeln: `##` Ueberschriften, `code`-Format fuer Menuepfade, Blockquote-Hinweise
+- maxTokens: 800 → 1500 (damit Formatierung nicht abgeschnitten wird)
+- Prompt-Datei: `agents/medifox-rag-n8n/prompts/supabase_agent_prompt.md` (v2.0)
+
+**Chat-Widget HTML-Fixes (im Respond to Webhook Node):**
+- `formatSimpleMessage()`: Code-Spans vor Klickpfad-Detektor schuetzen (Platzhalter-Pattern)
+- `formatSteps()`: Blockquote, HR, Heading, Bullet-Support hinzugefuegt
+- `parseStructuredResponse()`: Regex fuer "Vorgehensweise" statt nur "Vorgehen" (verhindert "sweise" Fragment)
+- CSS: `--text-base` 0.875rem → 1rem, `.message-bubble p` margin 10px → 4px, `.answer-card.steps li` margin space-3 → space-1
+- Neue CSS-Klassen: `.msg-quote` (Blockquote), `.msg-hr` (HR), `ol.msg-list` (nummerierte Listen)
+
+**n8n API Deployment-Workflow entdeckt:**
+- n8n API braucht API-Key (aus `user_api_keys` Tabelle, label: `claude_desktop_linux`)
+- PUT settings darf nur `executionOrder` + `callerPolicy` enthalten (sonst 400)
+- CLI-Import deaktiviert Workflow → muss per API POST `/activate` reaktiviert werden
+- Published versions noetig: `workflow_published_version` Tabelle verlinkt auf `workflow_history`
+
+**Falsche Menuepfade korrigiert (User-Korrektur):**
+- `Planung > Dienstplanung` → `Personaleinsatzplanung > Dienstplan`
+- `Dokumentation > Pflegedokumentation` → `Pflege/Betreuung > Dokumentation > Dokumentation`
+- `Abrechnung > Abrechnung` → `Verwaltung > Abrechnung`
+
+---
 
 ### 2026-03-24 - Komplette DB-Neuaufbau + Deep Audit
 
