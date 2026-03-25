@@ -642,6 +642,23 @@ services:
       - openhands-data:/opt/openhands
 ```
 
+**Subdomain ↔ Container Mapping (ACHTUNG: Name ≠ Subdomain!):**
+| Container-Name | Subdomain | Port |
+|----------------|-----------|------|
+| open-webui | **chat**.forensikzentrum.com | 8080 |
+| open-webui | **agents**.forensikzentrum.com | 8080 |
+| songcrafter-pro | **songcraft**.forensikzentrum.com | 3080 |
+| songcrafter-backend | **songcraft**.forensikzentrum.com/api/* | 8002 |
+| crawl4ai | **crawl**.forensikzentrum.com | 18800 |
+| speechreader | **speech**.forensikzentrum.com | 5174 |
+| openapi-speechreader | **speech-api**.forensikzentrum.com | 8006 |
+| medifox-admin | **medifox-admin**.forensikzentrum.com | 8086 |
+| searxng-docker-searxng-1 | **searxng**.forensikzentrum.com | 8081 |
+| gedenkseite | **gedenkseite**.forensikzentrum.com | 8182 |
+| faster-whisper | — (kein Tunnel) | 8007 |
+
+**Cloudflare Zone ID:** `772684b736f745da1fc16def3a83b547` (forensikzentrum.com)
+
 **Cloudflare Tunnel API (Token-basiert):**
 ```bash
 # Token-basierte Tunnel ignorieren lokale config.yml!
@@ -971,10 +988,14 @@ docker ps --format "{{.Ports}}" | grep "0.0.0.0:${PORT}->"
 # SSH-Tunnel-Ports per ss -tlnp prüfen
 ```
 
-**Entfernte Services & Routes (2026-03-24):**
+**Entfernte Services & Routes (2026-03-24/25):**
 - Dify (7 Container, ~800 MB RAM, ~4 GB Disk)
 - Coqui TTS / piper-tts (Projekt eingestellt 2023)
-- Cloudflare Routes: portainer, aura, auto-claude, openhands, langflow, moltbot, openclaw
+- Cloudflare Routes identifiziert 2026-03-24, tatsächlich aus Remote-Config entfernt 2026-03-25:
+  portainer, aura, auto-claude, openhands, langflow, moltbot
+- openclaw Route bleibt (Container läuft)
+- Neue Route hinzugefügt: medifox-admin.forensikzentrum.com → :8086
+- Fehlende DNS CNAMEs erstellt: searxng, agents
 
 **Custom Modelfile für CPU-Optimierung (+25% Speed):**
 ```bash
