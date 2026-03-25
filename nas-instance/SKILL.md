@@ -256,6 +256,28 @@ Unterstuetzt: Schmidt-Meier, von der Heide, Oezdemir, étranger-Varianten
 - `var status` in sandboxed Webhook-Page → `statusBox` (window.status Konflikt)
 - PDF-Extraktion mit pdfjs-dist funktioniert fuer Medifox-Exporte
 
+### 2026-03-25 — Home Assistant Level 1/2/3 Deep Optimization
+
+**Bosch SHC → Matter Migration:**
+- Thermostate liefen frueher ueber Bosch SHC (Zigbee), jetzt ueber Matter
+- Entity-IDs komplett anders: `climate.*_heizkorper_th` → `climate.*_room_climate_contr/cont/contro`
+- Matter kuerzt Entity-IDs ab (Truncation) — immer Entity Registry pruefen
+- Betrifft 57+ Referenzen in automations, scripts, dashboards
+
+**NAS Volume Permissions:**
+- `chmod` vom Host auf NAS-Volumes: `Operation not permitted`
+- Workaround: `docker exec homeassistant chmod 600 /config/secrets.yaml`
+- NAS-Filesystem (wahrscheinlich Btrfs/ext4 auf Volume) hat eigene Rechte-Verwaltung
+
+**Bootstrap-Phase Logging:**
+- HA Logger-Config wird NACH dem Bootstrap geladen
+- Fruehe Warnings (custom_components, pychromecast) koennen nicht ueber `logger:` in configuration.yaml unterdrueckt werden
+- Das ist ein bekanntes HA-Verhalten, kein Config-Fehler
+
+**HA Container-Name:**
+- Container heisst `homeassistant` (ohne Bindestrich!)
+- NICHT `home-assistant` wie man vermuten wuerde
+
 ### 2026-03-16 — Magic Video Backend E2E
 
 **Neues Projekt:** `~/magic-video-backend`
