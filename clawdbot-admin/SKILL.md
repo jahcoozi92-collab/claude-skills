@@ -130,6 +130,63 @@ OpenClaw kennt drei Secret-Mechanismen:
 **Externe Service-Tokens (in `.env`, genutzt von MCP-Servern/Tools):**
 `CLOUDFLARE_API_TOKEN` (cfut_-Prefix, User API Token mit Scope-Beschraenkung)
 
+### Skill Env-Injection Prioritaetskette
+
+`.env` ALLEIN reicht NICHT fuer Skill-Keys! Der Agent bekommt den Key nur, wenn er auch in der Skill-Config steht. Prioritaet (niedrig → hoch):
+
+| Ebene | Quelle | Wann geladen |
+|-------|--------|-------------|
+| 1 | `~/.openclaw/.env` | Boot (dotenv, override: false) |
+| 2 | `openclaw.json: env.vars.*` | Config-Load |
+| 3 | `skills.entries.{key}.env` | Agent-Run Start |
+| 4 | `skills.entries.{key}.apiKey` | Agent-Run Start (hoechste Prio) |
+
+**Pflicht bei neuen Skill-Keys:** IMMER auf Ebene 1 (.env) UND Ebene 4 (config apiKey) setzen:
+```bash
+echo 'NEW_KEY=value' >> ~/.openclaw/.env
+cd ~/clawdbot-src && pnpm openclaw config set 'skills.entries.{slug}.apiKey' 'value'
+```
+
+---
+
+## ClawdHub Skill-Installation
+
+### Slug-Format
+ClawdHub-Slugs sind **FLACH** (kein Author-Prefix):
+- URL: `clawhub.ai/jaaneek/x-search` → Slug: `x-search` (NICHT `jaaneek/x-search`)
+
+### Vollstaendiges Install-Rezept
+```bash
+# 1. Inspizieren (Security!)
+clawhub inspect <slug>
+
+# 2. Installieren in Agent-Workspace
+clawhub install <slug> --workdir ~/clawd
+
+# 3. Security Audit
+cd ~/clawdbot-src && pnpm openclaw security audit --deep
+
+# 4. Key setzen (BEIDE Ebenen!)
+echo 'KEY_NAME=value' >> ~/.openclaw/.env
+pnpm openclaw config set 'skills.entries.<slug>.apiKey' 'value'
+
+# 5. Aktivieren
+pnpm openclaw config set 'skills.entries.<slug>.enabled' true
+
+# 6. Gateway restart
+systemctl --user restart openclaw-gateway.service
+
+# 7. Verifizieren
+pnpm openclaw skills info <slug>   # → "Ready"
+```
+
+### Security-Checkliste (VOR Installation)
+- `clawhub inspect <slug>` — Metadata + Owner pruefen
+- SKILL.md lesen — welche Binaries, welche env vars, welche URLs?
+- Python/Shell-Scripts manuell pruefen — keine base64, keine verdaechtigen URLs
+- NACH Install: `openclaw security audit --deep`
+- Bekannte Malware: `coding-agent-g7z` (base64-Payload → curl 91.92.242.30)
+
 ---
 
 ## Config-Optimierung Checkliste
