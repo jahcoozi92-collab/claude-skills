@@ -246,6 +246,26 @@ MediFox-Original: https://wissen.medifoxdan.de/pages/viewpage.action?pageId=[id]
 
 ## Gelernte Lektionen
 
+### 2026-03-25 - Prompt-Architektur + OpenRouter LLM-Wechsel
+
+**Prompt radikal geschaerft (VERBOTEN/PFLICHT statt hoeflicher Bitten):**
+- LLMs folgen harten Negationen besser als langen Erklaerungen
+- Struktur: VERBOTEN (5 Regeln) → PFLICHT (3 Regeln) → Format (5 Zeilen)
+- Konkrete Negativbeispiele: "Kein 'Sie fragen...', kein 'Ueberblick: Was sich in...'"
+- Ergebnis: KI startet direkt mit Inhalt, keine Frage-Paraphrase mehr
+
+**LLM-Wechsel: gpt-4o-mini → gpt-5.4-nano (via OpenRouter):**
+- Modell-ID: `openai/gpt-5.4-nano`
+- Kosten: $0.20 input / $1.25 output pro 1M tokens (kaum teurer als gpt-4o-mini)
+- Massiv bessere Prompt-Treue, Faktentreue und Instruktionsbefolgung
+- In n8n: OpenAI Chat Model Node mit Custom Base URL `https://openrouter.ai/api/v1`
+
+**Prompt-Extraktion Bug gefixt:**
+- `---BEGIN PROMPT---` ohne Newline-Match griff den Anweisungstext statt den Prompt
+- Fix: `c.find('---BEGIN PROMPT---\n') + len('---BEGIN PROMPT---\n')`
+
+---
+
 ### 2026-03-25 - Faktentreue + Embedding-Pipeline + Tab-Korrektur
 
 **Faktentreue als oberste Regel:**
