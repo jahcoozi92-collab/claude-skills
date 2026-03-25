@@ -180,12 +180,34 @@ systemctl --user restart openclaw-gateway.service
 pnpm openclaw skills info <slug>   # → "Ready"
 ```
 
+### Post-Install Checkliste (NACH Installation — PFLICHT)
+1. `.claude/` Ordner im Skill entfernen falls vorhanden (`rm -rf ~/clawd/skills/<slug>/.claude`) — ClawdHub-Skills sollen KEINE Claude Code Permissions mitliefern
+2. `name:` in SKILL.md Frontmatter MUSS mit dem Ordnernamen uebereinstimmen — sonst ist der Skill unsichtbar fuer OpenClaw
+3. `openclaw skills info <slug>` → muss "Ready" zeigen
+4. Falls `--force` noetig war (VirusTotal-Warnung): haeufigstes False-Positive ist eine mitgelieferte `.claude/settings.local.json`
+
 ### Security-Checkliste (VOR Installation)
 - `clawhub inspect <slug>` — Metadata + Owner pruefen
 - SKILL.md lesen — welche Binaries, welche env vars, welche URLs?
 - Python/Shell-Scripts manuell pruefen — keine base64, keine verdaechtigen URLs
 - NACH Install: `openclaw security audit --deep`
 - Bekannte Malware: `coding-agent-g7z` (base64-Payload → curl 91.92.242.30)
+- Bekanntes False-Positive: `.claude/settings.local.json` mit Git/Bash Permissions → entfernen
+
+### Installierte ClawdHub-Skills (Inventar)
+| Skill | Zweck | Key noetig | Datum |
+|-------|-------|-----------|-------|
+| `x-search` | X/Twitter-Suche via xAI Grok API | XAI_API_KEY ($5 Guthaben) | 2026-03-25 |
+| `news-feed` | RSS-Nachrichten (BBC, Reuters, AP, Guardian, NPR) | Nein | 2026-03-26 |
+| `ocr-local` | Texterkennung aus Bildern (Tesseract.js, lokal) | Nein | 2026-03-26 |
+
+**Hinweis:** DW-Feed (`rss.dw.com/rss/en/top`) liefert 404 — ggf. URL in `news-feed/scripts/news.py` aktualisieren.
+
+---
+
+## SSH-Selbsterkennung
+
+**Wir SIND die Clawbot VM (192.168.22.206, User: moltbotadmin).** Befehle die auf dieser Maschine laufen sollen (z.B. Ontology-Updates) DIREKT ausfuehren — NICHT per `ssh moltbotadmin@192.168.22.206`. SSH nur fuer andere Maschinen (NAS: 192.168.22.90, etc.).
 
 ---
 
