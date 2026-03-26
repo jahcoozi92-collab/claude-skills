@@ -277,6 +277,14 @@ ANTWORT:
       hybrid_search_v2, hybrid_search
    ```
 
+0d. **NIEMALS** annehmen dass `documents`-Tabelle Daten hat!
+   ```
+   ❌ documents-Tabelle ist LEER (Legacy, 0 Zeilen seit Schema-Migration)
+   ✅ Aktive Daten liegen in `rag_chunks` (1170+ Chunks)
+   ✅ hybrid_search_v3 sucht jetzt in rag_chunks (Fix 2026-03-27)
+   ✅ Bei Schema-Migrationen IMMER SQL-Funktionen auf Tabellen-Referenzen pruefen
+   ```
+
 0b. **NIEMALS** hardcoded Werte in n8n AI-Tools
    ```
    ❌ "value": "KI für Medifox stationär"  // Statisch!
@@ -1032,6 +1040,30 @@ const { data } = await supabase.rpc('fast_search_text', {
 ## Gelernte Lektionen
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
+
+### 2026-03-27 - hybrid_search_v3 Fix + System-Prompt v5 + Sonnet 4.6
+
+**🔴 hybrid_search_v3 muss auf rag_chunks zeigen (NICHT documents):**
+- `documents`-Tabelle ist LEER (0 Zeilen, Legacy seit Schema-Migration)
+- `hybrid_search_v3` wurde per `CREATE OR REPLACE` auf `rag_chunks` umgestellt
+- Source-Type-Boosts angepasst: `confluence_wiki` 1.25x, `faq` 1.30x, `qm_handbuch_md` 1.20x, `structured_click_path` 1.15x
+- **REGEL:** Bei jeder Supabase-Migration IMMER prüfen ob SQL-Funktionen noch auf die richtige Tabelle zeigen
+
+**🔴 System-Prompt v5: Abgestufter Abstain statt hartes Schweigen:**
+- PFLICHT #3 jetzt 3-stufig: Keine Treffer → Verwandte Treffer → Exakte Treffer
+- Neues "Teilantwort"-Template fuer verwandtes Wissen
+- VERBOTEN #2 erweitert: Troubleshooting-Querverweise auf Basis gefundener Dokumente erlaubt
+- Ergebnis: Statt "Dazu habe ich keine Information" → strukturierte Antwort mit 3 Loesungsansaetzen + Quellenangaben
+
+**🔴 LLM-Modell: Claude Sonnet 4.6 via OpenRouter:**
+- Anthropic-Konto (Credential `8vuwy9VrY5EheWYB`) hat KEIN Guthaben → NICHT verwenden
+- OpenRouter (Credential `JDjnOpGlLzqfePON`) mit `anthropic/claude-sonnet-4.6`
+- gpt-5.4-nano war deutlich schlechter bei Reasoning ueber partielle Suchergebnisse
+
+**🟡 MediFox Wissensdatenbank erweitert:**
+- `scrape_mskb_complete.py` mit `SUPABASE_SERVICE_KEY` + `OPENAI_API_KEY` ausfuehren
+- Keys via n8n Credential-Decrypt: EVP_BytesToKey + AES-256-CBC aus `credentials_entity`
+- 55 neue Confluence-Seiten gecrawlt + Embeddings generiert → 1115 → 1170 Chunks
 
 ### 2026-03-24 - Komplette DB-Architektur: documents → rag_chunks
 

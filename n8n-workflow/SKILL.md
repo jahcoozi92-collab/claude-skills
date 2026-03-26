@@ -700,6 +700,30 @@ return [{
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
 
+### 2026-03-27 - OpenRouter Model-IDs + Anthropic Credits + Anthropic Node Format
+
+**🔴 OpenRouter Model-IDs: provider/model-name Format!**
+- OpenRouter nutzt `provider/model-name`, NICHT das native API-Format
+- `anthropic/claude-sonnet-4.6` (RICHTIG) vs `claude-sonnet-4-5-20250929` (FALSCH)
+- Verfuegbare Sonnet-Modelle: `anthropic/claude-sonnet-4.6`, `anthropic/claude-sonnet-4.5`, `anthropic/claude-sonnet-4`
+- Preis Sonnet 4.6: $3/$15 pro M Tokens
+
+**🔴 Anthropic-Konto hat KEIN Guthaben:**
+- Credential `8vuwy9VrY5EheWYB` (Anthropic account) → "credit balance too low"
+- IMMER OpenRouter (Credential `JDjnOpGlLzqfePON`) fuer Claude-Modelle verwenden
+- OpenRouter-Node-Type: `@n8n/n8n-nodes-langchain.lmChatOpenRouter` (typeVersion: 1)
+
+**🟡 Anthropic Node v1.3 Resource Locator Format:**
+- Anthropic-Node (`lmChatAnthropic`) typeVersion 1.3 braucht Resource Locator:
+  ```json
+  "model": {"__rl": true, "mode": "id", "value": "claude-sonnet-4-5-20250929"}
+  ```
+- NICHT plain string: `"model": "claude-sonnet-4-5-20250929"` → "Could not get parameter"
+
+**🔵 Execution-Daten bei Webhook-Mode:**
+- `GET /api/v1/executions/{id}` gibt bei Webhook-Executions KEIN runData zurueck
+- Fix: `?includeData=true` Parameter an die URL anhaengen
+
 ### 2026-03-24 - RAG Workflow Deep-Repair + Agent v3 Upgrade
 
 **🔴 Agent Node v2 → v3 (Pflicht fuer neue Modelle):**
