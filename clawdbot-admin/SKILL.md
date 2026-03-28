@@ -553,10 +553,11 @@ cd ~/clawd && python3 -c "import json,re;from pathlib import Path; ..."
 
 **Backup-System eingerichtet:**
 - Script: `~/bin/openclaw-backup.sh`
-- Cron: taeglich 03:00 Uhr
+- Cron: alle 5 Tage 03:00 Uhr (`0 3 */5 * *`)
 - Inhalt: openclaw.json, .env, cron/, clawd/ (ohne canvas/ und .git/)
 - Ziel: lokal ~/backups/ + NAS (Jahcoozi@192.168.22.90:/volume1/backups/openclaw/)
-- Retention: 30 Tage lokal
+- Rotation: max 2 Backups behalten, aelteste werden nach Erstellung geloescht
+- Pattern: `ls -1t | tail -n +3 | xargs rm` (zaehlt Dateien, nicht Alter — zuverlaessiger als `find -mtime`)
 
 **OPENCLAW_BUNDLED_PLUGINS_DIR:**
 - Fehlte in systemd-Unit nach v2026.3.11 Update (war in .bak aber nicht in aktueller Unit)
