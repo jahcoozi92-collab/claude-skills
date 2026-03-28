@@ -119,16 +119,16 @@ Diese Änderungen anwenden? [J]a / [N]ein / oder Anpassungen beschreiben
    ```
 4. Bestätige: "Skill aktualisiert und zu GitHub gepusht"
 5. **Ontology aktualisieren** — PFLICHT nach jedem Reflect:
-   - Ontology liegt auf **Clawbot VM** (192.168.22.206), NICHT auf NAS
-   - Script: `~/clawd/skills/ontology/scripts/ontology.py` (NICHT `~/clawd/ontology.py`)
-   - **Via SSH selbst ausführen** (nicht User zum Copy-Pasten auffordern):
-   ```bash
-   ssh moltbotadmin@192.168.22.206 'cd ~/clawd/skills/ontology/scripts && \
-   python3 ontology.py create -t Software -p "{\"name\":\"X\",\"desc\":\"Y\"}" && \
-   python3 ontology.py create -t Pattern -p "{\"name\":\"X\",\"desc\":\"Y\"}" && \
-   python3 ontology.py create -t Task -p "{\"name\":\"X\",\"desc\":\"Y\"}"'
-   ```
+   - **Yoga7:** Ontology ist LOKAL verfügbar — `cd ~/clawd && python3 skills/ontology/scripts/ontology.py [command]`
+   - **Andere Maschinen:** Via SSH auf Clawbot VM (192.168.22.206): `ssh moltbotadmin@192.168.22.206 'cd ~/clawd && python3 skills/ontology/scripts/ontology.py [command]'`
    - **CLI-Syntax**: `-t TYPE -p '{"name":"...","desc":"..."}'` (NICHT `--name`/`--desc`)
+   ```bash
+   cd ~/clawd
+   python3 skills/ontology/scripts/ontology.py create -t Software -p '{"name":"X","desc":"Y"}'
+   python3 skills/ontology/scripts/ontology.py create -t Pattern -p '{"name":"X","desc":"Y"}'
+   python3 skills/ontology/scripts/ontology.py create -t Task -p '{"name":"X","desc":"Y"}'
+   python3 skills/ontology/scripts/ontology.py relate --from <id> --rel <rel> --to <id>
+   ```
    - GRANULAR: eine Entity pro Konzept/Tool/Erkenntnis, nicht eine Meta-Entity pro Session
    - Checkliste: Neue Software? Patterns? Tasks? Relationen?
 

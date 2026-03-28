@@ -209,7 +209,7 @@ ssh moltbotadmin@192.168.22.206 'cd ~/.claude/skills && git pull --rebase origin
 - Port freimachen + starten: `fuser -k 3001/tcp; nohup node dist/main.js >> backend.log 2>&1 &`
 - Prisma Migrations: `npx prisma migrate dev --name xyz` oder `npx prisma db push`
 
-### 2026-03-28 — CLAUDE.md Prompting-Standards
+### 2026-03-28 — CLAUDE.md Prompting-Standards + Ontology lokal
 
 **Platzierung neuer Always-On Constraints:**
 - Neue Blocks thematisch einordnen (Standards neben Standards), nicht einfach am Ende anhängen
@@ -218,6 +218,18 @@ ssh moltbotadmin@192.168.22.206 'cd ~/.claude/skills && git pull --rebase origin
 **Prompting-Methodologie als Always-On:**
 - User hat Prompting-Standards (Evaluation Criteria First, Constraint Propagation CoT, Pre-Mortem, Verbote) als Always-On Constraint etabliert
 - Diese Methoden gelten skill-übergreifend für alle Aufgaben
+
+**Ontology-Infrastruktur auf Yoga7 eingerichtet:**
+- Script: `~/clawd/skills/ontology/scripts/ontology.py`
+- Graph: `~/clawd/memory/ontology/graph.jsonl`
+- Schema: `~/clawd/memory/ontology/schema.yaml`
+- Aufruf: `cd ~/clawd && python3 skills/ontology/scripts/ontology.py [command]`
+- Kopiert von Clawbot VM — gleicher Datenstand, läuft jetzt lokal
+- Graph hat vorbestehende Validierungsfehler (status "completed" statt "done", Pattern in part_of) — Aufräumen in separater Session
+
+**Proaktiv-Regel:**
+- Fehlende Tools/Infrastruktur NICHT überspringen — proaktiv einrichten oder fixen
+- User erwartet Eigeninitiative bei Infrastruktur-Lücken
 
 ### 2026-03-14 — SSHFS-Mount & Terminal-Breite
 
