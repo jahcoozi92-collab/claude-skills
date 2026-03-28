@@ -209,6 +209,16 @@ ssh moltbotadmin@192.168.22.206 'cd ~/.claude/skills && git pull --rebase origin
 - Port freimachen + starten: `fuser -k 3001/tcp; nohup node dist/main.js >> backend.log 2>&1 &`
 - Prisma Migrations: `npx prisma migrate dev --name xyz` oder `npx prisma db push`
 
+### 2026-03-28 — CLAUDE.md Prompting-Standards
+
+**Platzierung neuer Always-On Constraints:**
+- Neue Blocks thematisch einordnen (Standards neben Standards), nicht einfach am Ende anhängen
+- Code Style → Prompting-Standards → Instanzen ist logische Reihenfolge
+
+**Prompting-Methodologie als Always-On:**
+- User hat Prompting-Standards (Evaluation Criteria First, Constraint Propagation CoT, Pre-Mortem, Verbote) als Always-On Constraint etabliert
+- Diese Methoden gelten skill-übergreifend für alle Aufgaben
+
 ### 2026-03-14 — SSHFS-Mount & Terminal-Breite
 
 **Terminal-Breite-Problem:**
