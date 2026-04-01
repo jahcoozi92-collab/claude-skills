@@ -278,6 +278,15 @@ Unterstuetzt: Schmidt-Meier, von der Heide, Oezdemir, étranger-Varianten
 - Container heisst `homeassistant` (ohne Bindestrich!)
 - NICHT `home-assistant` wie man vermuten wuerde
 
+### 2026-04-01 — SPA-Fetch & UGNAS Knowledge Center
+
+**UGNAS Knowledge Center ist SPA (Single Page App):**
+- URL-Pattern: `support.ugnas.com/knowledgecenter/#/detail/eyJ...` (Base64-kodierte Artikel-ID)
+- Base64 enthält: `{"id":3747,"articleInfoId":570,"language":"de-DE","clientType":"PC"}`
+- curl/WebFetch liefern nur leere HTML-Shell (JS-only Rendering)
+- **Lösung:** Playwright MCP (`browser_navigate` + `browser_snapshot`) rendert JS korrekt
+- Kein API-Endpoint direkt abrufbar (403 + SPA-Redirect)
+
 ### 2026-03-16 — Magic Video Backend E2E
 
 **Neues Projekt:** `~/magic-video-backend`

@@ -298,6 +298,29 @@ conn.commit()
 | Anthropic | anthropic | api.anthropic.com |
 | Google | - | generativelanguage.googleapis.com |
 
+### 2026-04-01 - Kimi-free-api als lokale OpenAI Connection
+
+**Kimi-free-api hinzugefügt (Index 4):**
+- URL: `http://192.168.22.90:8011/v1`
+- Prefix: `kimi-local`
+- Braucht refresh_token von kimi.ai Browser (JWT, nicht sk-Key)
+- GET auf `/v1` liefert Fehler `-1000` — ist normal, nur POST-Endpoints aktiv
+- `/v1/models` funktioniert korrekt (5 Modelle: moonshot-v1, -8k, -32k, -128k, -vision)
+
+**DB-Config für OpenAI Connections (sqlite3 Kurzform):**
+```bash
+# Alle OpenAI-Connections anzeigen
+sqlite3 /volume1/docker/open-webui/webui.db \
+  "SELECT json_extract(data, '$.openai.api_base_urls') FROM config WHERE id=1;"
+
+# Neue Connection per json_set hinzufügen
+sqlite3 /volume1/docker/open-webui/webui.db \
+  "UPDATE config SET data = json_set(data, '$.openai', json('...')) WHERE id=1;"
+```
+
+**VOR dem Hinzufügen neuer Connections IMMER prüfen ob bereits konfiguriert!**
+Moonshot war z.B. schon als Index 1 vorhanden.
+
 ### 2026-02-05 - Ollama API & OpenRouter Setup
 
 **Ollama API-Endpunkte (WICHTIG!):**

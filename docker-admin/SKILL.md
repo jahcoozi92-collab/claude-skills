@@ -37,6 +37,7 @@ Docker ist wie ein Schuhkarton-System:
 | **Home Assistant** | 8123 | Smart Home |
 | **LiveKit** | 7880 | Video/Audio-Kommunikation |
 | **Portainer** | 9000 | Docker-Management-UI |
+| **Kimi-free-api** | 8011 | Kimi/Moonshot API Proxy |
 | **NextCloud** | 8282 | Dateispeicher |
 | **Cloudflared** | - | Cloudflare Tunnel |
 | **SearXNG** | 8081 | Suchmaschine für RAG |
@@ -1015,6 +1016,32 @@ docker exec ollama ollama create model-fast -f /root/.ollama/Modelfile-fast
 - GLM-4.7-Flash: **KOSTENLOS**
 - GLM-4.7: $0.60/$2.20 per 1M tokens
 - OpenAI-kompatibel → In Open WebUI als weitere Verbindung hinzufügen
+
+### 2026-04-01 - Docker Daemon Zombie-Prozess & Kimi-free-api
+
+**Zombie-dockerd blockiert Neustart (UGREEN-spezifisch):**
+- Symptom: `systemctl start docker` → `failed to start daemon, PID X is still running`
+- Ursache: Manuell gestarteter `sudo dockerd` Prozess läuft parallel zu systemd
+- UGREEN `docker_serv` (Go-basierter Monitoring-Dienst) spammt Logs — ist nur Symptom, NICHT die Ursache
+- Fix-Reihenfolge:
+  1. `ps aux | grep dockerd` → Zombie-PID identifizieren
+  2. `sudo kill -9 <PID>` (normales kill reicht oft nicht)
+  3. `sudo rm -f /var/run/docker.pid`
+  4. `sudo systemctl reset-failed docker` (Rate-Limit aufheben)
+  5. `sudo systemctl start docker`
+- Docker braucht auf dem NAS mehrere Minuten zum vollständigen Start (viele Container)
+- Während "activating" ist der Socket bereits nutzbar (`docker info` funktioniert)
+
+**kimi-free-api Deployment:**
+- Compose: `/home/Jahcoozi/kimi/docker-compose.yml`
+- Port: 8011 → Container 8000
+- Image: `vinlic/kimi-free-api:latest`
+- API ist OpenAI-kompatibel (`/v1/chat/completions`, `/v1/models`)
+- Modelle: `moonshot-v1`, `moonshot-v1-8k`, `moonshot-v1-32k`, `moonshot-v1-128k`, `moonshot-v1-vision`
+- **Token-Typen nicht verwechseln:**
+  - `sk-...` = Moonshot Platform API Key → für `https://api.moonshot.cn/v1` direkt
+  - `eyJ...` (JWT) = Kimi Browser refresh_token → für kimi-free-api
+  - kimi-free-api mit sk-Key → Fehler `-2001 请求失败`
 
 ---
 
