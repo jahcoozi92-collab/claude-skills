@@ -758,11 +758,11 @@ systemctl --user restart openclaw-gateway.service
 
 **Godmode-II Config-Keys (alle validiert, keine Schema-Fehler):**
 - `tools.loopDetection`: enabled, warn@8, stop@15, history 30 — verhindert endlose Tool-Schleifen
-- `contextPruning.softTrim`: maxChars 8000, head/tail 500 — kuerzt grosse Tool-Outputs
+- `contextPruning.softTrim`: maxChars 8000, head/tail 2000 — kuerzt grosse Tool-Outputs (erhoeht von 500, 2026-04-05)
 - `compaction.postCompactionSections`: ["Session Startup", "Red Lines"] — re-injiziert nach Komprimierung
 - `messages.statusReactions.enabled`: true — visuelles Feedback (Denken/Tool/Web)
 - `session.typingMode`: "instant" — sofortiger Typing-Indicator
-- `agents.defaults.thinkingDefault`: "low" — Standard-Thinking wenn kein /think
+- `agents.defaults.thinkingDefault`: "off" — Standard-Thinking deaktiviert (Token-Sparen)
 - `agents.defaults.envelopeTimezone`: "user", `timeFormat`: "24" — konsistente Timestamps
 - `tools.web.search.provider`: "gemini" mit GEMINI_API_KEY — kostenlose Web-Suche
 - `tools.web.fetch.timeoutSeconds`: 30, `maxChars`: 30000 — Fetch-Limits
@@ -783,8 +783,8 @@ systemctl --user restart openclaw-gateway.service
 - Webhook: `http://127.0.0.1:3334/voice/webhook` (eigenstaendiger HTTP-Server)
 - publicUrl: `https://voice.forensikzentrum.com/voice/webhook`
 - **OFFEN: Cloudflare Tunnel-Route** `voice.forensikzentrum.com → localhost:3334` im Dashboard anlegen
-- TTS: OpenAI `alloy` Voice (nicht Edge TTS — Telefonie braucht 8kHz mu-law)
-- Response-Model: Sonnet (voller Workspace-Zugriff inkl. Tools)
+- TTS: OpenAI `nova` Voice (besser fuer Deutsch als alloy; nicht Edge TTS — Telefonie braucht 8kHz mu-law)
+- Response-Model: openai/gpt-4.1-mini (voller Workspace-Zugriff inkl. Tools)
 - Inbound: allowlist (leer = niemand kann anrufen, Nummern hinzufuegen fuer Zugang)
 - Outbound: conversation-Modus (interaktiv, nicht nur Durchsage)
 - Kosten: ~$0.02/Min US, ~$0.10/Min nach DE + OpenAI TTS ~$0.015/1K Zeichen
@@ -930,3 +930,44 @@ systemctl --user restart openclaw-gateway.service
 - Bei wiederholtem 502: IMMER zuerst Ingress-Port via API pruefen (Schritt 5 im Troubleshooting)
 - Cloudflare API PUT ersetzt die GESAMTE Config → GET-modify-PUT Workflow zwingend
 - Tunnel-Config-Aenderungen sind sofort wirksam, kein cloudflared-Restart noetig
+
+### 2026-04-05 — Config-Hygiene (8-Punkte-Audit)
+
+**Provider models:[] Problem:**
+- Google-Provider hatte `models: []` — Fallback `google/gemini-2.5-flash` funktionierte via Auto-Discovery, aber ohne Kosten-Tracking, Token-Limits und Alias-Aufloesung
+- Fix: Explizite Modell-Definition mit Kosten ($0.15/$0.60 pro 1M Tokens), contextWindow 1M, maxTokens 65536
+- Regel: Jedes Modell in einer Fallback-Kette braucht einen expliziten Provider-Eintrag
+
+**reasoning:true + thinking:"off" Konflikt:**
+- DeepSeek und Gemini Flash (OpenRouter) hatten `reasoning: true` obwohl `thinking: "off"` gesetzt war
+- Manche Provider senden bei `reasoning: true` automatisch Thinking-Token-Anfragen — verschwendet Tokens
+- Fix: `reasoning: false` gesetzt, Name "DeepSeek V3.2 (Thinking)" → "DeepSeek V3.2"
+
+**maxSpawnDepth Drift:**
+- Config hatte `maxSpawnDepth: 3`, CLAUDE.md und Memory sagten 2
+- Bei Tiefe 3 kann Sub-Sub-Sub-Agent kaum noch Kontext haben — Token-Verschwendung
+- Fix: Auf 2 korrigiert
+
+**ackReactionScope bei DM-only Setup:**
+- `"group-mentions"` triggert nur bei @mentions in Gruppen — bei reinem DM-Setup nie
+- Fix: `"all"` — jetzt 👀 auf jede Nachricht
+
+**softTrim zu aggressiv:**
+- head/tail 500/500 = nur 1000 Zeichen von grossen Tool-Outputs (Web-Fetches, Code)
+- Fix: head/tail 2000/2000 = 4000 Zeichen bleiben, 4x mehr Kontext
+
+**Voice-Call TTS Stimme:**
+- `alloy` ist Englisch-optimiert, Greeting und Agent sprechen aber Deutsch
+- Fix: `nova` — beste multilingual-Stimme bei OpenAI TTS-1
+- Alternative falls nova nicht ueberzeugt: `shimmer` oder Wechsel auf Edge TTS `de-DE-KatjaNeural`
+
+**OpenRouter Bereinigung:**
+- 3 tote Modell-Definitionen im Provider (Credits leer) → `models: []`
+- 4 tote Modell-Parameter-Eintraege (openrouter/*) → entfernt
+- `google/gemini-2.5-flash` Param-Eintrag ersetzt `openrouter/google/gemini-2.5-flash`
+- Provider-Skeleton bleibt erhalten fuer spaeteres Credit-Aufladen
+
+**Slug-Generator (kein Fix noetig):**
+- `src/hooks/llm-slug-generator.ts` nutzt bereits `resolveAgentEffectiveModelPrimary()` (Zeile 48)
+- Erbt automatisch das Agent-Default-Modell (openai/gpt-4.1-mini)
+- Alte Sonnet/OpenRouter-Fehler in Logs stammen von vor diesem Fix
