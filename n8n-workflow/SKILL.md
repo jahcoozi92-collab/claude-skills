@@ -530,6 +530,36 @@ Wie ein Wecker. Jeden Tag um 8 Uhr morgens startet der Workflow.
     → Betrifft ALLE Code Nodes die Binary-Daten lesen (Extract, Convert, etc.)
 
 
+23. **NIEMALS** IF-Node v2 mit `typeValidation: "strict"` wenn der leftValue aus einer Expression kommt!
+    ```
+    ❌ FALSCH:
+       conditions.options.typeValidation: "strict"
+       leftValue: "={{ $json._rateLimited }}"
+       → "Wrong type: 'true' is a string but was expecting a boolean"
+       → Expressions liefern IMMER Strings, nicht native Booleans!
+
+    ✅ RICHTIG:
+       conditions.options.typeValidation: "loose"
+       → Aktiviert "Convert types where required" im IF-Node
+       → String "true" wird automatisch zu Boolean true konvertiert
+    ```
+    → Gilt fuer ALLE IF-Node Conditions mit Expression-basierten Werten
+    → In der n8n UI heisst die Option "Convert types where required"
+
+24. **NIEMALS** nach API PUT ohne Container-Restart testen!
+    ```
+    ❌ FALSCH:
+       POST /deactivate → PUT workflow → POST /activate → "fertig, teste"
+       → Webhook-Cache: alte Version wird weiter ausgeliefert!
+
+    ✅ RICHTIG:
+       POST /deactivate → PUT workflow → POST /activate → docker restart n8n-n8n-1
+       → DANN erst testen. Ohne Restart bleiben Webhooks auf altem Stand.
+    ```
+    → Ergaenzt NIEMALS #14 (Webhook-Cache)
+    → Betrifft: Form Triggers, Webhook Nodes, Chat Triggers
+    → Nach Restart ~10s warten bis n8n alle Workflows re-aktiviert hat
+
 ### 🟡 BEVORZUGT
 
 1. **Error Workflow** einrichten für Fehlerbenachrichtigung

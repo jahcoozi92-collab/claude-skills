@@ -432,10 +432,12 @@ ANTWORT:
        (Ersetzt auch korrekte Antworten, 3x in Session gescheitert!)
     ❌ if (score < 0.7) finalAnswer = answer + "\n---\n⚠️ Warnung..."
        (User will KEINE sichtbaren Warnungen — verwirrt Endbenutzer!)
-    ✅ Grounding Verifier v4 (aktuell, seit 2026-02-18):
+    ✅ Grounding Verifier v5 (aktuell, seit 2026-04-05):
        - Score berechnen → in answer_traces loggen → Antwort UNVERÄNDERT durchlassen
+       - NEU: _lowGrounding Flag bei Score < 0.4 (für späteres Alerting)
+       - NEU: _groundingAlert String mit Details in answer_traces.grounding_alert
        - System-Prompt + Abstain-Regel ist die primäre Verteidigung
-       - Monitoring über answer_traces Tabelle (grounding_score, ungrounded_terms)
+       - Monitoring über answer_traces Tabelle (grounding_score, low_grounding, grounding_alert)
     ```
 
 15. **NIEMALS** Prompt-Tuning VOR Quelldokument-Prüfung!
@@ -478,6 +480,70 @@ ANTWORT:
     ```
     - Referenz-Dokumente: ID 368849 (MediFox Vollstruktur), 368850 (SIS-Detail)
     - click_paths: 67 Einträge gesamt (6 Module + Dokumappe + Schnellzugriff)
+
+18. **NIEMALS** Confluence/Wiki-Seiten mit einfachem Regex parsen!
+    ```
+    ❌ FALSCH:
+       re.search(r'<div[^>]*id="main-content"[^>]*>(.*?)</div>', html, re.DOTALL)
+       → Greift nur den ERSTEN schliessenden </div> — verfehlt verschachtelte Divs!
+       → Ergebnis: Leerer/abgeschnittener Content
+
+    ✅ RICHTIG: Div-Depth-Tracking
+       start = html.find('id="main-content"')
+       tag_start = html.rfind('<div', 0, start)
+       content = html[tag_start:]
+       depth = 0
+       for m in re.finditer(r'<(/?)div[^>]*>', content):
+           depth += 1 if m.group(1) == '' else -1  # minus 1
+           if depth == 0: pos = m.end(); break
+       main_content = content[:pos]
+    ```
+    → Confluence-Content sitzt in `<div id="main-content" class="wiki-content">`
+    → wissen.medifoxdan.de ist frei zugaenglich (kein Login noetig)
+
+19. **NIEMALS** text-embedding-3-large Batch-Limits ignorieren!
+    ```
+    ❌ FALSCH: BATCH_SIZE = 20 bei PDF-Content (dense Tabellen, 1500 chars/chunk)
+       → "maximum context length is 8192 tokens, you requested 8325"
+
+    ✅ RICHTIG: BATCH_SIZE = 5 fuer PDF-extrahierten Content
+       BATCH_SIZE = 20 fuer normalen Markdown/Wiki-Content
+    ```
+    → text-embedding-3-large: max 8192 Tokens pro API-Call (ALLE Texte zusammen!)
+    → PDF-Tabellen haben hoehere Token-Dichte als Fliesstext
+
+20. **rag_chunks Tabelle: Automatismen kennen!**
+    ```
+    Beim INSERT nur liefern: content, metadata, embedding
+    AUTOMATISCH:
+    - embedding_half: Trigger trg_rag_chunks_sync_half → embedding::halfvec(3072)
+    - fts: GENERATED ALWAYS AS (to_tsvector('german', COALESCE(content, '')))
+    → KEINE manuellen Werte fuer embedding_half oder fts setzen!
+    ```
+    → hybrid_search_v3 sucht in rag_chunks (NICHT documents — die ist leer!)
+    → Supabase REST API INSERT mit service_role key (RLS bypass)
+
+21. **Datenqualitaet-Audit VOR jeder RAG-Optimierung!**
+    ```
+    ❌ FALSCH: "Antworten sind schlecht → Prompt tunen"
+       (Wenn 97% der Chunks Navigations-HTML sind, hilft kein Prompt!)
+
+    ✅ RICHTIG: Erst Datenqualitaet pruefen:
+       -- Muell-Erkennung:
+       SELECT metadata->>'source_type', count(*),
+         count(*) FILTER (WHERE content ILIKE '%http%' AND length(content) < 400) as link_only
+       FROM rag_chunks GROUP BY 1;
+
+       -- Themen-Coverage:
+       SELECT 'Thrombose' as topic, count(*) FROM rag_chunks
+         WHERE content ILIKE '%thrombos%'
+       UNION ALL SELECT 'Dekubitus', count(*) ...
+
+       Dann: Muell loeschen → Fehlende Themen crawlen → DANN Prompt tunen
+    ```
+    → Crawl4AI-Daten sind oft 97% Navigations-HTML (leere Link-Brackets, URL-Listen)
+    → Mikro-Fragmente (<100 Zeichen) verschmutzen die Vektorsuche
+    → Session 2026-04-05: 424 Muell-Chunks geloescht, 227 qualitativ hochwertige eingefuegt
 
 ### 🟡 BEVORZUGT
 
