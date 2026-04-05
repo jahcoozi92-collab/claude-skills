@@ -286,10 +286,11 @@ OPENCLAW_CLI="/usr/bin/node /home/moltbotadmin/clawdbot-src/dist/entry.js"
 | `clawdbot-use-balanced` | Sonnet 4 | $3/$15 | ← **aktuell Primary** |
 | `clawdbot-use-premium` | Opus 4.6 | $15/$75 |
 
-**Aktuelles Primary Model (Stand 2026-03-12):** `anthropic/claude-sonnet-4-20250514`
-- Vorher: GPT-5.4 → umgestellt auf Sonnet fuer natives Anthropic-Format (Prompt Caching, Extended Thinking)
-- Main Agent + Coder: weiterhin Opus (explizit in agents.list konfiguriert)
-- Researcher/Organizer/Cron/Heartbeat: weiterhin DeepSeek V3.2
+**Aktuelles Primary Model (Stand 2026-04-05):** `openai/gpt-4.1-mini` ($0.40/$1.60)
+- Vorher: Sonnet via OpenRouter → umgestellt auf OpenAI als Dauerprovider
+- Coder-Agent: `openai/gpt-4.1` ($2/$8) — staerkeres Modell fuer Code
+- Alle anderen Agenten + Cron + Heartbeat: `openai/gpt-4.1-mini`
+- Fallback: GPT-4.1 → Gemini 2.5 Flash (Google) → Ollama Qwen 2.5 (lokal)
 
 ### Ontology Knowledge Graph
 
@@ -971,3 +972,63 @@ systemctl --user restart openclaw-gateway.service
 - `src/hooks/llm-slug-generator.ts` nutzt bereits `resolveAgentEffectiveModelPrimary()` (Zeile 48)
 - Erbt automatisch das Agent-Default-Modell (openai/gpt-4.1-mini)
 - Alte Sonnet/OpenRouter-Fehler in Logs stammen von vor diesem Fix
+
+### 2026-04-05 — OpenAI-Migration + Deep System Audit
+
+**Provider-Wechsel: OpenRouter → OpenAI als Dauerprovider:**
+- Primary: `openai/gpt-4.1-mini` ($0.40/$1.60) — guenstiger Alltagsbegleiter
+- Coder-Agent: `openai/gpt-4.1` ($2/$8) — staerker fuer Code-Aufgaben
+- Fallback-Kette: GPT-4.1 → Gemini 2.5 Flash (Google direkt) → Ollama Qwen 2.5 (lokal)
+- OpenAI Provider in `models.providers.openai` konfiguriert (baseUrl, 2 Modelle, Kosten)
+- Model-Params: `thinking: "off"`, `maxTokens: 16384` fuer beide GPT-Modelle
+
+**Config-Migration Checkliste (KRITISCH — 3 Ebenen!):**
+Bei jedem Model-Wechsel muessen DREI Stellen aktualisiert werden:
+1. `openclaw.json` — agents.defaults.model + agents.list[].model + heartbeat/subagents/voice
+2. `auth-profiles.json` — pro Agent unter `~/.openclaw/agents/<id>/agent/auth-profiles.json`
+3. Cron-Job Payloads — eigene `model`-Felder, aenderbar via `openclaw cron edit <id> --model <m>`
+Wenn nur Ebene 1 geaendert wird, laufen Cron-Jobs und Fallbacks weiter mit den alten Modellen!
+
+**Systemd-Unit: EnvironmentFile statt Einzelzeilen:**
+- 18 `Environment=` Zeilen mit Klartext-Secrets → eine `EnvironmentFile=/home/moltbotadmin/.openclaw/.env`
+- Nicht-Secret Environment= Zeilen (HOME, PATH, TMPDIR, OPENCLAW_*) bleiben einzeln
+- Vorteil: Secrets an einer Stelle (.env), Unit-Datei kann versioniert werden
+
+**Cron-Job delivery.to MUSS numerische Telegram Chat-ID sein:**
+- FALSCH: `"+491736075456"` (Telefonnummer) → Fehler "Telegram recipient must be a numeric chat ID"
+- RICHTIG: `"2061281331"` (numerische Chat-ID = Telegram User-ID aus allowFrom)
+- Telefonnummern funktionieren NUR fuer Voice-Call-Plugin, nicht fuer Telegram-Delivery
+
+**Ollama braucht Auth-Profile trotz keyless:**
+- Fehler: "No API key found for provider 'ollama'" — obwohl Ollama kein Auth braucht
+- Ursache: Runtime prueft auth-profiles.json VOR der Provider-Config (apiKey: "ollama-local")
+- Fix: Dummy-Eintrag `ollama:default` mit `apiKey: "ollama-local"` in auth-profiles.json
+
+**Nasdaq-Tracker: Von 4 Spam-Jobs auf 2 gehaltvolle Briefings:**
+- ENTFERNT: 1%-Alert (stuendlich), Events-Check (4x/Tag), Daily Update (2x/Tag)
+- NEU: Morgen-Briefing (07:00) mit Kurs + Termine + Wachsam-Zeiten (MESZ)
+- NEU: Abend-Zusammenfassung (22:00 Mo-Fr) mit Tagesergebnis + Treiber + Vorschau
+- User-Praeferenz: "Weniger Alerts mit mehr verstaendlichen Inhalten, deutsche Uhrzeiten,
+  wann wachsam sein wegen Bekanntgaben, Pressekonferenzen, Trump-Aktionen etc."
+
+**Ontology Daily Update Cron geloescht:**
+- Timeout-Probleme (300s nicht ausreichend) + zu komplexer Inline-Python im Cron-Prompt
+- User entschied: komplett entfernen statt reparieren
+
+**Weather-Skill erstellt:**
+- `~/clawd/skills/weather/` mit SKILL.md (Berlin Default, lang=de) + scripts/weather.sh
+- Einzelner JSON-Fetch (`?format=j1`) statt 8 einzelne curl-Aufrufe
+- Python-Parser fuer strukturierte Ausgabe (je eine Zeile pro Info)
+
+**System-Gesundheit:**
+- /tmp: 954 stale openclaw-* Temp-Dirs bereinigt (1042→119 Dirs)
+- Swap: 96% belegt → User fuehrte `swapoff -a && swapon -a` aus → 0B
+- 14 Skill-Scripts ohne +x Bit → alle gefixt (besonders self-improving-agent .sh Scripts)
+- Stale LanceDB temp-Datei (Feb 2026) entfernt
+- SQLite constraint error im Cron-Ledger (errcode 1299) — Code-Bug, kein Config-Fix moeglich
+
+**Provider-Diversifizierung (Pattern):**
+- Nie alle Modelle ueber einen einzelnen Provider routen → Single Point of Failure
+- Vorher: 5/5 Fallbacks ueber OpenRouter → alle tot bei leeren Credits
+- Nachher: OpenAI (primaer) + Google (Backup) + Ollama (Notfall) = 3 unabhaengige Provider
+- OpenRouter bleibt konfiguriert als optionaler Zusatz-Provider
