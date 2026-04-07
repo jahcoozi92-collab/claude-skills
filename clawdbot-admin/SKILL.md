@@ -247,6 +247,44 @@ journalctl --user -u openclaw-gateway.service -f
 openclaw doctor
 ```
 
+### Zwei-Gateway-Architektur
+
+Es laufen ZWEI Gateways parallel:
+
+| Gateway | Host | Port | Quelle | Version |
+|---------|------|------|--------|---------|
+| **moltbot** | 192.168.22.206 | 18789 | Lokaler Build (`clawdbot-src/dist/`) | v2026.4.2 |
+| **NAS** | 192.168.22.90 | 18790 | npm-Paket in Docker (`openclaw-gateway`) | v2026.4.5 |
+
+**Routing:** `openclaw.forensikzentrum.com` → Cloudflare (TLS) → moltbot nginx (:80) → moltbot Gateway (:18789) → NAS Gateway (:18790)
+
+**NAS Docker-Zugriff:**
+```bash
+# SSH braucht Passwort (Key-Auth geht nicht)
+# sshpass oder SSH_ASKPASS noetig
+docker exec openclaw-gateway openclaw config get <key>
+docker exec openclaw-gateway openclaw config set <key> <value>
+docker restart openclaw-gateway
+```
+- Container: `openclaw-gateway`
+- Config: `/config/openclaw/.openclaw/openclaw.json` (im Container)
+- Volume: `/volume1/docker/openclaw/config` → `/config` (bind mount)
+- Workspace: `/config/openclaw/workspace`
+
+**trustedProxies:** Auf BEIDEN Gateways pruefen! NAS braucht `192.168.22.206` wenn Traffic ueber moltbot-nginx kommt.
+
+**Cloudflare + WebSocket:** WebSocket ueber `wss://openclaw.forensikzentrum.com` ist unzuverlaessig. Fuer direkte WS-Verbindungen LAN nutzen: `ws://192.168.22.90:18790`
+
+**nginx (moltbot):** Cloudflare terminiert TLS. nginx lauscht nur auf Port 80. `X-Forwarded-Proto` muss `https` sein (hardcoded, nicht `$scheme`). Config: `/etc/nginx/sites-enabled/clawdbot` (braucht sudo).
+
+**Dreaming:** Konfiguriert auf NAS-Gateway. Schema:
+- `plugins.entries.memory-core.config.dreaming.enabled` (boolean)
+- `plugins.entries.memory-core.config.dreaming.frequency` ("core"|"rem"|"deep")
+- Live-Stats via WebSocket-Methode `doctor.memory.status` (Felder: `shortTermCount`, `promotedTotal`, `promotedToday`)
+- `/dreaming` UI-Route existiert nur in npm v2026.4.5+, nicht im lokalen Source
+
+**Bonjour/mDNS:** Auf NAS deaktiviert (`discovery.mdns.mode: off`) wegen Name-Konflikt "(2)".
+
 ### Gateway Build-from-Source (aktueller Zustand)
 
 Der Gateway laeuft auf einem **lokalen Build** statt dem npm-Paket, weil die npm-Version eine pnpm-Inkompatibilitaet hat.
@@ -260,6 +298,10 @@ Der Gateway laeuft auf einem **lokalen Build** statt dem npm-Paket, weil die npm
 
 **Nach Code-Aenderungen oder Version-Update:** `cd ~/clawdbot-src && pnpm build` ausfuehren, dann Gateway neu starten.
 **Nach reinem `pnpm install` (nur Dependency-Aenderungen):** Kein Rebuild noetig — nur Gateway neustarten.
+
+**Device Pairing:** Tokens werden in `~/.openclaw/devices/paired.json` gespeichert. Revoked Devices (mit `revokedAtMs`) koennen gefahrlos entfernt werden. Nach Token-Rotation muessen Offline-Geraete neu pairen (token_missing, nicht token_mismatch).
+
+**Hidamari Wallpaper (GNOME):** HTML-Overlays als Wallpaper koennen KEINE Eingaben empfangen — Credentials muessen direkt im HTML eingebettet sein, kein Settings-Overlay moeglich.
 
 **`--bind` Werte (v2026.3.3+):** `loopback`, `lan`, `tailnet`, `auto`, `custom` (keine IP-Adressen mehr)
 
