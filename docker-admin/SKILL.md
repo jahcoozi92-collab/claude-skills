@@ -1017,6 +1017,26 @@ docker exec ollama ollama create model-fast -f /root/.ollama/Modelfile-fast
 - GLM-4.7: $0.60/$2.20 per 1M tokens
 - OpenAI-kompatibel → In Open WebUI als weitere Verbindung hinzufügen
 
+### 2026-04-08 - n8n Permissions & IPv6 Health-Checks
+
+**n8n >=2.14 erzwingt strenge Config-Permissions:**
+- Fehler: `EACCES: permission denied, open '/home/node/.n8n/config'`
+- Ursache: Config-Datei hat falsche Permissions (777/root) nach NAS-Reboot
+- Fix: `chmod 0600 /volume1/docker/n8n/data/config && chown 1000:1000 /volume1/docker/n8n/data/config`
+- n8n Container laeuft als `node` (UID 1000)
+- `N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=false` in docker-compose verhindert den Fehler NICHT (zu spaet geladen)
+
+**IPv6 Health-Check Problem in Docker:**
+- `localhost` wird in `/etc/hosts` zu `::1` (IPv6) aufgeloest
+- n8n hoert nur auf `0.0.0.0` (IPv4) → `wget http://localhost:5678/healthz` → Connection refused
+- Fix: Health-Checks IMMER mit `127.0.0.1` statt `localhost`:
+  ```yaml
+  healthcheck:
+    test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5678/healthz || exit 1"]
+  ```
+- Alternative: `sysctls: net.ipv6.conf.all.disable_ipv6=1` im Service setzen
+- Betrifft ALLE Container ohne IPv6-Disable die Health-Checks mit `localhost` nutzen
+
 ### 2026-04-01 - Docker Daemon Zombie-Prozess & Kimi-free-api
 
 **Zombie-dockerd blockiert Neustart (UGREEN-spezifisch):**

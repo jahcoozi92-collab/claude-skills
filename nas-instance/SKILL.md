@@ -278,6 +278,41 @@ Unterstuetzt: Schmidt-Meier, von der Heide, Oezdemir, étranger-Varianten
 - Container heisst `homeassistant` (ohne Bindestrich!)
 - NICHT `home-assistant` wie man vermuten wuerde
 
+### 2026-04-08 — KVM Autoload, OpenClaw Avatar, Static Hosting
+
+**KVM-Module nach NAS-Reboot nicht geladen:**
+- UGREEN NAS laedt `kvm` und `kvm_intel` Module NICHT automatisch nach Reboot
+- Symptom: VM startet nicht, `/dev/kvm` fehlt, libvirtd meldet "Permission denied"
+- UGOS-Fehlermeldung ist irrefuehrend: zeigt "openclaw" als Pfad, tatsaechlich UUID-basiert
+- Fix: `/etc/modules-load.d/kvm.conf` mit `kvm` und `kvm_intel` erstellen
+- Nach Fix: `modprobe kvm kvm_intel && sudo systemctl restart libvirtd`
+
+**UGOS VM-Verwaltung Pfad-Mapping:**
+- UGOS zeigt VM-Namen ("openclaw"), Dateisystem nutzt UUIDs
+- Tatsaechlicher Pfad: `/volume1/@kvm/<uuid>/<uuid>_<disk-uuid>.qcow2`
+- Fehlermeldung zeigt `.gcow2` — tatsaechlich `.qcow2`
+
+**OpenClaw Avatar-Constraints:**
+- `ui.assistant.avatar` in `openclaw.json`: max 200 Zeichen (data URIs unmoeglich)
+- Avatar wird CLIENT-SEITIG geladen → URL muss vom Browser erreichbar sein
+- Interne IPs (`192.168.x.x`) funktionieren nur im LAN, nicht ueber Cloudflare
+- **Loesung:** Bild in Open WebUI Static-Verzeichnis hosten:
+  ```bash
+  docker cp bild.png open-webui:/app/backend/open_webui/static/bild.png
+  ```
+  → Erreichbar unter `https://chat.forensikzentrum.com/static/bild.png`
+- ACHTUNG: Ueberlebt Container-Recreate NICHT! Bei Updates erneut kopieren
+
+**Static File Hosting hinter Cloudflare (Rangfolge):**
+1. Open WebUI: `docker cp` → `/app/backend/open_webui/static/` → `chat.forensikzentrum.com/static/`
+2. Gedenkseite: `sudo cp` → `/volume1/docker/gedenkseite/site/` → `gedenkseite.forensikzentrum.com/`
+3. rag-landing: nginx hat Permission-Probleme mit bind-mounts (403 trotz 777)
+
+**UGOS systemd Units nach Reboot:**
+- `domain_tool`: braucht `/etc/samba/smbdomain.conf` (leere Datei reicht: `sudo touch`)
+- `upnpd`: sed-Fehler im Init-Script, Neustart hilft
+- `video_serv`: erholt sich selbst nach kurzer Verzoegerung
+
 ### 2026-04-01 — SPA-Fetch & UGNAS Knowledge Center
 
 **UGNAS Knowledge Center ist SPA (Single Page App):**
