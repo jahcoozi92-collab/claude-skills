@@ -560,6 +560,51 @@ Wie ein Wecker. Jeden Tag um 8 Uhr morgens startet der Workflow.
     → Betrifft: Form Triggers, Webhook Nodes, Chat Triggers
     → Nach Restart ~10s warten bis n8n alle Workflows re-aktiviert hat
 
+25. **NIEMALS** `$(nodeName).all()` in Code-Nodes fuer Agent-Sub-Nodes aufrufen!
+    ```
+    ❌ FALSCH (in Grounding_Verifier oder aehnlichen Post-Agent-Nodes):
+       const data = $('Supabase Vector Store').all();
+       const data2 = $('Klickpfad_Suche').all();
+       → Agent-Tool-Nodes laufen in einem SEPARATEN Ausfuehrungskontext!
+       → $(toolNode).all() wartet ENDLOS auf Daten → DEADLOCK/HANG!
+
+    ✅ RICHTIG: Nur $json verwenden (enthaelt Agent-Output + intermediateSteps):
+       const steps = $json.intermediateSteps || [];
+       const context = JSON.stringify($json).substring(0, 50000);
+    ```
+    → Gilt fuer ALLE Nodes die NACH einem Agent-Node laufen
+    → Agent-Tool-Nodes (Vector Store, HTTP Tools) sind NICHT ueber $() erreichbar
+
+26. **NIEMALS** Anthropic API direkt nutzen — kein Guthaben!
+    ```
+    ❌ FALSCH: fetch('https://api.anthropic.com/v1/messages', { headers: { 'x-api-key': key } })
+       → Anthropic Credential 8vuwy9VrY5EheWYB hat KEIN Guthaben → 402 Error
+
+    ✅ RICHTIG: OpenRouter nutzen:
+       fetch('https://openrouter.ai/api/v1/chat/completions', {
+         headers: { 'Authorization': 'Bearer ' + openRouterKey }
+       })
+       → Modell-ID Kurzform: 'anthropic/claude-sonnet-4.5' (NICHT '...-20250929')
+       → OpenRouter Credential: JDjnOpGlLzqfePON
+    ```
+    → Gilt auch fuer Supabase Edge Functions (vision-analyzer etc.)
+    → OpenRouter Key im Supabase Vault: rpc('get_secret', {secret_name: 'OPENROUTER_API_KEY'})
+
+27. **NIEMALS** SQLite-Workflow-Aenderungen ohne sauberen Restart-Zyklus!
+    ```
+    ❌ FALSCH: SQLite update → docker restart → Test
+       → Haengende Executions blockieren Workflow-Aktivierung!
+       → "Execution is already being resumed by another process"
+
+    ✅ RICHTIG (Reihenfolge entscheidend!):
+       1. POST /deactivate (stoppt laufende Executions)
+       2. SQLite-Aenderung (workflow_entity + workflow_history)
+       3. docker restart n8n-n8n-1
+       4. 10s warten
+       5. POST /activate (registriert Webhooks neu)
+       6. Erst DANN testen
+    ```
+
 ### 🟡 BEVORZUGT
 
 1. **Error Workflow** einrichten für Fehlerbenachrichtigung

@@ -432,12 +432,58 @@ ANTWORT:
        (Ersetzt auch korrekte Antworten, 3x in Session gescheitert!)
     ❌ if (score < 0.7) finalAnswer = answer + "\n---\n⚠️ Warnung..."
        (User will KEINE sichtbaren Warnungen — verwirrt Endbenutzer!)
-    ✅ Grounding Verifier v5 (aktuell, seit 2026-04-05):
+    ✅ Grounding Verifier v6b (aktuell, seit 2026-04-08):
        - Score berechnen → in answer_traces loggen → Antwort UNVERÄNDERT durchlassen
-       - NEU: _lowGrounding Flag bei Score < 0.4 (für späteres Alerting)
-       - NEU: _groundingAlert String mit Details in answer_traces.grounding_alert
-       - System-Prompt + Abstain-Regel ist die primäre Verteidigung
-       - Monitoring über answer_traces Tabelle (grounding_score, low_grounding, grounding_alert)
+       - Kontext-Aufbau: intermediateSteps → JSON.stringify($json) Fallback
+       - KEIN $(nodeName).all() fuer Agent-Sub-Nodes (verursacht Deadlock!)
+       - Term-Extraktion: **bold**, → Menüpfade, „quoted"
+       - _lowGrounding Flag bei Score < 0.4, _termsChecked, _contextLength
+       - Monitoring über answer_traces Tabelle
+    ```
+
+14b. **NIEMALS** Sandbox-Session-IDs bei jedem Aufruf neu generieren!
+    ```
+    ❌ FALSCH (in getSessionId):
+       catch(e) { id = 'session_' + Date.now(); }
+       → Jeder Aufruf generiert NEUE Session → kein Konversationsgedächtnis!
+
+    ✅ RICHTIG: Session-ID in JS-Variable cachen:
+       let _cachedSessionId = null;
+       function getSessionId() {
+         if (_cachedSessionId) return _cachedSessionId;
+         try { id = localStorage.getItem(...); }
+         catch(e) { id = 'session_' + Date.now() + '_' + Math.random()...; }
+         _cachedSessionId = id;
+         return id;
+       }
+    ```
+    → Im Cloudflare-Sandbox (origin=null) crasht localStorage
+    → Ohne Caching: jede Nachricht = neue Session = kein Kontext
+
+14c. **NIEMALS** res.json() ohne Fehlerbehandlung in Chat-Frontend!
+    ```
+    ❌ FALSCH: const data = await res.json();
+       → Bei unvollständiger Response: "SyntaxError: Unexpected end of JSON input"
+
+    ✅ RICHTIG:
+       const text = await res.text();
+       if (!text) throw new Error('Leere Antwort');
+       let data;
+       try { data = JSON.parse(text); }
+       catch(e) { throw new Error('Antwort nicht lesbar'); }
+    ```
+    → Cloudflare kann lange Responses abschneiden → JSON unvollständig
+
+14d. **NIEMALS** Supabase Edge Functions mit Anthropic API direkt!
+    ```
+    ❌ vision-analyzer v2: fetch('https://api.anthropic.com/v1/messages')
+       → Anthropic API Key hat KEIN Guthaben → 500 Error → Chat crasht
+
+    ✅ vision-analyzer v6 (aktuell, seit 2026-04-09):
+       → OpenRouter: fetch('https://openrouter.ai/api/v1/chat/completions')
+       → Modell-ID: 'anthropic/claude-sonnet-4.5' (Kurzform!)
+       → API Key aus Supabase Vault: rpc('get_secret', {secret_name: 'OPENROUTER_API_KEY'})
+       → NICHT aus Deno.env.get() (Edge Function Secrets != Vault)
     ```
 
 15. **NIEMALS** Prompt-Tuning VOR Quelldokument-Prüfung!
@@ -1106,6 +1152,53 @@ const { data } = await supabase.rpc('fast_search_text', {
 ## Gelernte Lektionen
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
+
+### 2026-04-08/09 - Comprehensive RAG Improvement (31 Chunks, 15 Click-Paths, 30 Tests)
+
+**🔴 Vision-Analyzer: Anthropic → OpenRouter:**
+- Edge Function v2 nutzte Anthropic API direkt → 500 Error (kein Guthaben)
+- Fix v6: OpenRouter (`anthropic/claude-sonnet-4.5`, NICHT `...-20250929`)
+- API Key aus Supabase Vault via `rpc('get_secret')` (NICHT `from('decrypted_secrets')`)
+- `Deno.env.get()` funktioniert NICHT fuer Vault-Secrets in Edge Functions
+
+**🔴 Grounding_Verifier: v4 → v6b (Deadlock-Fix):**
+- v6 mit `$(nodeName).all()` fuer Agent-Sub-Nodes → DEADLOCK (Workflow haengt endlos)
+- v6b: Nur `$json.intermediateSteps` + `JSON.stringify($json)` als Kontext
+- Avg Grounding-Score war 0.25 — Ursache: `intermediateSteps` oft leer in n8n 2.8+
+
+**🔴 Sandbox-Session-Fix:**
+- Cloudflare setzt CSP `sandbox` auf Webhook-Responses → origin=null
+- `localStorage`/`sessionStorage` crashen → SecurityError
+- `getSessionId()` generierte bei jedem Aufruf neue Session → kein Konversationsgedaechtnis
+- Fix: `_cachedSessionId` Variable cached Session-ID waehrend Page-Session
+
+**🔴 Restart-Reihenfolge (kritisch!):**
+- FALSCH: SQLite-Update → Restart → Test → Haengende Executions blockieren Workflow
+- RICHTIG: Deactivate → SQLite-Update → Restart → 10s warten → Activate → Test
+
+**🟡 31 neue rag_chunks (IDs 3002-3032):**
+- 3 Ergebnisindikatoren-Seiten (Video-Pages als Text rekonstruiert, inkl. DAS-Plausibilitaetsregeln)
+- 3 Troubleshooting-Artikel (Abzeichnung offen, Nachtdienst, Auswertungen)
+- Gesamt: 1168 → 1199 Chunks
+
+**🟡 15 neue click_paths (IDs 70-84), 5 neue Module:**
+- Erfassung (4), Organisation (4), Connect (3), CarePad (2), Controlling (2)
+- Gesamt: 68 → 83 Click-Paths, 6 → 11 Module
+
+**🟡 System-Prompt v6:**
+- Meta-Beschreibung der Wissensbasis (Module, Themen, Klickpfade)
+- Erweiterte Abstain-Regeln (MediFox ambulant, kundenspezifisch, technische Bugs)
+- "Was befindet sich in der Datenbank?" wird jetzt strukturiert beantwortet
+
+**🟡 30 Testfaelle in rag_test_cases:**
+- navigation(8), factual(8), troubleshooting(6), meta(4), edge_case(4)
+- Regression-Baseline: 20/21 bestanden = 95% Pass-Rate
+- run_regression_tests.py: `--category X` fuer einzelne Kategorien
+
+**🟡 Confluence 🎞 Video-Seiten:**
+- Enthalten NUR Streamio-iframes, kein Text
+- Muessen als Wissensdokumente manuell erstellt und indexiert werden
+- Indexierungs-Script: `index_missing_ergebnisindikatoren.py` als Template
 
 ### 2026-03-27 - hybrid_search_v3 Fix + System-Prompt v5 + Sonnet 4.6
 
