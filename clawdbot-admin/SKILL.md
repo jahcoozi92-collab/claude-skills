@@ -1089,3 +1089,53 @@ Wenn nur Ebene 1 geaendert wird, laufen Cron-Jobs und Fallbacks weiter mit den a
 - Vorher: 5/5 Fallbacks ueber OpenRouter → alle tot bei leeren Credits
 - Nachher: OpenAI (primaer) + Google (Backup) + Ollama (Notfall) = 3 unabhaengige Provider
 - OpenRouter bleibt konfiguriert als optionaler Zusatz-Provider
+
+### 2026-04-08 — Anthropic-Migration + Voice-Transkription + Model-Tiering
+
+**Anthropic Plugin vs. models.providers (KRITISCH):**
+- NIEMALS manuellen Eintrag in `models.providers.anthropic` anlegen!
+- Das `anthropic`-Plugin (`extensions/anthropic/`) registriert sich selbst via `api.registerProvider()`
+- Es verwaltet baseUrl, Modellkatalog, Auth und API-Format eigenstaendig
+- Ein manueller Provider-Eintrag kollidiert: Config-Validation erwartet `baseUrl` als String, aber Plugin ueberschreibt den Eintrag → "received undefined"
+- Korrekt: Nur `plugins.allow` + `plugins.entries.anthropic.enabled: true` setzen, Modelle per ID referenzieren (`anthropic/claude-opus-4-6`)
+- ANTHROPIC_API_KEY in `.env` reicht — Auto-Fill via auth-profiles
+
+**extensions/ != Plugins (KRITISCH):**
+- Nicht jedes Verzeichnis in `extensions/` ist ein ladbares Plugin
+- VOR dem Hinzufuegen zu `plugins.allow`/`plugins.entries` IMMER pruefen: existiert `openclaw.plugin.json`?
+- `media-understanding-core` und `speech-core` haben KEIN Manifest → sind Core-Module, keine Plugins
+- Stale Plugin-Eintraege erzeugen Config-Warnings aber keinen Crash
+
+**tools.media Schema:**
+- `tools.media` hat KEIN top-level `enabled`-Feld → Validation-Error "Unrecognized key"
+- Nur Sub-Keys wie `tools.media.audio.enabled` oder `tools.media.audio.models` sind gueltig
+- Funktionierender Minimal-Eintrag:
+  ```json
+  "media": { "audio": { "models": [{ "provider": "openai", "model": "whisper-1" }] } }
+  ```
+- Audio-Transkription nutzt den OpenAI-Provider aus `models.providers.openai` (gleicher API-Key)
+
+**Kosten-bewusstes Model-Tiering (User-Praeferenz):**
+- Standard-Tasks auf guenstigstem Claude-Modell (Sonnet 4.6, $3/$15)
+- Opus 4.6 ($15/$75) NUR fuer Coder-Agent (komplexe Code-/Reasoning-Aufgaben)
+- Heartbeat/Cron: GPT-4.1 Mini ($0.40/$1.60) — einfache, haeufige Tasks
+- Prompt Caching: `cacheRetention: "long"` (Opus), `"short"` (Sonnet) — spart 90% auf wiederholtem System-Prompt
+
+**Aktuelle Modell-Zuweisungen (2026-04-08):**
+| Agent | Modell | Kosten |
+|-------|--------|--------|
+| main | anthropic/claude-sonnet-4-6 | $3/$15 |
+| coder | anthropic/claude-opus-4-6 | $15/$75 |
+| researcher | anthropic/claude-sonnet-4-6 | $3/$15 |
+| organizer | anthropic/claude-sonnet-4-6 | $3/$15 |
+| searcher | anthropic/claude-sonnet-4-6 | $3/$15 |
+| subagents | anthropic/claude-sonnet-4-6 | $3/$15 |
+| heartbeat | openai/gpt-4.1-mini | $0.40/$1.60 |
+| voice-call | anthropic/claude-sonnet-4-6 | $3/$15 |
+
+**Fallback-Kette:** Sonnet → GPT-4.1 → GPT-4.1 Mini → Gemini Flash → Ollama Qwen 2.5
+
+**Voice-Transkription aktiviert:**
+- `tools.media.audio.models` mit OpenAI Whisper-1
+- Telegram-Sprachnachrichten werden jetzt transkribiert bevor Mention-Logik greift
+- Lokales Whisper CLI auch installiert (`~/.local/bin/whisper`, Python 3.13) als Fallback
