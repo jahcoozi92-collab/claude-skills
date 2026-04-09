@@ -254,22 +254,35 @@ Es laufen ZWEI Gateways parallel:
 | Gateway | Host | Port | Quelle | Version |
 |---------|------|------|--------|---------|
 | **moltbot** | 192.168.22.206 | 18789 | Lokaler Build (`clawdbot-src/dist/`) | v2026.4.2 |
-| **NAS** | 192.168.22.90 | 18790 | npm-Paket in Docker (`openclaw-gateway`) | v2026.4.5 |
+| **NAS** | 192.168.22.90 | 18790 | Docker-Image 0.2.18 (`openclaw-gateway`) | v2026.3.2 |
 
 **Routing:** `openclaw.forensikzentrum.com` → Cloudflare (TLS) → moltbot nginx (:80) → moltbot Gateway (:18789) → NAS Gateway (:18790)
 
 **NAS Docker-Zugriff:**
 ```bash
-# SSH braucht Passwort (Key-Auth geht nicht)
-# sshpass oder SSH_ASKPASS noetig
-docker exec openclaw-gateway openclaw config get <key>
-docker exec openclaw-gateway openclaw config set <key> <value>
-docker restart openclaw-gateway
+# SSH Key-Auth funktioniert (moltbot → NAS)
+# Voraussetzung: Home-Dir auf NAS muss chmod 755 sein (UGOS setzt 777!)
+ssh Jahcoozi@192.168.22.90 "docker exec openclaw-gateway openclaw config get <key>"
+ssh Jahcoozi@192.168.22.90 "docker exec openclaw-gateway openclaw config set <key> <value>"
+ssh Jahcoozi@192.168.22.90 "docker restart openclaw-gateway"
 ```
 - Container: `openclaw-gateway`
 - Config: `/config/openclaw/.openclaw/openclaw.json` (im Container)
 - Volume: `/volume1/docker/openclaw/config` → `/config` (bind mount)
 - Workspace: `/config/openclaw/workspace`
+- Telegram: deaktiviert (nur moltbot-Gateway empfaengt Telegram-Updates)
+
+**env_file Deployment (bei Key-Aenderungen):**
+```bash
+scp ~/.openclaw/.env Jahcoozi@192.168.22.90:/volume1/docker/openclaw/config/.env
+ssh Jahcoozi@192.168.22.90 "docker restart openclaw-gateway"
+```
+Docker-Compose (`~/clawd/docker-compose-openclaw.yaml`) laedt env_file von `/volume1/docker/openclaw/config/.env`.
+
+**UGOS Home-Dir Warnung:** UGOS setzt `/home/Jahcoozi/` auf 777. Nach NAS-Updates pruefen:
+```bash
+ssh Jahcoozi@192.168.22.90 "ls -ld /home/Jahcoozi/"  # muss 755 sein
+```
 
 **trustedProxies:** Auf BEIDEN Gateways pruefen! NAS braucht `192.168.22.206` wenn Traffic ueber moltbot-nginx kommt.
 
@@ -282,6 +295,7 @@ docker restart openclaw-gateway
 - `plugins.entries.memory-core.config.dreaming.frequency` ("core"|"rem"|"deep")
 - Live-Stats via WebSocket-Methode `doctor.memory.status` (Felder: `shortTermCount`, `promotedTotal`, `promotedToday`)
 - `/dreaming` UI-Route existiert nur in npm v2026.4.5+, nicht im lokalen Source
+- NAS-Image ist v2026.3.2 (einziges Tag: 0.2.18) — Anthropic-Plugin fehlt, wird als stale ignoriert
 
 **Bonjour/mDNS:** Auf NAS deaktiviert (`discovery.mdns.mode: off`) wegen Name-Konflikt "(2)".
 
@@ -328,10 +342,11 @@ OPENCLAW_CLI="/usr/bin/node /home/moltbotadmin/clawdbot-src/dist/entry.js"
 | `clawdbot-use-balanced` | Sonnet 4 | $3/$15 | ← **aktuell Primary** |
 | `clawdbot-use-premium` | Opus 4.6 | $15/$75 |
 
-**Aktuelles Primary Model (Stand 2026-04-05):** `openai/gpt-4.1-mini` ($0.40/$1.60)
-- Vorher: Sonnet via OpenRouter → umgestellt auf OpenAI als Dauerprovider
-- Coder-Agent: `openai/gpt-4.1` ($2/$8) — staerkeres Modell fuer Code
-- Alle anderen Agenten + Cron + Heartbeat: `openai/gpt-4.1-mini`
+**Aktuelles Primary Model (Stand 2026-04-08):** `anthropic/claude-sonnet-4-6` ($3/$15)
+- Vorher: OpenAI GPT-4.1 Mini → umgestellt auf Anthropic Sonnet 4.6
+- Coder-Agent: `anthropic/claude-opus-4-6` ($15/$75) — staerkeres Modell fuer Code
+- Alle anderen Agenten (main/researcher/organizer/searcher): `anthropic/claude-sonnet-4-6`
+- Cron + Heartbeat: `openai/gpt-4.1-mini` ($0.40/$1.60)
 - Fallback: GPT-4.1 → Gemini 2.5 Flash (Google) → Ollama Qwen 2.5 (lokal)
 
 ### Ontology Knowledge Graph
