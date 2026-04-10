@@ -1132,25 +1132,92 @@ Wenn nur Ebene 1 geaendert wird, laufen Cron-Jobs und Fallbacks weiter mit den a
 
 **Kosten-bewusstes Model-Tiering (User-Praeferenz):**
 - Standard-Tasks auf guenstigstem Claude-Modell (Sonnet 4.6, $3/$15)
-- Opus 4.6 ($15/$75) NUR fuer Coder-Agent (komplexe Code-/Reasoning-Aufgaben)
+- Opus 4.6 ($15/$75) fuer Deep-Work-Agent und DSGVO-Pflege (komplexe Aufgaben)
+- MiniMax M2.7 via OpenRouter ($0.30/$1.20) als guenstiger Fallback #1 (SWE-bench ~78%, 42 tok/s, 204K ctx, verbos)
 - Heartbeat/Cron: GPT-4.1 Mini ($0.40/$1.60) — einfache, haeufige Tasks
-- Prompt Caching: `cacheRetention: "long"` (Opus), `"short"` (Sonnet) — spart 90% auf wiederholtem System-Prompt
+- Prompt Caching: `cacheRetention: "long"` (Opus UND Sonnet seit 2026-04-10) — spart 90% auf wiederholtem System-Prompt
 
-**Aktuelle Modell-Zuweisungen (2026-04-08):**
+**Aktuelle Modell-Zuweisungen (2026-04-10):**
 | Agent | Modell | Kosten |
 |-------|--------|--------|
-| main | anthropic/claude-sonnet-4-6 | $3/$15 |
-| coder | anthropic/claude-opus-4-6 | $15/$75 |
-| researcher | anthropic/claude-sonnet-4-6 | $3/$15 |
-| organizer | anthropic/claude-sonnet-4-6 | $3/$15 |
-| searcher | anthropic/claude-sonnet-4-6 | $3/$15 |
+| sonnet (default) | anthropic/claude-sonnet-4-6 | $3/$15 |
+| opus | anthropic/claude-opus-4-6 | $15/$75 |
+| pflege | anthropic/claude-sonnet-4-6 | $3/$15 |
+| pflege-eu | anthropic/claude-opus-4-6 | $15/$75 |
 | subagents | anthropic/claude-sonnet-4-6 | $3/$15 |
 | heartbeat | openai/gpt-4.1-mini | $0.40/$1.60 |
 | voice-call | anthropic/claude-sonnet-4-6 | $3/$15 |
 
-**Fallback-Kette:** Sonnet → GPT-4.1 → GPT-4.1 Mini → Gemini Flash → Ollama Qwen 2.5
+**Fallback-Kette:** Sonnet → MiniMax M2.7 (OR) → Opus → GPT-5.4 → GPT-4.1 → Gemini Flash → Ollama Qwen 2.5
+
+**Routing (2026-04-10):**
+- Telegram → sonnet (via `openclaw agents bind`)
+- WebChat → Default-Agent (nicht bindbar, manuell via `/@opus`)
+- pflege/pflege-eu via `/@pflege` / `/@pflege-eu` im Chat
 
 **Voice-Transkription aktiviert:**
 - `tools.media.audio.models` mit OpenAI Whisper-1
 - Telegram-Sprachnachrichten werden jetzt transkribiert bevor Mention-Logik greift
 - Lokales Whisper CLI auch installiert (`~/.local/bin/whisper`, Python 3.13) als Fallback
+
+### 2026-04-10 — 4-Agent-Topologie + Multi-Provider-Fallback
+
+**Routing via CLI, NICHT via JSON (KRITISCH):**
+- NIEMALS `routing`, `bindings` oder aehnliche Keys in `openclaw.json` schreiben — sie existieren NICHT im Schema und verursachen "Config invalid" + Gateway-Crash
+- Routing NUR via CLI: `openclaw agents bind --agent <id> --bind <channel>`
+- Unbind: `openclaw agents unbind --agent <id> --bind <channel>`
+- Auflisten: `openclaw agents bindings`
+- webchat ist NICHT bindbar — nutzt immer den Default-Agent. Manueller Wechsel via `/@opus` im Chat.
+
+**agentDir muss pro Agent eindeutig sein (KRITISCH):**
+- NIEMALS mehrere Agenten auf dasselbe `agentDir` zeigen lassen
+- OpenClaw validiert Eindeutigkeit: "Duplicate agentDir detected" → Gateway startet nicht
+- Jeder Agent braucht: `~/.openclaw/agents/<agent-id>/agent/`
+- Auth-Profile (auth-profiles.json) muessen in jedes agentDir kopiert werden
+- Erstellen: `mkdir -p ~/.openclaw/agents/<id>/agent && cp ~/.openclaw/agents/main/agent/auth-profiles.json ~/.openclaw/agents/<id>/agent/`
+
+**IMMER `openclaw config set` statt direkter JSON-Edits:**
+- `config set` macht automatisches SHA256-Backup + Schema-Validierung
+- Direkte JSON-Edits fuehrten in dieser Session zu 3 Gateway-Fehlstarts durch unbekannte Keys
+- Ausnahme: Initiales Erstellen neuer Agenten via `openclaw agents add`
+
+**OpenRouter vs Anthropic Model-IDs (KRITISCH):**
+- OpenRouter Anthropic-Modelle nutzen PUNKTE: `openrouter/anthropic/claude-opus-4.6`
+- Anthropic direkt nutzt BINDESTRICHE: `anthropic/claude-opus-4-6`
+- Verwechslung = "Model not found" ohne hilfreiche Fehlermeldung
+- IMMER gegen Live-Registry verifizieren: `openclaw models list --all --json | grep <pattern>`
+
+**Unbekannte Config-Keys = harter Crash:**
+- `model_overrides` existiert nicht → per-Agent Fallback-Override ist ueber diesen Key nicht moeglich
+- Per-Agent Modell nur ueber das `model` Feld in `agents.list[]` konfigurierbar (String, nicht Objekt)
+- Vor dem Verwenden neuer Config-Keys: `openclaw doctor` oder `openclaw config set` testen
+
+**CF AI Gateway ist KEIN Provider in v2026.4.9:**
+- Kein `cloudflare-ai-gateway` Prefix in der Model-Registry
+- Vorhandene Gateway-Provider: `vercel-ai-gateway`, `amazon-bedrock` — aber kein Cloudflare
+- Falls CF-Caching gewuenscht: Custom-Provider mit `baseUrl` einrichten (nicht offiziell unterstuetzt)
+
+**MiniMax M2.7 als Fallback (verifiziert 2026-04-10):**
+- OpenRouter ID: `openrouter/minimax/minimax-m2.7`
+- Kosten: $0.30/M input, $1.20/M output (10x guenstiger als Sonnet)
+- Benchmarks: SWE-bench ~78% (vs Opus ~81%, Sonnet ~80%)
+- Schwaechen: Langsam (~42 tok/s), sehr verbos (frisst Preisvorteil teils auf), kein Thinking-Mode
+- Staerken: 131K max output, 204K context, starkes agentisches Coding
+
+**Free OpenRouter Models: Keine brauchbaren Kandidaten (2026-04-10):**
+- `openclaw models scan --max-age-days 180 --min-params 8` fand 15 Free-Modelle
+- Alle ohne Tool-Support (metadata "fail") → fuer OpenClaw-Agenten unbrauchbar
+- Kein kostenloser Notfall-Fallback moeglich
+
+**4-Agent-Topologie:**
+| Agent | Modell | Zweck | Tools |
+|-------|--------|-------|-------|
+| sonnet (default) | claude-sonnet-4-6 | Workhorse, Telegram | alle |
+| opus | claude-opus-4-6 | Deep Work, context1m | alle |
+| pflege | claude-sonnet-4-6 | DSGVO Quick-QM | restriktiv |
+| pflege-eu | claude-opus-4-6 | DSGVO Deep-Analysis | restriktiv |
+
+**OpenAI Key-Rotation (2026-04-10):**
+- Alter Key in .env und auth-profiles.json war unterschiedlich → memory-lancedb 401-Fehler
+- Neuer Key einheitlich an BEIDEN Stellen: `~/.openclaw/.env` UND `~/.openclaw/agents/*/agent/auth-profiles.json`
+- PFLICHT bei Key-Rotation: beide Dateien updaten, nicht nur eine
