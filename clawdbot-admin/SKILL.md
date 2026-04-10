@@ -219,6 +219,12 @@ pnpm openclaw skills info <slug>   # → "Ready"
 - [ ] Model-Parameter stimmen mit Intention ueberein (thinking, maxTokens)
 - [ ] Tote Eintraege entfernt (leere Objekte, deaktivierte Plugins, unreferenzierte Modelle)
 - [ ] `plugins.allow` hat keinen Leerstring
+- [ ] `gateway.auth.rateLimit` konfiguriert (10/60s, 5min Lockout)
+- [ ] `hooks.defaultSessionKey` gesetzt (z.B. "hook:ingress")
+- [ ] `hooks.allowedAgentIds` auf bekannte Agenten beschraenkt
+- [ ] `tools.exec.security` auf "allowlist" (NICHT "full"!)
+- [ ] safeBins: Keine Interpreter (awk, sed, jq) — koennen beliebigen Code ausfuehren
+- [ ] `openclaw security audit` hat keine CRITICAL-Findings
 
 ### Level 2 — UX & Performance
 - [ ] `typingMode: "instant"` — sofortiger Typing-Indicator
@@ -247,91 +253,113 @@ journalctl --user -u openclaw-gateway.service -f
 openclaw doctor
 ```
 
-### Zwei-Gateway-Architektur
+### Gateway-Architektur (Stand 2026-04-09)
 
-Es laufen ZWEI Gateways parallel:
+Ein Gateway auf ugreen-gateway (192.168.22.206), erreichbar ueber Cloudflare Tunnel:
 
-| Gateway | Host | Port | Quelle | Version |
-|---------|------|------|--------|---------|
-| **moltbot** | 192.168.22.206 | 18789 | Lokaler Build (`clawdbot-src/dist/`) | v2026.4.2 |
-| **NAS** | 192.168.22.90 | 18790 | Docker-Image 0.2.18 (`openclaw-gateway`) | v2026.3.2 |
+| Komponente | Host | Details |
+|------------|------|---------|
+| **Gateway** | 192.168.22.206:18789 | npm v2026.4.9, systemd user-service |
+| **Cloudflare Tunnel** | NAS (192.168.22.90) | Remote-managed, Container `cloudflared` |
+| **SSH-Forward** | NAS → ugreen | systemd `ssh-openclaw-forward.service` (18790→18789) |
 
-**Routing:** `openclaw.forensikzentrum.com` → Cloudflare (TLS) → moltbot nginx (:80) → moltbot Gateway (:18789) → NAS Gateway (:18790)
+**Routing:** `openclaw.forensikzentrum.com` → Cloudflare (TLS) → NAS Tunnel-Connector → SSH-Forward (:18790) → ugreen Gateway (:18789)
 
-**NAS Docker-Zugriff:**
+**Warum SSH-Forward?** Proxmox VM-Firewall blockiert Port 18789 von der NAS. SSH (Port 22) funktioniert. Der Forward laeuft als systemd-Service auf der NAS.
+
+**Cloudflare Tunnel ist REMOTE-MANAGED:**
+- Lokale `config.yml` auf NAS wird IGNORIERT
+- Aenderungen NUR ueber Cloudflare API (PUT /configurations)
+- Tunnel-ID: `d770b289-dc1b-498e-9387-dff9edbea572`
+- Account-ID: `fe9ccc0b8c75b763124554a9f0bab48c`
+- API-Token: `CLOUDFLARE_API_TOKEN` in `~/.openclaw/.env`
 ```bash
-# SSH Key-Auth funktioniert (moltbot → NAS)
-# Voraussetzung: Home-Dir auf NAS muss chmod 755 sein (UGOS setzt 777!)
-ssh Jahcoozi@192.168.22.90 "docker exec openclaw-gateway openclaw config get <key>"
-ssh Jahcoozi@192.168.22.90 "docker exec openclaw-gateway openclaw config set <key> <value>"
-ssh Jahcoozi@192.168.22.90 "docker restart openclaw-gateway"
+# Tunnel-Config lesen:
+CF_TOKEN=$(grep CLOUDFLARE_API_TOKEN ~/.openclaw/.env | cut -d= -f2)
+curl -s "https://api.cloudflare.com/client/v4/accounts/fe9ccc0b8c75b763124554a9f0bab48c/cfd_tunnel/d770b289-dc1b-498e-9387-dff9edbea572/configurations" \
+  -H "Authorization: Bearer $CF_TOKEN" | python3 -m json.tool
 ```
-- Container: `openclaw-gateway`
-- Config: `/config/openclaw/.openclaw/openclaw.json` (im Container)
-- Volume: `/volume1/docker/openclaw/config` → `/config` (bind mount)
-- Workspace: `/config/openclaw/workspace`
-- Telegram: deaktiviert (nur moltbot-Gateway empfaengt Telegram-Updates)
 
-**env_file Deployment (bei Key-Aenderungen):**
-```bash
-scp ~/.openclaw/.env Jahcoozi@192.168.22.90:/volume1/docker/openclaw/config/.env
-ssh Jahcoozi@192.168.22.90 "docker restart openclaw-gateway"
-```
-Docker-Compose (`~/clawd/docker-compose-openclaw.yaml`) laedt env_file von `/volume1/docker/openclaw/config/.env`.
+**NAS-Gateway wurde entfernt (2026-04-09):** Docker-Container v0.2.18 und nativer Prozess gestoppt. NAS dient nur noch als Tunnel-Connector und Node-Host.
 
 **UGOS Home-Dir Warnung:** UGOS setzt `/home/Jahcoozi/` auf 777. Nach NAS-Updates pruefen:
 ```bash
 ssh Jahcoozi@192.168.22.90 "ls -ld /home/Jahcoozi/"  # muss 755 sein
 ```
 
-**trustedProxies:** Auf BEIDEN Gateways pruefen! NAS braucht `192.168.22.206` wenn Traffic ueber moltbot-nginx kommt.
+**WebSocket ueber Cloudflare:** Funktioniert jetzt (nach SSH-Forward Fix). Bei device_token_mismatch: Browser LocalStorage fuer openclaw.forensikzentrum.com loeschen.
 
-**Cloudflare + WebSocket:** WebSocket ueber `wss://openclaw.forensikzentrum.com` ist unzuverlaessig. Fuer direkte WS-Verbindungen LAN nutzen: `ws://192.168.22.90:18790`
+**Memory-Plugins:** `memory-lancedb` (Vektor-Suche) aktiv, `memory-core` (Dreaming) deaktiviert. Slots sind exklusiv — nur ein Plugin kann den memory-Slot halten. "dreaming not supported" Warnung in Control UI ist kosmetisch.
 
-**nginx (moltbot):** Cloudflare terminiert TLS. nginx lauscht nur auf Port 80. `X-Forwarded-Proto` muss `https` sein (hardcoded, nicht `$scheme`). Config: `/etc/nginx/sites-enabled/clawdbot` (braucht sudo).
+### Gateway npm-Install (aktueller Zustand, seit 2026-04-09)
 
-**Dreaming:** Konfiguriert auf NAS-Gateway. Schema:
-- `plugins.entries.memory-core.config.dreaming.enabled` (boolean)
-- `plugins.entries.memory-core.config.dreaming.frequency` ("core"|"rem"|"deep")
-- Live-Stats via WebSocket-Methode `doctor.memory.status` (Felder: `shortTermCount`, `promotedTotal`, `promotedToday`)
-- `/dreaming` UI-Route existiert nur in npm v2026.4.5+, nicht im lokalen Source
-- NAS-Image ist v2026.3.2 (einziges Tag: 0.2.18) — Anthropic-Plugin fehlt, wird als stale ignoriert
-
-**Bonjour/mDNS:** Auf NAS deaktiviert (`discovery.mdns.mode: off`) wegen Name-Konflikt "(2)".
-
-### Gateway Build-from-Source (aktueller Zustand)
-
-Der Gateway laeuft auf einem **lokalen Build** statt dem npm-Paket, weil die npm-Version eine pnpm-Inkompatibilitaet hat.
+Der Gateway laeuft auf dem **npm-Paket** (nicht mehr lokalem Build). Extensions sind im Paket gebundelt.
 
 | Parameter | Wert |
 |-----------|------|
-| ExecStart | `/usr/bin/node ~/clawdbot-src/dist/entry.js gateway --port 18789` |
-| bind | `"lan"` (in openclaw.json, nicht als CLI-Flag) |
-| `OPENCLAW_BUNDLED_PLUGINS_DIR` | `/home/moltbotadmin/clawdbot-src/extensions` |
-| `plugins.load.paths` (openclaw.json) | `["/home/moltbotadmin/clawdbot-src/extensions"]` |
+| ExecStart | `/usr/bin/node ~/.npm-global/lib/node_modules/openclaw/dist/entry.js gateway --port 18789` |
+| bind | `"lan"` (in openclaw.json) |
+| `plugins.load.paths` | `[]` (leer — Extensions im npm-Paket gebundelt) |
 
-**Nach Code-Aenderungen oder Version-Update:** `cd ~/clawdbot-src && pnpm build` ausfuehren, dann Gateway neu starten.
-**Nach reinem `pnpm install` (nur Dependency-Aenderungen):** Kein Rebuild noetig — nur Gateway neustarten.
+**Update-Workflow:**
+```bash
+npm install -g openclaw@latest    # npm-Paket aktualisieren
+openclaw --version                # Pruefen
+systemctl --user restart openclaw-gateway.service   # Gateway neustarten
+```
 
-**Device Pairing:** Tokens werden in `~/.openclaw/devices/paired.json` gespeichert. Revoked Devices (mit `revokedAtMs`) koennen gefahrlos entfernt werden. Nach Token-Rotation muessen Offline-Geraete neu pairen (token_missing, nicht token_mismatch).
+**CLI-Wrapper:** `~/.local/bin/openclaw` zeigt auf npm-Paket (nicht mehr clawdbot-src).
 
-**Hidamari Wallpaper (GNOME):** HTML-Overlays als Wallpaper koennen KEINE Eingaben empfangen — Credentials muessen direkt im HTML eingebettet sein, kein Settings-Overlay moeglich.
+**Device Pairing:** Tokens in `~/.openclaw/devices/paired.json`. Revoked Devices (mit `revokedAtMs`) koennen entfernt werden.
 
-**`--bind` Werte (v2026.3.3+):** `loopback`, `lan`, `tailnet`, `auto`, `custom` (keine IP-Adressen mehr)
+**`--bind` Werte:** `loopback`, `lan`, `tailnet`, `auto`, `custom` (keine IP-Adressen)
 
-**post-merge Hook (automatisch nach git pull):**
-- Datei: `~/clawdbot-src/.git/hooks/post-merge`
-- Prueft ob `pnpm-lock.yaml` oder `package.json` sich geaendert haben
-- Falls ja: `pnpm install` + `systemctl --user restart openclaw-gateway.service`
-- ACHTUNG: Liegt in `.git/hooks/` — wird nicht ins Repo committed. Bei Neuklonen manuell einrichten.
+### Remote Nodes
+
+Nodes sind Remote-Maschinen, die sich beim Gateway registrieren und Exec-Befehle entgegennehmen.
+
+| Node | Host | Service | Verbindung |
+|------|------|---------|------------|
+| NAS-DXP4800 | 192.168.22.90 | `systemd /etc/systemd/system/openclaw-node.service` | wss://openclaw.forensikzentrum.com |
+| yoga7-kali | 192.168.22.86 | `systemd --user openclaw-node.service` | wss://openclaw.forensikzentrum.com |
+
+**Pairing-Flow:**
+1. Node startet: `openclaw node run --host openclaw.forensikzentrum.com --port 443 --tls`
+2. Braucht `OPENCLAW_GATEWAY_TOKEN` als env var
+3. Gateway zeigt Pairing-Request: `openclaw nodes approve <request-id>`
+4. Token wird in `~/.openclaw/node.json` auf dem Node gespeichert
+5. ACHTUNG: Token muss ggf. manuell in `node.json` eingetragen werden (Bug: nicht immer automatisch)
+
+**Node-Befehle testen:**
+```bash
+openclaw nodes list                    # Alle Nodes + Status
+openclaw nodes invoke --node NAS-DXP4800 --command system.which --params '{"bins":["docker","git"]}'
+```
+`system.run` (Shell-Exec) ist NUR fuer den Agent via exec-Tool verfuegbar, nicht direkt via CLI.
+
+### Security-Haertung (2026-04-09)
+
+| Einstellung | Wert | Zweck |
+|-------------|------|-------|
+| `tools.exec.security` | `"allowlist"` | Nur safeBins ohne Approve |
+| `tools.exec.ask` | `"on-miss"` | Nicht-Allowlist-Befehle brauchen /approve |
+| `hooks.allowedAgentIds` | 5 Agenten | Nur bekannte Agents ueber Hooks |
+| `hooks.allowedSessionKeyPrefixes` | `["hook:","cron:"]` | Session-Scope begrenzt |
+| `hooks.defaultSessionKey` | `"hook:ingress"` | Kein Session-Sprawl |
+| `gateway.auth.rateLimit` | 10/60s, 5min Lockout | Brute-Force-Schutz |
+
+**safeBins — erlaubt ohne Approve:**
+Diagnose (ps, ss, df, ...), Datei-Lesen (cat, head, grep, ...), Git, Python3, Node, Bun, SSH/SCP, Datei-Ops (mkdir, cp, mv, touch), Text-Utils (wc, sort, uniq, tr, cut, diff, xargs, tee)
+
+**Nicht in safeBins (brauchen /approve):** rm, docker, systemctl, chmod, chown, awk, sed, jq — diese koennen destruktiv sein oder beliebigen Code ausfuehren.
 
 ### Model-Aliases (`~/.clawdbot-model-aliases.sh`)
 
 Schnelles Model-Switching per Shell-Funktion. Wird in `.bashrc` gesourced.
 
-**`openclaw` Binary:** Wrapper-Script in `~/.local/bin/openclaw` (exec node dist/entry.js). Aliases nutzen `OPENCLAW_CLI` Variable:
+**`openclaw` Binary:** Wrapper-Script in `~/.local/bin/openclaw` (exec node npm-global entry.js). Aliases nutzen `OPENCLAW_CLI` Variable:
 ```bash
-OPENCLAW_CLI="/usr/bin/node /home/moltbotadmin/clawdbot-src/dist/entry.js"
+OPENCLAW_CLI="/usr/bin/node /home/moltbotadmin/.npm-global/lib/node_modules/openclaw/dist/entry.js"
 ```
 
 | Alias | Modell | Kosten |
@@ -371,38 +399,25 @@ cd ~/clawd && python3 -c "import json,re;from pathlib import Path; ..."
 ### Troubleshooting
 
 **502 von Cloudflare:**
-1. `systemctl --user status openclaw-gateway.service` — laeuft der Service?
-2. `curl -sI http://127.0.0.1:18789/` — antwortet der Gateway lokal?
-3. `pgrep -af cloudflared` — laeuft der Tunnel? (System-Service, PID ~836)
-4. Wenn Gateway `inactive (dead)` mit `status=0/SUCCESS`: wurde sauber gestoppt (SIGTERM), systemd startet dann nicht automatisch neu → `systemctl --user start openclaw-gateway.service`
-5. **Tunnel-Ingress-Port pruefen** (haeufigste Ursache bei "wiedermal 502"):
+1. `systemctl --user status openclaw-gateway.service` — laeuft der Gateway?
+2. `curl -sI http://127.0.0.1:18789/` — antwortet er lokal?
+3. `ssh Jahcoozi@192.168.22.90 "sudo systemctl status ssh-openclaw-forward.service"` — SSH-Forward aktiv?
+4. `ssh Jahcoozi@192.168.22.90 "curl -sI http://127.0.0.1:18790/ --max-time 3"` — Forward funktioniert?
+5. `ssh Jahcoozi@192.168.22.90 "docker logs cloudflared --tail 5"` — Tunnel-Connector OK?
+6. **Tunnel-Config pruefen** (remote-managed!):
    ```bash
-   # Ingress-Config via API abrufen und Port fuer betroffene Subdomain pruefen
-   curl -sS "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/cfd_tunnel/${CF_TUNNEL_ID}/configurations" \
-     -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" | python3 -c "
-   import json,sys; [print(f'{r.get(\"hostname\",\"catch-all\")} → {r[\"service\"]}')
-     for r in json.load(sys.stdin)['result']['config']['ingress']]"
-   # Vergleichen mit: ss -tlnp | grep 1879
+   CF_TOKEN=$(grep CLOUDFLARE_API_TOKEN ~/.openclaw/.env | cut -d= -f2)
+   curl -s "https://api.cloudflare.com/client/v4/accounts/fe9ccc0b8c75b763124554a9f0bab48c/cfd_tunnel/d770b289-dc1b-498e-9387-dff9edbea572/configurations" \
+     -H "Authorization: Bearer $CF_TOKEN" | python3 -c "
+   import json,sys; [print(f'{r.get(\"hostname\",\"catch-all\")} -> {r[\"service\"]}')
+     for r in json.load(sys.stdin)['result']['config']['ingress']
+     if 'openclaw' in str(r)]"
    ```
-6. **Falls Port falsch** → Fix via API PUT (siehe Cloudflare Tunnel API Referenz unten)
 
-**ERR_MODULE_NOT_FOUND Crash-Loop (pnpm-Symlink fehlt):**
-- Symptom: `Cannot find package 'chalk' imported from dist/subsystem-*.js` (oder anderes Paket)
-- Ursache: `pnpm-lock.yaml` und `package.json` `overrides` sind out-of-sync → pnpm-Symlinks in `node_modules/` fehlen
-- Passiert nach `git pull` wenn sich Dependencies geaendert haben ohne `pnpm install`
-- Fix: `cd ~/clawdbot-src && pnpm install` (NICHT `--frozen-lockfile` — schlaegt bei overrides-Mismatch fehl)
-- Danach: `systemctl --user restart openclaw-gateway.service`
-- Praevention: post-merge Hook (siehe Gateway Build-from-Source Sektion)
-
-**"unsafe plugin manifest path" Crash-Loop:**
-- Ursache: pnpm Content-Addressable-Store nutzt Hardlinks, die die Boundary-Pruefung (`openBoundaryFileSync`) nicht bestehen
-- Fix: `OPENCLAW_BUNDLED_PLUGINS_DIR` in der systemd-Unit auf `~/clawdbot-src/extensions` setzen
-- Alternativ: `plugins.load.paths` in `openclaw.json` auf das Extensions-Verzeichnis zeigen lassen
-
-**"Unrecognized key: path" in plugins.entries:**
-- `plugins.entries.*.path` wurde in v2026.3+ entfernt
-- Stattdessen: `plugins.load.paths` als globales Array nutzen
-- Falls vorhanden: manuell entfernen (doctor --fix kann fehlschlagen wenn andere Validierungsfehler vorliegen)
+**WebSocket "device_token_mismatch":**
+- Browser LocalStorage fuer openclaw.forensikzentrum.com loeschen (F12 → Application → Local Storage)
+- Nach Gateway-Restart: Rate-Limiter setzt zurueck
+- Dann neu verbinden mit Gateway-Token
 
 **Context Overflow / "prompt too large for the model":**
 - Symptom: Bot antwortet nicht, Eingaben werden "verschluckt"
