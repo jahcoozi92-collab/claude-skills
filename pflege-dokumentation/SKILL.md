@@ -190,9 +190,81 @@ Arzt informiert um 10:15 Uhr."
 
 ---
 
+## QZ Qualitätszirkel Pflege – Standardisierte Aufstellungen
+
+### Workflow-Pattern: Medifox → Word-Tabelle (via Claude Browser)
+
+Der QZ Pflege erstellt pro Wohnbereich standardisierte Word-Tabellen, die periodisch mit aktuellen Medifox-Daten abgeglichen werden. Dafür werden **Browser-Prompts** eingesetzt, die Claude durch Medifox navigieren lassen:
+
+```
+Phase 0: Soll-Anzahl feststellen (Bewohnerliste → "Klienten (N)")
+Phase 1: Bewohner-Schleife (strikt oben→unten, pro BW Reiter prüfen, Zeile sofort schreiben)
+Phase 2: Vollständigkeitsprüfung (geprüft == Soll? Summen plausibel?)
+Phase 3: Word-Dokument erstellen → Download
+```
+
+**Regeln:** Still arbeiten, keine Rückfragen, keine Zwischenstände. Gewissenhaftigkeit vor Tempo.
+
+### QZ-Themen und Medifox-Reiter
+
+| QZ-Thema | Medifox-Reiter | Tabellen-Spalten (7) |
+|----------|---------------|----------------------|
+| **Schmerzmanagement** | "Medikamente" + "Assessments/Maßnahmenplanung" | Bewohner, Dauermedikation, BTM, Bedarfsmedikation, Indikation, RIA, Kontrolle Datum/Hdz |
+| **Wundversorgung** | "Wunde" + "Verordnungen" | Bewohner/in, Art der Wunde, Datum der Entstehung, Material, Wechselintervall, Anordnender Arzt, Wundvisite Datum/Hdz |
+
+**Unterschied:** Bei Schmerzmanagement bekommt JEDER Bewohner eine Zeile (ohne Medikation → "/"). Bei Wundversorgung nur Bewohner MIT aktiver Wunde.
+
+### Medifox-Reiter für Schmerzmanagement
+
+- **Medikamente** (oder "Ärztl. Verordnungen"): Zeigt alle aktuellen Medikamente
+  - Festmedikation = Dauermedikation (Spalte 2)
+  - Bedarfsmedikation = PRN (Spalte 4)
+  - BTM-pflichtige Medikamente separat (Spalte 3)
+- **Assessments / Maßnahmenplanung**: RIA (Risikoeinschätzung Initiales Assessment)
+  - Schmerzassessment / Initiales Assessment → Art des Schmerzes + "Initial"
+
+### Wohnbereiche BZWP
+
+| Wohnbereich | Typische Größe | Kürzel |
+|-------------|---------------|--------|
+| Aachener Land | ~34 Bewohner | BZ |
+| Siebengebirge | ~7 Bewohner | BZ |
+| Voreifel | ~12 Bewohner | BZ |
+| Wurmtal | ~15 Bewohner | BZ |
+
+### QZ Word-Layout-Standard
+
+- **Seite:** A4 Querformat, Ränder: 2,5 / 2,5 / 2,0 / 2,5 cm
+- **Tabellenformat:** "Tabellenraster" (Table Grid), dünne schwarze Rahmen
+- **Shading-Regeln:**
+  - Leere Zellen ("/"): `#7F7F7F` (Dunkelgrau)
+  - Zellen mit Inhalt: `#FFFFFF` (Weiß) oder auto
+  - Assessment-Spalten (RIA): `#D9D9D9` (Hellgrau), "Initial" = fett + weiße Schrift
+  - Fehler/Warnungen: Rote Schrift
+- **Dosierungsschemata** (z.B. "1-1-1-0"): immer **fett**
+- **Footer-Standard:** 27.04.2022 | J. Frantzen | B.Pauly/QMB | Version I. | Seite X von Y
+- **Prompt-Dateien:** `Q:\Konzepte-Formulare BZWP\Kapitel 5 Qualität\Qualitätszirkel Pflege\`
+
+---
+
 ## Gelernte Lektionen
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
+
+### 2026-04-12 - QZ Schmerzmanagement Browser-Prompt
+
+**QZ-Aufstellungen via Claude Browser:**
+- Browser-Prompts folgen dem Phase 0-3 Pattern (Zählen → Schleife → Prüfung → Download)
+- Schmerztherapie-Prompt erstellt analog zum bestehenden Wundversorgung-Prompt
+- Prompt liegt unter: `Q:\...\QZ Schmerzmanagement\2026\Aufstellung Schmerztherapie BZ\Prompt_Schmerztherapie_BZ.md`
+- Bestehende Vorlagen (Januar 2026) dienten als exakte Layout-Referenz
+
+**Medikamenten-Klassifikation im Prompt:**
+- WHO-Stufenschema (Stufe 1/2/3) als Referenzliste für Identifikation schmerzrelevanter Medikamente
+- Ko-Analgetika (Pregabalin, Gabapentin, Baclofen) werden immer aufgenommen, mit Klammervermerk falls Nicht-Schmerz-Indikation
+- BTM strikt in eigener Spalte (nicht bei Dauermedikation)
+
+---
 
 ### 2026-02-12 - MD Stationär Ordner-Analyse
 
