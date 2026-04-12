@@ -1248,3 +1248,27 @@ Wenn nur Ebene 1 geaendert wird, laufen Cron-Jobs und Fallbacks weiter mit den a
 - Alter Key in .env und auth-profiles.json war unterschiedlich → memory-lancedb 401-Fehler
 - Neuer Key einheitlich an BEIDEN Stellen: `~/.openclaw/.env` UND `~/.openclaw/agents/*/agent/auth-profiles.json`
 - PFLICHT bei Key-Rotation: beide Dateien updaten, nicht nur eine
+
+### 2026-04-12 — Weekly-Review Blind Spots + Memory-Archivierung
+
+**Cron-Review-Prompt muss EXPLIZIT alle Dateitypen auflisten:**
+- GPT-4.1-mini (~20k Input-Tokens) liest NUR was der Prompt explizit nennt
+- Alter Prompt: "Analysiere .learnings/ (ERRORS.md, LEARNINGS.md, FEATURE_REQUESTS.md)" — uebersah 3 separate `LRN-*.md` Dateien
+- Neuer Prompt: Enthält jetzt `ls .learnings/LRN-*.md` Anweisung + `find memory/ -maxdepth 1 -name "*.md" -mtime +30`
+- Regel: Bei kleinen Modellen KEINE impliziten Erwartungen — alles explizit formulieren
+
+**Cron-Jobs nach Agent-Umbau validieren (CHECKLISTE):**
+- Bei jeder Agent-Topologie-Aenderung: `openclaw cron list` → alle Agent-IDs pruefen
+- `weekly-review` hatte noch `organizer` referenziert (Agent existierte nicht mehr, fiel auf Default zurueck)
+- Fix: `openclaw cron edit <id> --agent <neuer-agent>`
+- Validierung: In der `cron list` Ausgabe muss die Agent-Spalte einen existierenden Agenten zeigen
+
+**Memory-Archivierung ist NICHT automatisch:**
+- Cron-Review behauptete faelschlich "keine Dateien >30 Tage" — 4 Dateien lagen noch im Root
+- Archivierungs-Befehl: `find ~/clawd/memory/ -maxdepth 1 -name "2026-*.md" -mtime +30 -exec mv {} ~/clawd/memory/archive/ \;`
+- Wird jetzt vom Weekly-Review-Cron mitgeprueft (aber nicht automatisch verschoben — nur gemeldet)
+
+**Weekly-Review-Ergebnis MUSS persistiert werden:**
+- Alter Cron schrieb NUR eine Telegram-Nachricht, keine Datei
+- Neuer Prompt fordert: `.learnings/weekly_review_YYYYMMDD.txt` schreiben
+- Ermoeglicht Vergleich ueber Wochen und Nachvollziehbarkeit
