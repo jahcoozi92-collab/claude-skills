@@ -414,10 +414,37 @@ cd ~/clawd && python3 -c "import json,re;from pathlib import Path; ..."
      if 'openclaw' in str(r)]"
    ```
 
-**WebSocket "device_token_mismatch":**
-- Browser LocalStorage fuer openclaw.forensikzentrum.com loeschen (F12 → Application → Local Storage)
-- Nach Gateway-Restart: Rate-Limiter setzt zurueck
-- Dann neu verbinden mit Gateway-Token
+**WebSocket "device_token_mismatch" — Vollstaendiger Workflow:**
+
+⚠️ **REIHENFOLGE KRITISCH** — Browser-Tab IMMER ZUERST schliessen, DANN serverseitige Aenderungen!
+Sonst: Browser retried aggressiv → Rate-Limit (10 Versuche/60s, 5min Lockout) → Alles blockiert.
+
+Zwei Auth-Schichten beachten:
+1. **Gateway-Token** (`CLAWDBOT_GATEWAY_TOKEN` aus `.env`) — authentifiziert Client gegen Gateway
+2. **Device-Token** — pro-Geraet, wird beim Pairing ausgehandelt
+
+**Empfohlener Fix (sauberster Weg):**
+```bash
+# 1. User: Browser-Tab SCHLIESSEN (stoppt Retry-Loop!)
+
+# 2. Altes Device entfernen (ID aus paired.json oder `openclaw devices list`)
+openclaw devices remove <deviceId>
+
+# 3. Falls Rate-Limited: Gateway neustarten (cleart In-Memory-Counter)
+systemctl --user restart openclaw-gateway.service
+
+# 4. User: Browser oeffnen, LocalStorage loeschen (F12 → Application → Local Storage → Clear)
+
+# 5. User: Seite neu laden → Gateway-Token eingeben (aus ~/.openclaw/.env: CLAWDBOT_GATEWAY_TOKEN)
+
+# 6. Browser sendet Pairing-Request → genehmigen:
+openclaw devices approve <requestId>
+# oder: openclaw devices approve --latest
+```
+
+**NICHT empfohlen:** `openclaw devices rotate` bei Browser-Clients — der Browser erfaehrt den neuen Token nicht automatisch, schickt weiter den alten und triggert Rate-Limits.
+
+**Duplikat-Erkennung:** Mehrere Devices mit gleicher IP = doppeltes Pairing. Aelteres entfernen (`createdAtMs` in `paired.json` vergleichen).
 
 **Context Overflow / "prompt too large for the model":**
 - Symptom: Bot antwortet nicht, Eingaben werden "verschluckt"
