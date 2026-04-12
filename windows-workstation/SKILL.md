@@ -77,8 +77,9 @@ Die `.bashrc` lädt SSH-Aliases beim Start:
 | `openpyxl` | 3.1.5 | .xlsx Bearbeitung |
 | `pdfplumber` | latest | PDF-Textextraktion (auch für UNC-Pfade) |
 | `python-pptx` | 1.0.2 | .pptx Bearbeitung |
-| `openai-whisper` | 20250625 | Transkription |
-| `torch` | 2.8.0+cpu | PyTorch (CPU-only) |
+| `faster-whisper` | latest | Transkription (primaer, ersetzt openai-whisper seit 2026-04) |
+| `openai-whisper` | 20250625 | Transkription (Legacy, nicht mehr aktiv genutzt) |
+| `torch` | 2.8.0+cpu | PyTorch (CPU-only, GPU-Auto-Detection in whisper-direct-simple.py) |
 | `mcp` | 1.16.0 | MCP SDK |
 | `mcp-server-office` | 0.2.0 | Office MCP Server |
 | `lxml` | 6.0.2 | XML-Verarbeitung |
@@ -96,6 +97,7 @@ Die `.bashrc` lädt SSH-Aliases beim Start:
 | `~/.claude/skills/` | Skills-Repository |
 | `Q:\Konzepte-Formulare BZWP\` | QM-Dokumente auf Server |
 | `\\192.168.2.215\arche\QM-Handbuch\` | QM-Dokumente auf NAS |
+| `D:\whisper_gui_portable\` | Whisper Transkriptions-Tool (faster-whisper + tkinter GUI) |
 
 ---
 
@@ -162,15 +164,16 @@ ping 192.168.2.215
 2. Raw-Strings (`r"..."`) für alle Windows-/UNC-Pfade in Python
 3. Lokale Kopie vor NAS-Bearbeitung (tempfile → bearbeiten → zurückkopieren)
 4. **Bulk-Dokumentenanalyse via Python-Skript** — pdfplumber + python-docx + openpyxl, Output in UTF-8-Datei schreiben (nicht stdout)
-5. **Encoding-Workaround** — `sys.stdout.reconfigure(encoding='utf-8', errors='replace')` + Ergebnisse in Datei mit `open(..., encoding='utf-8')` schreiben, da Windows-Konsole (cp1252) bei Unicode-Zeichen versagt
+5. **Encoding-PFLICHT fuer alle Python-Skripte mit Unicode-Output** — Am Skriptanfang IMMER: `sys.stdout.reconfigure(encoding='utf-8', errors='replace')` + Dateien mit `open(..., encoding='utf-8')` schreiben. Windows-Konsole (cp1252) crasht sonst bei Unicode (z.B. koreanische Zeichen `\uac00` aus Whisper, oder Sonderzeichen `U+2610` aus PDFs)
 
 ### GUT ZU WISSEN
 1. Docker Desktop ist installiert (v28.4), aber Docker-Workloads laufen primär auf NAS
-2. Whisper + PyTorch (CPU-only) sind installiert für Transkription
+2. faster-whisper + PyTorch (CPU-only) sind installiert fuer Transkription. GPU-Auto-Detection eingebaut — bei NVIDIA GPU wird CUDA automatisch genutzt
 3. `mcp-server-office` ist installiert — Office-Dokumente können auch über MCP bearbeitet werden
 4. Rechner-Name ist WS44, User ist D.Göbel (Domänen-User)
 5. PowerShell-Einzeiler in Git Bash: `$`-Variablen (`$_`, `$r`, etc.) werden von Bash expandiert, bevor PowerShell sie sieht — komplexe PS-Befehle mit `try/catch` oder `$_` daher via `-File` oder als Script ausführen, nicht inline
 6. `pip install` funktioniert OHNE Admin-Rechte, `choco install` BRAUCHT Admin/Elevation — bei fehlenden Tools erst pip-Alternative prüfen
+7. **HuggingFace auf Windows ohne Developer Mode:** `os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"` setzen, sonst Symlink-Warnung bei jedem Modell-Download
 
 ---
 
@@ -221,3 +224,27 @@ scp ~/pflegeassist/index.html sshd@192.168.2.215:/shares/Public/pflegeassist/ind
 **pip vs choco:**
 - `choco install poppler` scheiterte (Lock-File + Admin-Rechte)
 - `pip install pdfplumber python-docx openpyxl` funktionierte sofort (kein Admin nötig)
+
+### 2026-04-12 - Whisper Tool Modernisierung
+
+**faster-whisper Migration:**
+- openai-whisper durch faster-whisper (CTranslate2-Backend) ersetzt: 4-8x schneller auf CPU
+- Standard-Modell von `medium` auf `large-v3-turbo` geaendert (deepdml/faster-whisper-large-v3-turbo-ct2)
+- VAD-Filter + `condition_on_previous_text=False` eliminiert Duplikate und Halluzinationen
+- `initial_prompt` mit Pflege-Fachbegriffen fuer bessere Domainerkennung
+- Neues Ausgabeformat: .srt Untertitel zusaetzlich zu .txt und _segments.txt
+
+**cp1252 Encoding-Crash:**
+- `verbose=True` in whisper laesst das Modell direkt nach stdout schreiben
+- Koreanische Zeichen (`\uac00`) in Whisper-Metadaten crashen cp1252
+- Fix: `sys.stdout.reconfigure(encoding='utf-8', errors='replace')` + `verbose=False` mit eigener Ausgabe
+
+**GUI<->Subprocess Kommunikation via ##MARKER:**
+- Pattern: Python-Subprocess gibt `##PROGRESS:47.3:182` aus (Prozent:ETA-Sekunden)
+- GUI parst diese Marker, zeigt Progressbar + Restzeit, filtert sie aus dem Log
+- Audio-Dauer via `ffprobe` ermitteln fuer prozentuale Fortschrittsberechnung
+- Vorteil: Keine shared-memory oder IPC noetig, funktioniert auch im CLI-Modus
+
+**HuggingFace Symlink-Warnung:**
+- Windows ohne Developer Mode unterstuetzt keine Symlinks im HF-Cache
+- `os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"` unterdrueckt die Warnung
