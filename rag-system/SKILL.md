@@ -1153,6 +1153,58 @@ const { data } = await supabase.rpc('fast_search_text', {
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
 
+### 2026-04-12 - RUPA/QPR/MD-Prüfung Content + Kataloge-Fix (+188 Chunks, +22 Click-Paths, +15 Tests)
+
+**🔴 MD statt MDK (seit 01.01.2022):**
+- Heißt jetzt "Medizinischer Dienst (MD)", NICHT mehr "MDK"
+- Durchgaengig in System-Prompts, Klickpfaden, Dokumenten, Chat-Antworten
+- Im System-Prompt v5 als PRODUKT-ERKENNUNG Regel verankert
+
+**🔴 Kataloge-Struktur (Administration → Kataloge):**
+- Es gibt KEINEN Katalog-Bereich "Pflege"!
+- Nur zwei Unterbereiche: "Verwaltung" (26 Eintraege) und "Personaleinsatzplanung" (6 Eintraege)
+- Assessment-/Dokumentationseinstellungen liegen unter `Administration > Dokumentation > Grundeinstellungen`
+- RUPA-Konfiguration (Care Cockpit) ebenfalls unter Grundeinstellungen
+
+**🔴 Menüpfad-Formatierung:**
+- Pfade als einfachen Inline-Code: `Administration > Kataloge > Verwaltung`
+- KEINE nummerierten Badges/Steps im Pfad selbst
+- System-Prompt Sektion "MENÜPFAD-FORMATIERUNG (KRITISCH)" hinzugefuegt
+
+**🟡 RUPA-Domänenwissen (3 Kerndokumente, 30 Chunks):**
+- RUPA = Risiko- und Potenzialanalyse = Qualitäts-Dashboard
+- 4 Pruefbereiche: Biografie, Anamnese, Assessments, Planung
+- Ampelsystem: gruen/orange/rot mit konfigurierbaren Schwellwerten
+- 7 Konfigurationsstellen dokumentiert (inkl. Evaluierungsfristen, Berechtigungen)
+- MD-Pruefung Vorbereitungsguide mit Checkliste
+- Qualitaetspruefungsassistent (QPR-internes-Audit)
+
+**🟡 Video-Seiten-Rekonstruktion (17 Seiten, ~55 Chunks):**
+- MD-Pruefung, Rechnungsautomatik, CarePad-Grundlagen, Stammdatenuebernahme
+- Individuelle Dienstplaene, Springer, Connect (Mitarbeiter/Aerzte/Angehoerige)
+- Urlaubsantraege, Rahmenplaene, Abrechnungsmitteilungen, Barbetraege
+- Mein Tag (CarePad), Wundvermessung, KI-Dienstplanung, Mitarbeitervorschlag
+
+**🟡 Batch-Index von 46 fehlenden lokalen mskb_pages (72 Chunks)**
+
+**🟡 System-Prompt Erweiterungen:**
+- Intent-Typ E: QPR/RUPA/MD-Prüfungs-Fragen
+- Query-Expansion fuer Abkuerzungen (RUPA→Risiko, QPR→Qualitaetspruefung etc.)
+- Panik-Muster "MD steht morgen an" → strukturierte Checkliste
+- Domain-Synonyme: RUPA, QPR, MD, DAS, BI, FEM, MIS, CarePad, Connect
+
+**🟡 Administrative Klickpfade (+22):**
+- RUPA/QM (7), Erfassung/Ergebnisindikatoren (5)
+- Abrechnung (4): Rechnungsautomatik, DTA, Kostentraeger, Offene Posten
+- Controlling (2): Finanzkennzahlen, Qualitaetsindikatoren
+- Administration (3): Kataloge, Dokumentenvorlagen, Anmeldeprotokoll
+- PEP (1): KI-Dienstplanung
+
+**🟡 Regressionstests: 30 → 45 Test-Cases, 100% Pass-Rate:**
+- 10x QM/RUPA/QPR (alle bestanden)
+- 3x Administration, 1x Abrechnung, 1x PEP (alle bestanden)
+- Gesamt: 1242 → ~1430 Chunks, 277+ Pages, 87 Click-Paths
+
 ### 2026-04-08/09 - Comprehensive RAG Improvement (31 Chunks, 15 Click-Paths, 30 Tests)
 
 **🔴 Vision-Analyzer: Anthropic → OpenRouter:**

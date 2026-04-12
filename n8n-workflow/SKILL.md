@@ -605,6 +605,41 @@ Wie ein Wecker. Jeden Tag um 8 Uhr morgens startet der Workflow.
        6. Erst DANN testen
     ```
 
+28. **NIEMALS** "MDK" schreiben — seit 01.01.2022 heißt es **MD** (Medizinischer Dienst)!
+    ```
+    ❌ FALSCH: "MDK-Prüfung", "MDK-Vorbereitung", "MDK steht an"
+    ✅ RICHTIG: "MD-Prüfung", "MD-Vorbereitung", "MD steht an"
+    ```
+    → Gilt fuer System-Prompts, Klickpfade, Dokumentation, Chat-Antworten
+    → "MDK" wirkt veraltet und unprofessionell in Pflegedokumentation
+
+29. **NIEMALS** `Administration > Kataloge > Pflege` als Menüpfad verwenden!
+    ```
+    ❌ FALSCH: Administration → Kataloge → Pflege → Assessments
+       → Es gibt KEINEN Katalog-Bereich "Pflege"!
+
+    ✅ RICHTIG: Kataloge hat NUR zwei Unterbereiche:
+       - Administration → Kataloge → Verwaltung (26 Einträge: Leistungskatalog,
+         Zimmereigenschaften, Barbetragsarten, Textbausteine etc.)
+       - Administration → Kataloge → Personaleinsatzplanung (6 Einträge:
+         Qualifikationen, Fortbildungsnachweise, Personalgruppen etc.)
+
+    Pflege-relevante Einstellungen (Assessments, Pflichtfelder, Care Cockpit):
+       → Administration → Dokumentation → Grundeinstellungen
+    ```
+    → Kataloge enthalten Stammdaten-Kataloge, KEINE Pflege-/Dokumentationseinstellungen
+
+30. **NIEMALS** Menüpfade mit nummerierten Badges/Steps formatieren!
+    ```
+    ❌ FALSCH: `1 Administration → 2 Kataloge → 3 Verwaltung`
+    ❌ FALSCH: Pfad mit <sup>, <span> oder HTML-Tags
+
+    ✅ RICHTIG: `Administration > Kataloge > Verwaltung`
+    ✅ RICHTIG: `Personaleinsatzpl. > Dienstplan`
+    ```
+    → Nummern gehoeren NUR in Schritt-für-Schritt-Anleitungen (1. Navigieren Sie...)
+    → Menüpfade IMMER als einfachen Inline-Code mit `>` als Trenner
+
 ### 🟡 BEVORZUGT
 
 1. **Error Workflow** einrichten für Fehlerbenachrichtigung
@@ -635,6 +670,8 @@ Wie ein Wecker. Jeden Tag um 8 Uhr morgens startet der Workflow.
     - Node: `authentication: "genericCredentialType"`, `genericAuthType: "httpQueryAuth"`
     - Key taucht nicht in Logs/Execution-Daten auf
     - User kann Key spaeter ueber n8n UI aendern
+16. **System-Prompt Deploy-Pattern**: Prompt sitzt in `Supabase KI-Agent` Node unter `parameters.options.systemMessage`. Patch via: GET Workflow → Python JSON-Manipulation → PUT (interne API) → deactivate/activate
+17. **RAG Batch-Index-Pattern**: .md lesen → chunk (1500/350) → OpenAI embed (text-embedding-3-large 3072d) → Supabase rag_chunks INSERT mit service_role key. Credentials aus n8n SQLite entschluesseln (CryptoJS AES, EVP_BytesToKey).
 
 ### 🟢 GUT ZU WISSEN
 
