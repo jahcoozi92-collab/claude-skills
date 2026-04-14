@@ -248,3 +248,20 @@ scp ~/pflegeassist/index.html sshd@192.168.2.215:/shares/Public/pflegeassist/ind
 **HuggingFace Symlink-Warnung:**
 - Windows ohne Developer Mode unterstuetzt keine Symlinks im HF-Cache
 - `os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"` unterdrueckt die Warnung
+
+### 2026-04-14 - Codex Plugin Setup + Einschränkungen
+
+**Installierte Plugins (Claude Code auf WS44):**
+- `codex@openai-codex` (v1.0.3) — Codex CLI Integration
+- `superpowers` — automatisch mit-installiert beim Codex-Update
+- Gesamt: 3 Plugins, 10 Skills, 7 Agents, 4 Hooks
+
+**Codex CLI:**
+- Version: codex-cli 0.60.1 (advanced runtime)
+- Login: `! codex login` im Claude Code Prompt (öffnet Browser-Flow bei OpenAI)
+- Direkte Nutzung: `! codex` startet interaktive Codex-Shell
+
+**Codex Plugin Einschränkungen (KRITISCH):**
+- `/codex:review` funktioniert NUR in Git-Repositories. QM-Dokumente auf Netzlaufwerken (Q:\) sind kein Git-Repo → schlägt dort IMMER fehl mit "This command must run inside a Git repository"
+- Plugin v1.0.3 sendet `read-only` statt `readOnly` als Modus → bekannter Kompatibilitätsbug mit CLI 0.60.1. Workaround: Codex direkt im Terminal nutzen (`! codex`)
+- Sub-Agenten können auf WS44 keine Bash/Write-Berechtigungen erhalten → Agent-Delegation für Dateierstellung scheitert, direkte Ausführung verwenden
