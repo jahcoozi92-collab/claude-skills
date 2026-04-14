@@ -290,7 +290,117 @@ Dateien die übersprungen werden:
 
 ---
 
+## Konzeptstandard-Erstellung aus DNQP-Expertenstandards
+
+### Workflow (PFLICHT-Reihenfolge)
+
+1. **Interview führen** — IMMER zuerst einrichtungsspezifische Daten erheben, bevor Dokumente erstellt werden. Ohne Interview sind die Konzeptstandards generisch und bei MDK-Prüfung wertlos.
+   - Pflegeorganisation (Bezugspflege, Fachkraftquote, Beauftragte)
+   - Software & Assessments (Medifox stationär, konkrete Instrumente)
+   - Kooperationspartner (Ärzte, Therapeuten, Sanitätshäuser namentlich)
+   - Hilfsmittel (was ist vor Ort, was wird geordert)
+   - QM-Strukturen (Pflegevisiten, Fallbesprechungen, Fortbildungen)
+   - Bewohnerstruktur (Demenzanteil, Psychiatrie, Besonderheiten)
+
+2. **Plausibilitätscheck** — Vor Erstellung prüfen: Stimmt alles mit aktueller Gesetzeslage überein? Gibt es Lücken (fehlende Beauftragte, veraltete Assessments)?
+
+3. **PDF-Auszüge einlesen** — DNQP-Expertenstandard per PyPDF2 extrahieren (Präambel + Standardtabelle)
+
+4. **Konzeptstandard schreiben** — Einrichtungsspezifisch, im Stil der Vorlage
+
+### 8-teilige Gliederung (verbindlich für alle Konzeptstandards)
+
+```
+1. Definition:           (bold)     — Was ist das Thema, Relevanz
+2. Grundsätze:           (bold)     — Haltung und Leitprinzipien der Einrichtung
+3. Ziele:                (bold)     — Konkrete Pflegeziele
+4. Vorbereitung          (bold, 14pt) — Organisation, Risikoeinschätzung, Informationssammlung
+5. Durchführung          (bold, 14pt) — Beratung + themenspezifische Unterabschnitte
+6. Nachbereitung         (bold, 14pt) — Evaluation, Dokumentation
+7. Mitgeltende Dokumente:(bold)     — Verweise auf Medifox, QM-Handbuch
+8. Verantwortlichkeit:   (bold)     — "Pflegefachkräfte"
+```
+
+### Schreibstil
+
+- Erste Person Plural: "Wir stellen sicher...", "Unsere Bezugspflegekraft..."
+- Praxisnah, konkret, nicht abstrakt-wissenschaftlich
+- "Bewohner/-Innen" (stationäre Langzeitpflege)
+- Einrichtungsspezifisch: Medifox stationär, konkrete Beauftragte, benannte Kooperationspartner
+
+### Formatierung mit python-docx
+
+```python
+import docx
+from docx.shared import Pt
+
+doc = docx.Document()
+
+# Hauptabschnitt (Vorbereitung, Durchführung, Nachbereitung):
+p = doc.add_paragraph()
+run = p.add_run("Überschrift")
+run.bold = True
+run.font.size = Pt(14)
+
+# Unterabschnitt (Definition:, Grundsätze:, etc.):
+p = doc.add_paragraph()
+run = p.add_run("Unterüberschrift:")
+run.bold = True
+
+# Fließtext:
+doc.add_paragraph("Text...")
+
+# Leerzeile zwischen Abschnitten:
+doc.add_paragraph()
+```
+
+### Unicode-Umlaute (Windows-Heredoc-sicher)
+
+In Python-Skripten auf Windows Unicode-Escapes statt rohe Umlaute verwenden:
+```python
+"\u00e4"  # ä     "\u00c4"  # Ä
+"\u00f6"  # ö     "\u00d6"  # Ö
+"\u00fc"  # ü     "\u00dc"  # Ü
+"\u00df"  # ß     "\u2013"  # –
+"\u2014"  # —     "\u201e"  # „
+"\u201c"  # "
+```
+
+### Agent-Delegation (WARNUNG)
+
+Sub-Agenten können auf WS44 keine Bash/Write-Berechtigungen erhalten. Für docx-Erstellung IMMER direkte Ausführung nutzen:
+1. `Write` → Python-Skript als `.py` Datei erstellen
+2. `Bash` → `python skript.py` ausführen
+3. Skript aufräumen
+
+---
+
 ## Gelernte Lektionen
+
+### 2026-04-14 - Konzeptstandard-Erstellung (6 Expertenstandards)
+
+**Interview-First-Prinzip:**
+- Diana hat die sofortige Dokumenterstellung gestoppt und ein strukturiertes Interview verlangt
+- Ohne einrichtungsspezifische Details wären die Konzeptstandards bei MDK-Prüfung wertlos
+- Zwei Interview-Runden: Hauptfragen (18 Fragen in 5 Blöcken) + Nachfragen (6 offene Punkte)
+
+**Erstellte Konzeptstandards (6 Stück):**
+- Dekubitusprophylaxe (2017), Sturzprophylaxe (2022), Schmerzmanagement (2020)
+- Kontinenzförderung (2024), Beziehungsgestaltung Demenz (2019), Ernährungsmanagement (2017)
+- Entlassungsmanagement wurde als nicht relevant für stationäre Langzeitpflege eingestuft
+
+**Technisch:**
+- Alle 5 Sub-Agenten scheiterten an Bash/Write-Berechtigungen auf WS44
+- Lösung: Ein großes Python-Skript mit allen 5 Funktionen, per Write + Bash direkt ausgeführt
+- Ernährungsmanagement nachträglich als separates Skript (PDF wurde nachgeliefert)
+
+**BZWP-spezifische Details (in Memory gespeichert):**
+- 2 Gebäude (WP 53 + BZ 76 Betten), 7 Wohnbereiche
+- Medifox stationär v10.26.15, Bezugspflege, Norton-Skala, NRS/VAS/BESD
+- Konkrete Kooperationspartner: WundEx, bb-medica, Dr. Slama, Dr. Drangmeister, Stadtapotheke Eschweiler
+- BZ-Besonderheit: Psychiatrie/Suchterkrankungen als Risikofaktor in mehreren Standards berücksichtigt
+
+---
 
 ### 2026-02-08 - Initiale Erstellung
 

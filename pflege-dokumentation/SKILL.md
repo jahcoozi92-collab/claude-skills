@@ -2,7 +2,7 @@
 
 | name | description |
 |------|-------------|
-| pflege-dokumentation | Hilft bei der Arbeit mit Medifox DAN, Medifox Connect, Resmed stationär und anderen Pflegesoftware-Systemen. Optimiert für Qualitätsmanagement und Pflegedokumentation. |
+| pflege-dokumentation | Hilft bei der Arbeit mit Medifox stationär (ehem. Medifox DAN), Medifox Connect, Resmed stationär und anderen Pflegesoftware-Systemen. Optimiert für Qualitätsmanagement und Pflegedokumentation. |
 
 ## Was ist dieser Skill?
 
@@ -225,12 +225,30 @@ Phase 3: Word-Dokument erstellen → Download
 
 ### Wohnbereiche BZWP
 
-| Wohnbereich | Typische Größe | Kürzel |
-|-------------|---------------|--------|
-| Aachener Land | ~34 Bewohner | BZ |
-| Siebengebirge | ~7 Bewohner | BZ |
-| Voreifel | ~12 Bewohner | BZ |
-| Wurmtal | ~15 Bewohner | BZ |
+**Betreuungszentrum (BZ) — 76 Betten**
+
+| Wohnbereich | Etage | Kürzel |
+|-------------|-------|--------|
+| Wurmtal | UG | BZ |
+| Voreifel | EG | BZ |
+| Aachener Land | OG | BZ |
+| Siebengebirge | DG | BZ |
+
+**Wohnpark (WP) — 53 Betten**
+
+| Wohnbereich | Etage | Kürzel |
+|-------------|-------|--------|
+| Paulinenwäldchen | UG | WP |
+| Indetal | EG | WP |
+| Burg Wilhelmstein | OG | WP |
+
+**Gesamt: 129 Bewohnerbetten, 7 Wohnbereiche**
+
+**Organisationsstruktur:**
+- Je Gebäude 1 PDL + 1 stv. PDL
+- 1 zentrales Pflegemanagement
+- WBL: Indetal/Paulinenwäldchen (1), Burg Wilhelmstein (1), Aachener Land/Siebengebirge (1), Voreifel (1), Wurmtal (1)
+- Bezugspflege mit festen Bezugspflegekräften pro Bewohner
 
 ### QZ Word-Layout-Standard
 
@@ -250,6 +268,41 @@ Phase 3: Word-Dokument erstellen → Download
 ## Gelernte Lektionen
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
+
+### 2026-04-14 - Konzeptstandards und Einrichtungsstruktur
+
+**Medifox stationär (nicht mehr "DAN"):**
+- Die Einrichtung nutzt Medifox stationär v10.26.15 (+ Testsystem/Schulungsmandant)
+- In QM-Dokumenten und Konzeptstandards immer "Medifox stationär" schreiben, nicht "DAN"
+- Lernplattform: smartAware (Fachfortbildungen, Pflichtunterweisungen, Expertenstandards)
+
+**Assessments in Medifox stationär:**
+- Dekubitus: Norton-Skala
+- Sturz: Sturzrisiko-Screening
+- Schmerz: NRS, VAS, BESD (bei Demenz)
+- Kontinenz: Kontinenzprofil
+- Zusätzlich importiert: Aspiration, Hautintegrität, Intertrigo, Obstipation, Pneumonie, Thrombose
+
+**Beauftragte:**
+- Wundbeauftragte (ICW): mind. 1 pro Gebäude
+- Schmerzbeauftragte/Pain Nurses: mind. 1 pro Gebäude
+- Kontinenzbeauftragte: jeweils stv. PDL pro Gebäude
+- Hygienebeauftragte: 3 insgesamt
+- Praxisanleiter: mind. 4 insgesamt
+- KEINE Sturzbeauftragten, KEINE Demenzbeauftragten
+
+**Kooperationspartner (namentlich):**
+- Zahnärztin: Dr. Slama
+- Neurologin: Dr. Drangmeister (jeden Montag Visite)
+- Wundversorgung: WundEx, bb-medica
+- Physiotherapie: Maurice Nießen + weitere
+- Sanitätshäuser: Koczyba, bb-medica
+- Podologie: Monika Dohmen
+- Apotheke: Stadtapotheke Eschweiler
+- Inkontinenz: bb-medica (Einlagen/Vorlagen + Kontinenzberater)
+- Palliativ: Hospizvereine, Homecare, PAN-Netzwerk, GVP-Beratung
+
+---
 
 ### 2026-04-12 - QZ Schmerzmanagement Browser-Prompt
 
