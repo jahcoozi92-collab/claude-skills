@@ -98,6 +98,32 @@ Immer als User mounten (fstab: `user`-Option, oder `mount` ohne sudo).
 
 ---
 
+## System-Cleanup Checkliste (5 Dimensionen)
+
+Bei jeder Bereinigung ALLE 5 Dimensionen abarbeiten — nicht nur Speicher:
+
+| # | Dimension | Was prüfen | Level-1-Fehler |
+|---|-----------|-----------|----------------|
+| 1 | **Speicher** | Caches (uv/pip/npm), site-packages, node_modules (rekursiv!), .cache/*, Shell-Snapshots | Nur offensichtliche Caches, nicht rekursiv |
+| 2 | **Performance** | `systemd-analyze blame`, Boot-Bottlenecks, RAM-Fresser (`ps --sort=-%mem`), Error-Loops in journalctl | Komplett ignoriert |
+| 3 | **Security** | SSH-Config, offene Ports (`ss -tlnp`), Credentials in Downloads, Key-Permissions, Firewall | Komplett ignoriert |
+| 4 | **Services** | `systemctl --failed`, Restart-Loops, doppelte Prozesse, verwaiste Timer | Nur offensichtliche Fehler |
+| 5 | **Hygiene** | Broken Symlinks, leere Dirs, Autostart, redundante Scripts, Home-Root Cruft | Oberflächlich |
+
+### Backup-Locations (VOR Neuerstellung prüfen!)
+- `~/03_AUTOMATISIERUNG/scripts/` — Backup-Pfad für System-Scripts (forensikzentrum_master.sh etc.)
+- `~/scripts/_archive/` — Archiv für redundante Scripts
+
+### pgrep-Patterns
+- `pgrep -x` matcht NICHT bei vollqualifizierten Pfaden (`/usr/bin/cloudflared`)
+- Korrekt: `pgrep -f "cloudflared tunnel"` für Prozesse mit Argumenten
+
+### sudo-Einschränkung
+- Claude Code hat kein sudo ohne Terminal
+- Security-Fixes (sshd_config, fail2ban, chattr, dotslash) als Copy-Paste-Befehle ausgeben
+
+---
+
 ## Gelernte Lektionen
 
 ### 2026-02-08 — Initiale Einrichtung
@@ -242,3 +268,47 @@ ssh moltbotadmin@192.168.22.206 'cd ~/.claude/skills && git pull --rebase origin
 - `~/moltbot-remote` gemountet via systemd user service (`moltbot-sshfs.service`)
 - Zweck: Claude Code mit `/voice` auf Yoga7 + moltbot-Dateien bearbeiten
 - `/voice` funktioniert nicht ueber SSH (kein Audio-Forwarding, Server hat kein Mikrofon)
+
+### 2026-04-16 — Claude Code Permissions Best Practices
+
+**Auto-Allowed Commands (kein Allowlist-Entry nötig):**
+Folgende Befehle werden von Claude Code AUTOMATISCH erlaubt — niemals in `settings.json` eintragen:
+- Always (mit allen Args): `ls`, `cat`, `head`, `tail`, `wc`, `find`, `echo`, `printf`, `true`, `false`, `sleep`, `which`, `type`, `test`, `seq`, `basename`, `dirname`, `realpath`, `cut`, `paste`, `tr`, `id`, `uname`, `free`, `df`, `du`, `diff`, `stat`, `nl`, `cd`, `cal`, `uptime`
+- Mit 0 Args: `pwd`, `whoami`, `alias`
+- Mit safe flags: `grep`, `sort`, `sed` (read-only), `date`, `hostname`, `lsof`, `pgrep`, `ss`, `ps`, `netstat`, `jq`, `rg`, `tree`, `uniq`, `file`, `xargs`, `sha256sum`
+- Alle git read-only subcommands (status, log, diff, show, blame, branch etc.)
+- Alle gh read-only subcommands (pr view/list/diff/checks, issue view/list, run view/list, api GET)
+- Docker read-only: `docker ps`, `docker images`, `docker logs`, `docker inspect`
+
+**NIEMALS allowlisten (Arbitrary Code Execution):**
+- Interpreter: `node:*`, `python3:*`, `bun:*`, `deno:*`, `ruby:*`, `perl:*`, `php:*`, `lua:*`
+- Shells: `bash:*`, `sh:*`, `zsh:*`, `eval`, `exec`, `ssh:*` (nur spezifische Hosts!)
+- Package Runner: `npx:*`, `bunx:*`, `uvx:*`, `uv run:*`
+- Task Wildcards: `npm run *`, `bun run *`, `make *`, `just *`, `cargo run *`
+- Stattdessen: exakte Forms (`node -e "..."`) oder enge Prefixes (`npx tsc:*`)
+
+**Pattern-Syntax-Unterschiede:**
+| Form | Matcht |
+|------|--------|
+| `Bash(foo:*)` | Prefix `foo` mit Colon-Separator (z.B. `foo -x`, `foo bar`) |
+| `Bash(foo *)` | Prefix `foo ` mit Space — wichtig: Space vor `*` |
+| `Bash(foo)` | Exakt `foo` (keine Args) |
+| `Bash(foo bar:*)` | Prefix `foo bar` mit Args |
+
+**Workflow `/less-permission-prompts`:**
+1. Transcripts: `~/.claude/projects/<sanitized-cwd>/*.jsonl` — 50 neueste per mtime
+2. Extract: `message.content[]` mit `type: "tool_use"`, feld `input.command`
+3. Filter 1: Drop auto-allowed (siehe Liste oben)
+4. Filter 2: Drop non-read-only (`rm`, `pkill`, `kill`, `mkdir`, `mv`, `npm install`, `npm update`)
+5. Filter 3: Drop arbitrary code execution (node, python3, npx catch-all)
+6. Dedupe: Gegen existierende `settings.json` UND `settings.local.json`
+7. Threshold: ≥3 Aufrufe
+
+**Yoga7-Besonderheit (HOME=PROJECT):**
+- cwd=`/home/yoga7` ⇒ project-`settings.json` und user-global `~/.claude/settings.json` sind DASSELBE File
+- `/less-permission-prompts` landet daher zwangsläufig im globalen File
+- Auf normalen Projekten: Ziel wäre `<projektordner>/.claude/settings.json`
+
+**settings.local.json ist Haupt-Allowlist:**
+- Aktuell ~287 Einträge — deckt curl:*, systemctl:*, journalctl:*, docker ps:*, npm view * etc. bereits ab
+- VOR Ergänzungen zur `settings.json` IMMER `settings.local.json` prüfen, sonst Duplikate
