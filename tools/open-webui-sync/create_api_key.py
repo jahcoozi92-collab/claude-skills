@@ -18,15 +18,27 @@ EMAIL = "diana.goebel@proton.me"
 conn = sqlite3.connect(DB_PATH)
 cur = conn.cursor()
 
-# 1. Schema pruefen
-cur.execute("PRAGMA table_info(user)")
-cols = [r[1] for r in cur.fetchall()]
-print("User-Tabelle Spalten:", cols, file=sys.stderr)
+# 1. Alle Tabellen auflisten und nach API-Key-verwandten suchen
+cur.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+all_tables = [r[0] for r in cur.fetchall()]
+print(f"Alle Tabellen ({len(all_tables)}): {all_tables}", file=sys.stderr)
 
-if "api_key" not in cols:
-    print("FEHLER: Spalte 'api_key' existiert nicht in 'user'-Tabelle", file=sys.stderr)
-    print("Verfuegbare Spalten:", cols, file=sys.stderr)
-    sys.exit(1)
+# Kandidaten-Tabellen fuer API-Keys
+key_tables = [t for t in all_tables if "api" in t.lower() or "key" in t.lower() or "token" in t.lower() or "auth" in t.lower()]
+print(f"API/Key/Token/Auth Kandidaten: {key_tables}", file=sys.stderr)
+
+for t in key_tables:
+    cur.execute(f"PRAGMA table_info({t})")
+    cols = [r[1] for r in cur.fetchall()]
+    print(f"  {t}: {cols}", file=sys.stderr)
+
+# Auch user-Tabelle inspizieren
+cur.execute("PRAGMA table_info(user)")
+user_cols = [r[1] for r in cur.fetchall()]
+print(f"user Spalten: {user_cols}", file=sys.stderr)
+
+print("--- Schema-Analyse komplett, Abbruch vor Key-Generierung ---", file=sys.stderr)
+sys.exit(0)  # Erstmal nur inspizieren
 
 # 2. User suchen
 cur.execute(f"SELECT id, email, role FROM user WHERE email = ?", (EMAIL,))
