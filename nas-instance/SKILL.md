@@ -341,3 +341,59 @@ Unterstuetzt: Schmidt-Meier, von der Heide, Oezdemir, étranger-Varianten
 - Bilder muessen ueber fal.ai CDN hochgeladen werden (POST /api/upload → fal.storage.upload)
 - Generierung dauert ~60-90 Sekunden pro 10s-Video
 - Error-Logging: `error.body` muss explizit geloggt werden (fal.ai SDK wirft ValidationError mit body-Property)
+
+### 2026-04-16 — Cleanup-Playbook + Swap/VM-Warnungen
+
+**NIEMALS: `swapoff -a` auf UGREEN-NAS**
+- UGREEN verwaltet 4× zram-Devices (je ~5 GB, ~20 GB gesamt) über eigenes Init — **NICHT in /etc/fstab**
+- `swapoff -a` deaktiviert sie, `swapon -a` reaktiviert sie **nicht** (liest nur fstab)
+- Ergebnis: Swap total 0 B bis zum Reboot → bei RAM-Druck OOM-Risiko
+- **Swap-Leerung nur per Reboot.** Für dauerhaft weniger Swap: nur swappiness senken.
+- Falls doch mal passiert: `sudo swapon /dev/nvme1n1p5 && sudo swapon /overlay/.swapfile` als Disk-Swap-Notfall, danach `sudo reboot` für zram-Wiederherstellung.
+
+**QEMU-VM ist openclaw — NICHT anfassen**
+- `/volume1/@kvm/d9537353-72ec-498d-82bb-d0b28e20616b/` = openclaw-VM
+- Läuft als qemu-system-x86_64-Prozess (User `libvirt+`, ~10 GB RAM, 5 vCPUs, 30 %+ CPU)
+- **`virsh list --all` zeigt sie NICHT** — sie läuft außerhalb der libvirt-Registry (direkt gestartet)
+- Bei Cleanup-Analysen: Prozess ist KEIN Zombie, hoher Ressourcenverbrauch ist erwartet
+- Siehe auch 2026-04-08 KVM-Module-Autoload: Nach Reboot müssen `kvm` + `kvm_intel` geladen sein
+
+**NAS-Cleanup Playbook (reproduzierbar, ~100 GB Gewinn)**
+- Scripts liegen im Home: `~/cleanup-nas.sh` (Phase 1) + `~/cleanup-nas-phase2.sh` (Phase 2)
+- Beide idempotent, dry-run-fähig (`--apply` = echte Ausführung)
+- **Phase 1** (risikoarm, ~80 GB): Container-Prune, dangling Image-Prune, Builder-Prune, `~/.cache`-Cleanup (uv, pip, npm, playwright, autoresearch), `apt clean`, `journalctl --vacuum-size=200M`
+- **Phase 2** (kalibriert): `docker image prune -af` (oft nur ~4 GB, weil Images an Container gebunden), n8n-Backup-Rotation, Volume-Whitelist
+
+**n8n-Backup-Rotation Pattern**
+- Zwei Speicherorte: `/volume1/docker/n8n/backups/` (tar/tar.zst) + `/volume1/docker/n8n/data_backup_*/` (Ordner)
+- Backups wachsen auf 70+ GB (14 Archive × 4-6 GB) → Rotation: 3 jüngste tar.zst + 1 Jahresbackup behalten
+- `data_backup_*` Ordner sind oft 6-15 GB groß und ungenutzt nach erfolgreichem Upgrade
+
+**Sichere Volume-Whitelist (tote Projekte)**
+Immer mit `docker volume inspect` + in-use-Check vorher. Bestätigt sicher entfernbar:
+- `agentgpt_*`, `autogpt_*`, `auto-claude_*`, `langflow_*`, `mcp-server_mcp_data`
+- `monitoring_*` (grafana/loki/prometheus), `openhands_*`, `openwebui-optimized_*`
+- `portainer_data`, `smart-home-platform_*` (alle), `openapi-servers_git_repos`
+
+**Kernel-Tuning `/etc/sysctl.d/99-nas-tuning.conf`**
+```
+vm.swappiness = 10           # Standard 60 — weniger unnötiges Swapping bei viel freiem RAM
+vm.vfs_cache_pressure = 50   # Standard 100 — FS-Metadaten länger im Cache
+```
+Aktivieren: `sudo sysctl --system`. Reversibel: Datei löschen.
+
+**Docker-Prune Realität**
+- `docker system df` zeigt „reclaimable" — das **überschätzt** den tatsächlichen Gewinn
+- `docker image prune -af` holt nur Images zurück, die KEIN Container (auch gestoppt) mehr referenziert
+- Bei 30+ laufenden Containern sind oft nur 3-5 GB wirklich reclaimable, nicht die angezeigten 50+ GB
+- Großer Hebel liegt meist in: dangling Images (ungetaggte Duplikate nach Updates) + Volumes + n8n-Backups
+
+**Classifier-Ausfälle während Bash/Write**
+- Bei längerer Classifier-Downtime („claude-opus-4-7[1m] is temporarily unavailable"): Scripts ins Home schreiben, User via SSH selbst ausführen lassen
+- Script-Output teilen → dann Tasks von Claude-Seite finalisieren
+- Schneller als auf Classifier-Recovery zu warten (>5 Min Downtimes beobachtet)
+
+**Celery-Worker 104 % CPU war kein Zombie**
+- `songcrafter-celery-worker` Container hatte PID 3435843, 104 % CPU in Momentanmessung
+- Tatsächlich: produktiver Song-Generation-Task (GPU-Pool `--pool=solo`, concurrency=1)
+- Lehre: Vor Kill eines „Host-Root-Celery-Workers" immer Container-Zuordnung prüfen (`/proc/$PID/cgroup | grep docker`)
