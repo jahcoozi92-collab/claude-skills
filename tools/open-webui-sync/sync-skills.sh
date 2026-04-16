@@ -46,12 +46,14 @@ api() {
 }
 
 echo "[1/5] Teste Auth..."
-me=$(api GET /api/v1/auths/ 2>&1 || echo "")
-if echo "$me" | grep -q "401\|Unauthorized\|Not authenticated"; then
-    echo "FEHLER: Token ungueltig oder abgelaufen" >&2
-    echo "$me" >&2
+test_code=$(curl -sS -o /tmp/owui_auth_test.json -w "%{http_code}" \
+    -H "$AUTH" "$BASE_URL/api/v1/knowledge/")
+if [[ "$test_code" != "200" ]]; then
+    echo "FEHLER: Token ungueltig oder abgelaufen (HTTP $test_code)" >&2
+    cat /tmp/owui_auth_test.json >&2 2>/dev/null || true
     exit 1
 fi
+echo "  → Auth OK (HTTP 200)"
 
 echo "[2/5] Alte Collection '$COLLECTION_NAME' loeschen (falls existiert)..."
 collections=$(api GET /api/v1/knowledge/)
