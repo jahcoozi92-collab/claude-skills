@@ -2069,3 +2069,45 @@ Dramatisch effektiv (800+ → 130-190 Wörter).
 │ n8n Workflow:      SJ47UX9mv8wh1Wwy (76 Nodes)         │
 └─────────────────────────────────────────────────────────┘
 ```
+
+---
+
+### 2026-04-19 — Claude Skills RAG-Pipeline + Supabase-Pause
+
+**Supabase Free Tier pausiert nach 90 Tagen inaktiv → PERMANENT:**
+- Altes Projekt-ID aus Memory wird ungültig, Credentials werden stale
+- Nach 90d kein Dashboard-Restore mehr moeglich — nur Backup-Download
+- Projekt neu erstellen: https://supabase.com/dashboard/projects (Europe/Frankfurt → DSGVO)
+- Lesson: wichtige Projekte mit paid Plan oder regelmaessig triggern
+
+**Setup-SQL für frisches Supabase RAG (Referenz im Repo: `tools/n8n-sync/supabase-rag-setup.sql`):**
+- Extensions: `vector`, `pg_trgm`, `unaccent`
+- Tabelle `rag_chunks`: `id (uuid), content, metadata (jsonb), embedding vector(3072), embedding_half halfvec(3072)`
+- Trigger: `embedding` → `embedding_half` auto-sync (umgeht HNSW 2000-Dim Limit)
+- HNSW Index: `USING hnsw (embedding_half halfvec_cosine_ops)` mit `m=16, ef_construction=64`
+- GIN auf metadata + FTS auf content
+- RPC `match_qm_chunks(query_embedding, match_count, filter)` mit Boost-System:
+  - `source='system_reference'` → +0.20
+  - `priority='critical'` → +0.15
+  - `quality='high'` → +0.05
+- RLS Policies: service_role all, authenticated read
+
+**n8n Credentials für Supabase:**
+- Type: `Supabase API` (nicht Postgres)
+- Host: komplette URL `https://xxxxx.supabase.co`
+- Service Role Secret: **service_role** JWT (NICHT anon — anon hat keine Schreibrechte)
+
+**Claude Skills RAG-Workflow:**
+- ID: `ezzNsOqkfZ5p2FHQ` (Stand 2026-04-19)
+- Quelle: GitHub `jahcoozi92-collab/claude-skills` (public)
+- Ziel: Supabase `rag_chunks` (570 Chunks bei 25 Skills)
+- Metadata: `source=system_reference, priority=critical, document_type=skill_definition`
+- Retrieval via `match_qm_chunks` → Skills bekommen +0.20+0.15 = +0.35 Boost
+
+**Skill-zu-RAG-Sync Workflow-Pattern:**
+```
+GitHub API Tree (recursive) → Split → Filter SKILL*.md → Fetch Raw
+  → Set Metadata → Delete Old (per file_id, alwaysOutputData=true)
+  → Restore Metadata (Code passthrough!)
+  → Supabase Vector Insert (Document Loader, Recursive Splitter 1000/200, Embeddings OpenAI 3072)
+```

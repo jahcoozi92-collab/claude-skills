@@ -1669,3 +1669,61 @@ const sanitized = msg.trim()
 - n8n Dokumentation: https://docs.n8n.io
 - Diana's n8n-Instanz: http://192.168.22.90:5678 (intern)
 - Workflow-Backups: NextCloud/n8n-backups/
+
+---
+
+### 2026-04-19 — Workflow-Erstellung via n8n API + Delete-Node Passthrough
+
+**n8n API Quirks (Public API v1, v2.16+):**
+- POST `/api/v1/workflows` erlaubt nur Felder: `name, nodes, connections, settings`
+- Rejects: `active` (read-only), `description: null`, `staticData`, `versionId` etc.
+- `settings` darf NUR `executionOrder: "v1"` — andere Felder → 400
+- User-Agent wichtig: Cloudflare blockt `Python-urllib/*` → Chrome/Firefox UA setzen
+- Update-Pattern: DELETE + neu POST (PUT/PATCH eingeschränkt)
+- Activate: `POST /api/v1/workflows/{id}/activate`
+- KEIN Execute-Endpoint — Trigger nur via Webhook oder UI
+- Credentials in POST-Body werden **nicht zuverlässig übernommen** → manueller Nachfix oder Fix-Script
+
+**Delete-Node Passthrough (KRITISCH):**
+Problem bekannt (MEMORY.md): Supabase-Delete-Node returned 0 items → downstream nie ausgefuehrt.
+**Loesung:** Code-Node "Restore Metadata" dazwischen:
+```
+Prepare Metadata → Delete Old Chunks → Restore Metadata → Vector Insert
+```
+- Delete-Node: `"alwaysOutputData": true` (auch bei 0 rows)
+- Restore-Node (type: `n8n-nodes-base.code`, executeOnce: true):
+  ```javascript
+  return $items('Prepare Metadata').map(i => ({ json: i.json }));
+  ```
+
+**.item Multiple-Match-Problem:**
+- `$('NodeX').item.json.field` → "Multiple matches found" bei N-zu-1 Mapping
+- Fix: `$json.field` (aktuelles Item) ODER `.first()` ODER `.all()[0]`
+- Im Document Loader: `jsonData: ={{ $json.content }}`
+
+**Hybrid RAG Workflow-Struktur (GitHub → Supabase):**
+```
+Schedule/Manual → HTTP GET github.com/.../git/trees/main?recursive=1
+               → Split Out "tree"
+               → Filter SKILL*.md
+               → HTTP GET raw.githubusercontent.com/.../{{$json.path}}
+               → Set Metadata (file_id, source=system_reference, priority=critical)
+               → Delete Old Chunks (per file_id, alwaysOutputData)
+               → Restore Metadata (Code passthrough)
+               → Supabase Vector Insert
+                  ↑ Document Loader (ai_document)
+                    ↑ Recursive Splitter (1000/200)
+                  ↑ Embeddings OpenAI text-embedding-3-large (3072 dim)
+```
+
+**Bestehende Credentials (aus RAG_Masterclass_Chat_hybrid):**
+- OpenAI: `QtmiduKKAgX93kQP` (text-embedding-3-large)
+- Postgres NAS: `cx83gXjDOqCuXZtm`
+- Cohere Reranker: `oAOH4kNkJnovzmZP`
+- OpenRouter: `JDjnOpGlLzqfePON`
+- Supabase-Projekte pausieren nach 90d inaktiv → Credentials werden stale
+
+**GitHub API Tree:**
+- Private Repos: 404 ohne Token (kein 401) → public machen oder Bearer
+- `/repos/{owner}/{repo}/git/trees/{branch}?recursive=1` → `tree[]` mit `{path, type, sha, size}`
+- raw content via `raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}` (public)

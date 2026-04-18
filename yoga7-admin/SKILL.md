@@ -312,3 +312,36 @@ Folgende Befehle werden von Claude Code AUTOMATISCH erlaubt — niemals in `sett
 **settings.local.json ist Haupt-Allowlist:**
 - Aktuell ~287 Einträge — deckt curl:*, systemctl:*, journalctl:*, docker ps:*, npm view * etc. bereits ab
 - VOR Ergänzungen zur `settings.json` IMMER `settings.local.json` prüfen, sonst Duplikate
+
+### 2026-04-19 — Security-Output-Hygiene + Multi-Script-Pattern
+
+**Script-Output NIE blindlings Werte printen (KRITISCH):**
+- Debug-Script das ALLE `*api_key*` Felder inkl. Werte dumped → Keys im Chat geleakt (OpenAI, OpenRouter, Mistral, Zhipu)
+- Regel: Nur **Feldnamen** printen, NIE die Werte
+- Bei Inspection: `print(f"  {key}: {'<set>' if value else '<empty>'}")`
+- Bei Credentials in DB: Nur `id` und `name` zeigen, NIEMALS value/secret/token-Feld
+
+**Token-Eingabe ohne Chat-Leak:**
+- User soll Token in `~/.openclaw/.env.owui` via `nano` eintragen
+- Script liest `source ~/.openclaw/.env.owui; $OWUI_TOKEN` aus
+- Nur Laenge + Prefix in Output: `echo "Laenge: ${#TOKEN}, Prefix: ${TOKEN:0:4}..."`
+- **NIE** curl-Aufrufe mit `$TOKEN` in der Response echoen
+
+**Terminal-Break-Problem auch auf NAS:**
+- Nicht Yoga7-spezifisch — NAS DXP4800PLUS bricht ebenfalls bei Zeilen mit Whitespace-Prefix
+- Betroffen: Python-Heredocs, Multi-line curl mit \ line continuation, docker exec mit langen Strings
+- Workaround: Script-Dateien statt Einzeiler
+- Pattern: Script ins Repo pushen → User macht `git pull && bash ~/.claude/skills/tools/X/Y.sh`
+
+**Multi-Script-Pattern für Docker-Deployments:**
+- Wrapper-Script (`.sh`) macht: `docker cp script.py → docker exec python3 /tmp/script.py`
+- Python-Script im Container hat Zugriff auf SQLite DB + Python built-in
+- sqlite3 CLI fehlt in Open-WebUI Container → `python3 -c "import sqlite3"` nutzen
+- Heredoc-Python in Bash vermeiden (Terminal-Break) → separate .py-Datei
+
+**Shared Credentials aus bestehenden n8n-Workflows:**
+- OpenAI: `QtmiduKKAgX93kQP` (text-embedding-3-large)
+- Supabase: je nach aktuellem Projekt — wird bei 90d Pause stale
+- Postgres NAS: `cx83gXjDOqCuXZtm` (persistent)
+- Abrufen per API: GET `/api/v1/workflows/{id}` → `nodes[].credentials`
+- Auf Credential-IDs referenzieren statt neu anlegen

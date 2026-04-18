@@ -8,7 +8,7 @@
 
 - **URL extern:** https://chat.forensikzentrum.com
 - **URL intern:** http://192.168.22.90:8080
-- **Version:** v0.7.2
+- **Version:** v0.8.12 (April 2026)
 - **Datenbank:** SQLite (`/app/backend/data/webui.db`)
 - **Tools-Verzeichnis:** `/volume1/docker/open-webui/tools/`
 
@@ -366,3 +366,52 @@ openai['api_configs'][str(idx)] = {
 **Browser-Warnungen ignorieren:**
 - `ResponseMessage.svelte passive event listener` = Frontend-Code
 - Nicht konfigurierbar, keine Funktionsstörung
+
+---
+
+### 2026-04-19 — API-Keys Setup + Modell-Bereinigung via DB (v0.8.12)
+
+**API-Key 403-Bug (KRITISCH):**
+- `auth.api_key.enable=true` UND `auth.api_key.endpoint_restrictions=false`
+- Wenn `endpoint_restrictions=true` + `allowed_endpoints=""` → ALLE Endpoints geben 403 (nicht nur die eingeschränkten)
+- Check im Admin Panel: Settings → General → „API-Schluessel aktivieren" ON + „Erlaubte Endpunkte" LEER
+- Notfall-Fix direkt in DB: `config.data` JSON patchen (siehe `fix-api-config.py` im Repo)
+
+**api_key Tabelle (v0.8+):**
+- Nicht mehr in `user`-Tabelle — eigene `api_key` Tabelle
+- Schema: `id, user_id, key, data, expires_at, last_used_at, created_at, updated_at`
+- data = JSON mit `{name, scopes}`
+- Insert via: UUID id, user.id von email-lookup, `sk-<48 random>`-Key
+
+**JWT-Ablauf `-1` (SECURITY-RISIKO):**
+- Default in v0.8.12 = JWTs laufen NIE ab
+- Admin Panel: JWT-Ablauf auf `7d` oder `24h` setzen
+- Secret-Key Rotation invalidiert alle JWTs: `docker exec open-webui rm /app/backend/data/webui_secret_key && docker restart open-webui`
+
+**sqlite3 fehlt im Container:**
+- `docker exec open-webui sqlite3` → not found
+- Nutze Python built-in: `docker exec open-webui python3 -c "import sqlite3; ..."`
+- Script via `docker cp` rein, dann `docker exec python3 /tmp/script.py`
+
+**Modell-Bereinigung via DB:**
+- `model`-Tabelle Spalten: `id, user_id, base_model_id, name, meta, params, created_at, updated_at, is_active`
+- `is_active` = 0/1 (Integer, nicht Boolean)
+- Bulk-Update: `UPDATE model SET is_active=0` dann selektiv `is_active=1` fuer KEEP-Liste
+- Model-Card meta JSON: `{description, capabilities:{vision,usage,citations}, tags:[{name}], suggestion_prompts:[{content}]}`
+- Name mit Icon + Vergleichs-Hinweis: `"✦ Claude Opus 4.7"`
+
+**Modell-IDs (April 2026):**
+- Anthropic: `claude-opus-4.5`, `claude-sonnet-4.6`, `claude-haiku-4.5` (direct)
+- OR-Proxy: `openrouter.anthropic/claude-opus-4.7` (neueste)
+- OpenAI: `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, `o1`
+- Google: `openrouter.google/gemini-2.5-pro-preview` (1M Kontext)
+
+**Knowledge Collection via API:**
+- POST `/api/v1/files/` (multipart) → file_id
+- POST `/api/v1/knowledge/{id}/file/add` mit `{file_id}`
+- Auth-Check: GET `/api/v1/knowledge/` (NICHT `/api/v1/auths/` — die ignoriert Bearer-Auth)
+
+**DB-Backup vor Bulk-Changes:**
+```bash
+docker exec open-webui cp /app/backend/data/webui.db /app/backend/data/webui.db.backup.$(date +%s)
+```
