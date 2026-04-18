@@ -223,8 +223,7 @@ workflow = {
             "position": [1780, 700],
             "parameters": {
                 "chunkSize": 1000,
-                "chunkOverlap": 200,
-                "options": {}
+                "chunkOverlap": 200
             }
         },
         # 11. Embeddings
