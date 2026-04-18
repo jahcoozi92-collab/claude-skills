@@ -397,3 +397,26 @@ Aktivieren: `sudo sysctl --system`. Reversibel: Datei löschen.
 - `songcrafter-celery-worker` Container hatte PID 3435843, 104 % CPU in Momentanmessung
 - Tatsächlich: produktiver Song-Generation-Task (GPU-Pool `--pool=solo`, concurrency=1)
 - Lehre: Vor Kill eines „Host-Root-Celery-Workers" immer Container-Zuordnung prüfen (`/proc/$PID/cgroup | grep docker`)
+
+### 2026-04-19 — `/init` auf der NAS
+
+**Filesystem-Root `/` ist read-only**
+- `touch /CLAUDE.md` → `Permission denied` (auch als root-Session)
+- Konsequenz: Eine Root-Level-`CLAUDE.md` am Filesystem-Root ist auf dieser NAS technisch **nicht möglich** — der Ansatz "Top-Level-Landkarte nach `/`" scheitert am EACCES
+- Schreibbar sind nur Nutzer-/Volume-Pfade (`/home/Jahcoozi/`, `/volume1/docker/`, `/tmp`, `/root`)
+
+**Scoped CLAUDE.md decken bereits alles ab**
+- `/home/Jahcoozi/CLAUDE.md` → Dev-Workspace, Open WebUI Prod, n8n, LiveKit, Medifox RAG, Claude Agents/Skills
+- `/volume1/docker/CLAUDE.md` → kompletter Docker-Stack, Cloudflare Tunnel, Backup-System, Port-Referenz
+- Beide sind aktuell und architektonisch solide — keine Lücke, die eine Root-Datei füllen würde
+
+**Verhalten bei `/init` auf dieser Instanz (bestätigt von Diana 2026-04-19):**
+1. Zuerst prüfen ob scoped CLAUDE.md bereits existieren (`find / -maxdepth 3 -name CLAUDE.md`)
+2. Falls ja: **NICHT** redundant eine Root-Datei erzwingen, auch nicht als "Landkarte"
+3. Stattdessen Optionen anbieten: (a) nichts tun, (b) Updates an bestehenden, (c) neue scoped Datei in einem konkreten Unterverzeichnis
+4. Diana bevorzugt Option (a) bei vollständigen Scopes — **Minimalismus vor Vollständigkeit**
+
+**Warum das zählt:**
+- `/init` ist der typische "Onboarding"-Reflex — verleitet dazu, eine zentrale Datei anzulegen, auch wenn sie nur Verweise enthält
+- Auf Multi-Scope-Systemen (NAS, Homelab, Monorepos mit Sub-Projekten) ist die scoped Struktur bewusst gewählt und sollte nicht übersteuert werden
+- Zusammenfassungs-/Router-Dateien werden schnell zu veralteter Redundanz
