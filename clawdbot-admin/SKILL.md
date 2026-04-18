@@ -1272,3 +1272,52 @@ Wenn nur Ebene 1 geaendert wird, laufen Cron-Jobs und Fallbacks weiter mit den a
 - Alter Cron schrieb NUR eine Telegram-Nachricht, keine Datei
 - Neuer Prompt fordert: `.learnings/weekly_review_YYYYMMDD.txt` schreiben
 - Ermoeglicht Vergleich ueber Wochen und Nachvollziehbarkeit
+
+### 2026-04-19 — Push-Blocker, Bulk-Rebase-Pattern, FAST_COMMIT Escape
+
+**Push-Authentifizierung blockiert (CRITICAL):**
+- Gespeicherte Git-Credentials authentifizieren als `jahcoozi92-collab` — ein reiner Collaborator-Account mit Read-only-Rechten
+- `git push` scheitert mit 403 sowohl auf `clawdbot/clawdbot.git` als auch `openclaw/openclaw.git`
+- `gh` ist zusätzlich nicht authentifiziert — der Credential-Helper liefert den PAT, nicht `gh auth`
+- Vor jedem Push-Versuch: Diana fragen, ob lokal gearbeitet werden soll oder erst Credentials geklaert werden (z.B. Haupt-Account `jahcoozi92` oder Fork)
+- Nicht als Fehler reporten, sondern als bekannten Zustand kommunizieren
+
+**Repo-Migration `clawdbot/clawdbot` → `openclaw/openclaw`:**
+- Kanonisches Repo laut `~/clawdbot-src/CLAUDE.md`: `openclaw/openclaw` (nicht mehr `clawdbot/clawdbot`)
+- Lokales Remote in `~/clawdbot-src` kann noch auf alten Namen zeigen
+- Git-History ist identisch (Commit-Hashes matchen 1:1 zwischen beiden Repos — reine Umbenennung)
+- Umstellung: `git remote set-url origin https://github.com/openclaw/openclaw.git`
+- WICHTIG: Umstellung alleine loest Push-Problem nicht — Write-Auth fehlt auf beiden Repos
+
+**Bulk-Rebase-Pattern bei grosser Divergenz (>1000 Commits hinterher):**
+- NICHT `git rebase origin/main` direkt — Konflikt-Kaskade unausweichlich
+- Stattdessen Cherry-Pick-Strategie:
+  1. WIP in atomaren Commits sichern (`scripts/committer "<msg>" <file...>`, scoped Staging)
+  2. Backup: `git branch backup/main-pre-rebase-YYYY-MM-DD && git tag backup-main-YYYY-MM-DD` (beide, falls Branch versehentlich geloescht wird)
+  3. Redundanz-Check: `git cherry -v origin/main main` (zeigt Patch-ID-Duplikate, NICHT Konflikte)
+  4. Neuer Branch: `git checkout -b rebase/YYYY-MM-DD origin/main`
+  5. Commits einzeln cherry-picken mit `-x` (Flag hinterlaesst Origin-Hash im Commit-Message fuer Traceability)
+  6. Bei Konflikt: inspect → `--skip` (redundant/obsolet) oder manuell resolven + `--continue`
+  7. `main` unberuehrt lassen, bis Verifikation komplett (Option B in Phase 3)
+- Erwartungskalibrierung: ~20% Skip/Conflict-Rate bei mehreren Monaten Divergenz
+- Praxis-Beispiel (2026-04-19): 17 Commits → 14 gelandet, 3 uebersprungen (1 selbst-kaputt, 1 upstream-dupliziert, 1 in upstream entfernter Code)
+
+**FAST_COMMIT=1 als legitimer Escape:**
+- Pre-commit-Hook ruft `pnpm check` repo-weit auf (tsgo + oxlint + format)
+- Scheitert regelmaessig an pre-existenten TS-Fehlern in unverwandtem Code (z.B. `extensions/qa-lab/src/providers/aimock/server.ts`)
+- `FAST_COMMIT=1` ueberspringt den repo-weiten Check — legitim laut `~/clawdbot-src/CLAUDE.md`
+- Vorbedingung: Die touched surface MUSS separat verifiziert sein (`pnpm test -- <file>`)
+- Kein Default, nur bei bekanntem Fremd-Breakage — IMMER erwaehnen warum genutzt
+- Funktioniert auch bei `git cherry-pick --continue` (`FAST_COMMIT=1 git cherry-pick --continue`)
+
+**Cherry-Pick-Konflikt-Typologie:**
+- `add/add`: beide Seiten haben dieselbe Datei → meist `--skip` (upstream hat eigene Version)
+- `content`: Zeilen kollidieren → manuell `git checkout --ours <file>` oder `--theirs <file>` + `git add` + `--continue`
+- gelöschte Ziel-Funktion (upstream refactored komplett): unser Fix ist obsolet → `--skip`
+- `git cherry -v` erkennt nur Patch-ID-Duplikate, NICHT obige Konflikte — Cherry-Pick-Ausfaelle einplanen
+
+**Laien-Erklaerungs-Modus:**
+- Diana fragt gelegentlich "erklaere fuer 12-Jaehrige" → Analogien statt Code-Snippets
+- Bewaehrte Metaphern: Rezeptbuch fuer Rebase, Notizbuch fuer Branch, Klebezettel fuer Commits, Foto fuer Backup-Tag
+- Bild > Syntax, Metapher > Fachbegriff
+- Funktioniert auch als Validierung des eigenen Verstaendnisses — wenn keine Metapher moeglich, fehlt Tiefe
