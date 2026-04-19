@@ -415,3 +415,47 @@ openai['api_configs'][str(idx)] = {
 ```bash
 docker exec open-webui cp /app/backend/data/webui.db /app/backend/data/webui.db.backup.$(date +%s)
 ```
+
+### 2026-04-19 — Knowledge-File API-Bug in v0.8 (KRITISCH)
+
+**Problem:**
+- `POST /api/v1/knowledge/{coll_id}/file/add` mit `{file_id}` → returns 200
+- ABER: `knowledge_file` Tabelle bleibt LEER → Files werden im Chat nicht eingebunden
+- Symptom: Collection zeigt "25 Files" aber Chat findet nichts, weil RAG-Lookup ueber knowledge_file geht
+
+**Lösung: Direkte DB-Manipulation**
+```python
+# 1. Bestehende Links loeschen
+cur.execute("DELETE FROM knowledge_file WHERE knowledge_id = ?", (coll_id,))
+# 2. Neu einfuegen
+for fid in file_ids:
+    cur.execute("""
+        INSERT INTO knowledge_file (id, user_id, knowledge_id, file_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (str(uuid.uuid4()), coll_user_id, coll_id, fid, now, now))
+# 3. knowledge.data.file_ids synchron halten
+data["file_ids"] = file_ids
+cur.execute("UPDATE knowledge SET data = ? WHERE id = ?", (json.dumps(data), coll_id))
+```
+Script: `tools/open-webui-sync/link-files-to-collection.py` im claude-skills Repo.
+
+**File-Deduplication:**
+- Multiple Uploads gleicher filename → mehrere `file` rows (eindeutige IDs)
+- Pro filename nur die juengste nehmen: `ORDER BY created_at DESC` + `seen = set()`
+- Sonst wird Content mehrfach indiziert
+
+**RAG-Engine Check:**
+- Embedding Engine = `ollama` mit `bge-m3:latest` (NICHT SentenceTransformers default!)
+- `openai_api_key` ist gesetzt (wird aber nicht genutzt wenn engine=ollama)
+- Chunks werden LAZY beim ersten Chat-Query generiert — Erstabruf dauert 10-30s
+
+**Knowledge im Chat aktivieren:**
+- Per Chat: `+`-Icon → "Knowledge" → Collection waehlen
+- Besser: Custom Model mit `Knowledge: Claude Skills` verknuepfen → automatisch bei jedem Chat
+- `#Collection-Name` Syntax funktioniert nur wenn Knowledge bereits im aktuellen Chat aktiv ist
+
+**Erfolg-Check via DB:**
+```sql
+SELECT COUNT(*) FROM knowledge_file;          -- > 0 = Files verknuepft
+SELECT name, json_array_length(json_extract(data, '$.file_ids')) FROM knowledge;  -- Anzahl IDs pro Collection
+```

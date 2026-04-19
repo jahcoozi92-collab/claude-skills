@@ -420,3 +420,48 @@ Aktivieren: `sudo sysctl --system`. Reversibel: Datei löschen.
 - `/init` ist der typische "Onboarding"-Reflex — verleitet dazu, eine zentrale Datei anzulegen, auch wenn sie nur Verweise enthält
 - Auf Multi-Scope-Systemen (NAS, Homelab, Monorepos mit Sub-Projekten) ist die scoped Struktur bewusst gewählt und sollte nicht übersteuert werden
 - Zusammenfassungs-/Router-Dateien werden schnell zu veralteter Redundanz
+
+### 2026-04-19 — systemd --user Timer statt Cron (UGREEN-Einschraenkung)
+
+**Problem: UGREEN DXP4800PLUS blockt User-Crontab**
+```
+$ crontab -e
+/var/spool/cron/: mkstemp: Permission denied
+```
+User `Jahcoozi` darf kein eigenes crontab anlegen.
+
+**Lösung: systemd --user Timer**
+- Laeuft als User, kein sudo noetig
+- `Persistent=true` → holt verpasste Runs nach Reboot nach
+- `RandomizedDelaySec=5m` → verhindert Thundering Herd bei mehreren Timern
+
+**Pattern (Skills-Sync):**
+```
+~/.config/systemd/user/
+├── skill-sync.service  (Type=oneshot, ExecStart=bash /path/script.sh)
+└── skill-sync.timer    (OnCalendar=*-*-* 03:30:00, Persistent=true)
+
+systemctl --user daemon-reload
+systemctl --user enable --now skill-sync.timer
+```
+
+**Linger-Flag fuer headless:**
+- Ohne Linger: Timer laeuft nur bei aktiver Session (SSH/lokal)
+- Einmalig: `sudo loginctl enable-linger Jahcoozi`
+
+**Diagnose:**
+```bash
+systemctl --user list-timers                 # Naechster Lauf
+systemctl --user status skill-sync.service   # Letzter Run
+journalctl --user -u skill-sync.service -n 50
+systemctl --user start skill-sync.service    # Manueller Test
+```
+
+**Installer:** `~/.claude/skills/tools/open-webui-sync/install-systemd-timer.sh` (idempotent)
+
+**Automation-Kette Skills-Sync:**
+```
+git push → 03:00 n8n → Supabase RAG
+        → 03:30 systemd → Open WebUI Collection
+```
+Fire-and-forget: User macht nur `git push`.
