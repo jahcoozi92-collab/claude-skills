@@ -158,6 +158,8 @@ ping 192.168.2.215
 2. Keine Hardcoded Passwörter in neuen Skripten — `.env` oder Environment-Variablen nutzen
 3. Keine `rm -rf` auf Netzlaufwerken ohne explizite Bestätigung
 4. **Kein `cmd.exe` wenn CWD ein UNC-Pfad ist** (`\\SERVER...`) — cmd.exe unterstützt keine UNC-Pfade als Arbeitsverzeichnis. IMMER `powershell.exe -Command "..."` verwenden
+5. **Kein nacktes `npm` in PowerShell-Skripten** — der `npm.ps1`-Wrapper verschluckt in manchen Konstellationen das erste Argument-Zeichen (`npm install` → `pm install` → "Unknown command: 'pm'"). IMMER `npm.cmd install ...` (oder `npx.cmd`, `yarn.cmd`) explizit aufrufen
+6. **Kein `schtasks.exe` wenn der Pfad Umlaute enthält** (z.B. `C:\Users\D.Göbel\...`) — Git-Bash-Pfadkonvertierung + Quoting machen das unlösbar. IMMER via PowerShell-Modul (`Register-ScheduledTask` / `New-ScheduledTaskAction`) registrieren
 
 ### BEVORZUGT
 1. Git Bash für Dateisystem-Operationen, PowerShell für Windows-spezifische Aufgaben (COM, Registry)
@@ -265,3 +267,48 @@ scp ~/pflegeassist/index.html sshd@192.168.2.215:/shares/Public/pflegeassist/ind
 - `/codex:review` funktioniert NUR in Git-Repositories. QM-Dokumente auf Netzlaufwerken (Q:\) sind kein Git-Repo → schlägt dort IMMER fehl mit "This command must run inside a Git repository"
 - Plugin v1.0.3 sendet `read-only` statt `readOnly` als Modus → bekannter Kompatibilitätsbug mit CLI 0.60.1. Workaround: Codex direkt im Terminal nutzen (`! codex`)
 - Sub-Agenten können auf WS44 keine Bash/Write-Berechtigungen erhalten → Agent-Delegation für Dateierstellung scheitert, direkte Ausführung verwenden
+
+### 2026-04-20 - Claude Code Auto-Update via Scheduled Task
+
+**Claude Code Installation auf WS44:**
+- Installiert via `npm install -g @anthropic-ai/claude-code` (NICHT Native Installer)
+- Pfad: `C:\Users\D.Göbel\AppData\Roaming\npm\node_modules\@anthropic-ai\claude-code`
+- Wrapper: `%AppData%\npm\claude` (Bash-Shim) + `claude.cmd` / `claude.ps1`
+- Update-Befehl: `npm.cmd install -g @anthropic-ai/claude-code@latest` (KEIN nacktes `npm` in PS!)
+
+**npm.ps1 First-Character-Bug (KRITISCH):**
+- Symptom: `& npm install -g ...` → Output `Unknown command: "pm"`
+- Ursache: `npm.ps1`-Wrapper verschluckt das "n" unter bestimmten PowerShell-Konstellationen (Argument-Parsing-Bug)
+- Fix: IMMER `& npm.cmd install -g "@scope/package@latest"` — zwingt Windows zum Batch-Wrapper statt PS-Wrapper
+- Betroffen vermutlich auch: `npx.ps1`, `yarn.ps1` → analog `.cmd`-Variante nutzen
+
+**ONLOGON Auto-Update-Pattern (kein Admin nötig):**
+```powershell
+$action = New-ScheduledTaskAction -Execute "powershell.exe" `
+    -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
+$trigger.Delay = "PT30S"
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries -StartWhenAvailable `
+    -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
+$principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -RunLevel Limited
+Register-ScheduledTask -TaskName "..." -Action $action -Trigger $trigger `
+    -Settings $settings -Principal $principal -Force
+```
+- Funktioniert ohne Admin, solange das Ziel in `%AppData%` liegt
+- 30 s Delay nach Login für Netzwerk-Stabilität
+- ExecutionTimeLimit verhindert hängende Tasks
+
+**schtasks.exe vs. PowerShell-Modul:**
+- `schtasks.exe /Create ...` schlägt fehl bei Umlauten im Pfad (Git-Bash-Pfadkonvertierung + Doppel-Quoting)
+- `Register-ScheduledTask` in PowerShell handhabt `C:\Users\D.Göbel\...` sauber
+- Regel: Für Task-Management IMMER PowerShell-Modul, nicht schtasks.exe
+
+**Aktive Scheduled Tasks (WS44, User D.Göbel):**
+| Task-Name | Trigger | Zweck | Skript |
+|-----------|---------|-------|--------|
+| `ClaudeCodeAutoUpdate` | AtLogOn +30 s | Claude Code via npm auf latest | `~/claude-code-auto-update.ps1` |
+
+**Log-Rotation in PS-Skripten:**
+- Simple Pattern: Wenn Logfile > 1 MB → `Get-Content -Tail 200` + `Set-Content` zurückschreiben
+- Vermeidet unbegrenztes Log-Wachstum ohne externe Rotation-Tools
