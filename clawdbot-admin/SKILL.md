@@ -1349,3 +1349,70 @@ Wenn nur Ebene 1 geaendert wird, laufen Cron-Jobs und Fallbacks weiter mit den a
 - Bewaehrte Metaphern: Rezeptbuch fuer Rebase, Notizbuch fuer Branch, Klebezettel fuer Commits, Foto fuer Backup-Tag
 - Bild > Syntax, Metapher > Fachbegriff
 - Funktioniert auch als Validierung des eigenen Verstaendnisses — wenn keine Metapher moeglich, fehlt Tiefe
+
+### 2026-04-20 — Codex-Sprache, safeBinProfiles, main/-Default-Verhalten
+
+**Codex-CLI auf Deutsch via `~/.codex/AGENTS.md` (CRITICAL):**
+- Codex-CLI hat KEINE `~/.codex/config.toml` fuer Soft-Settings (Sprache/Stil) — Konvention ist `~/.codex/AGENTS.md`, wird automatisch in jede Codex-Session als System-Prompt-Erweiterung injiziert
+- Plugin-Cache (`~/.claude/plugins/cache/openai-codex/codex/<version>/`) wird bei Updates ueberschrieben — `~/.codex/AGENTS.md` liegt ausserhalb und ueberlebt Plugin-Upgrades
+- Inhalt: "Antworte immer auf Deutsch — Code-Identifier, Pfade, CLI-Kommandos, Strukturmarker (`[P1]`, `Target:`) bleiben englisch; nur Fliesstext ist deutsch."
+- Trigger: Wenn `/codex:review` o.ae. auf Englisch antwortet trotz deutscher Userpraeferenz
+- Analog zu Claude Code: Bei Codex ist es eine workspace-globale Datei statt User-Prompt-Sprachblock
+
+**`agents/main/` NIEMALS loeschen — Plugin-Default-Pfad (CRITICAL):**
+- `paths-CZMxg3hs.js:resolveStorePath` nutzt hardcoded `agentId = opts?.agentId ?? "main"` als Default
+- Telegram-Plugin (`extensions/telegram/send-DlzbQJQs.js:resolveSentMessageStorePath`) ruft `resolveStorePath` ohne `agentId` auf → globaler Sent-Message-Store landet in `agents/main/sessions/sessions.json.telegram-sent-messages.json`
+- `agents/main/agent/models.json` ist ebenfalls aktiver Models-Cache (auto-generiert)
+- Symptom: doctor warnt "Found 1 agent directory on disk without a matching agents.list entry — Examples: main" — false-positive, Architektur-bedingt
+- Loeschen → Verzeichnis legt sich sofort neu an, Telegram-Dedup-State (Edit-Tracking, TTL) geht verloren
+- Migration-Schuld vom Sub-Agent-Umbau 2026-04-10 (main → sonnet/opus/pflege/pflege-eu): Plugin-SDK wurde gebaut als es nur "main" gab, globaler Store-Default nicht mitgezogen
+
+**Sub-Agent-Umbauten: Symlinks pruefen:**
+- Beim Umbau `main` → `sonnet/opus/pflege/pflege-eu` blieb `agents/sonnet/agent` als Symlink → `agents/main/agent`
+- Nach manueller Archivierung von `agents/main/` (`_archive_main-searcher_*.tar.gz`) zeigte der Symlink ins Leere
+- Symptom: Cron-Job-Fehler `ENOENT: no such file or directory, mkdir '~/.openclaw/agents/sonnet/agent'`
+- Fix: `rm sonnet/agent && mkdir sonnet/agent && tar -xzf _archive_*.tar.gz -C /tmp main/agent/auth-profiles.json … && cp /tmp/main/agent/*.json sonnet/agent/ && chmod 600 sonnet/agent/*.json`
+- Auth-Profile aus Archiv wiederherstellen lohnt sich (Anthropic-OAuth-State spart Re-Login)
+- Praeventiv vor jedem Sub-Agent-Umbau: `find ~/.openclaw/agents -type l` listet alle Symlinks auf
+
+**safeBinProfiles fuer Interpreter sind PFLICHT (Sandbox-Escape):**
+- `python3`/`node`/`bun` in `tools.exec.safeBins` ohne Profile → Sandbox-Escape moeglich via `python3 -c "import os; os.system(...)"` bzw. `node -e "..."`/`bun --eval`
+- Built-in `SAFE_BIN_PROFILES` (`paths-CZMxg3hs.js`) decken nur jq/cut/sort/uniq/head/tail/tr/wc — Interpreter NICHT
+- Loesung: explizite `safeBinProfiles`-Eintraege mit `deniedFlags`:
+  ```json
+  "python3": { "deniedFlags": ["-c","-m","-i","-W","--command"], "allowedValueFlags": ["--type","--props","--where","--id","--from","--rel","--to"] },
+  "node":    { "deniedFlags": ["-e","-p","--eval","--print","--input-type","-i","--interactive"] },
+  "bun":     { "deniedFlags": ["-e","--eval","--inspect","--inspect-brk","--inspect-wait"] }
+  ```
+- `allowedValueFlags` muss alle in Cron-Jobs genutzten long-flags enthalten (sonst `validateSafeBinArgv` lehnt unbekannte long-flags ab → Crons brechen, koennen interaktiv kein Approval geben)
+- `python3.allowedValueFlags` enthaelt alle ontology.py CLI-Flags (`--type/--props/--where/--id/--from/--rel/--to`)
+- `isSafeLiteralToken` blockt Glob-Patterns (`*?[]`) und Pfad-Prefixes (`./`/`../`/`~`/`/`) — relative Pfade ohne Prefix wie `skills/ontology/scripts/ontology.py` und JSON-Werte wie `'{"status":"open"}'` gehen durch
+- `safeBinProfiles` orthogonal zu `exec-approvals.json`: Profile = "vertraue ich diesem Pattern blind?", approvals = "hat User dieses spezifische Kommando freigegeben?"
+
+**`safeBinTrustedDirs` fuer npm-global Installs:**
+- Default: `["/bin","/usr/bin"]` (siehe `DEFAULT_SAFE_BIN_TRUSTED_DIRS` in `exec-safe-bin-trust-BcrCYHRC.js`)
+- Doctor-Warning "openclaw resolves outside trusted safe-bin dirs" entsteht weil `~/.local/bin/openclaw` (npm-global Wrapper) ausserhalb liegt
+- Fix in `tools.exec`:
+  ```json
+  "safeBinTrustedDirs": ["/home/moltbotadmin/.local/bin", "/home/moltbotadmin/.npm-global/bin"]
+  ```
+- Undokumentiert in der Config-Schema-Uebersicht — Hinweis kommt nur via doctor
+
+**Backup-Pattern vor riskanten Config-Edits:**
+- IMMER vor Edit an `~/.openclaw/openclaw.json`: `cp openclaw.json openclaw.json.pre-<reason>-<YYYY-MM-DD>`
+- Beispiel-Backups: `openclaw.json.pre-allowlist-fix` (2026-04-20), `openclaw.json.pre-optimize-2026-04-20`
+- Rollback: `cp openclaw.json.pre-<reason>-<date> openclaw.json && systemctl --user restart openclaw-gateway.service`
+- Backup-Naming nach Grund, nicht nur Datum — Datum allein ist mehrdeutig wenn mehrere Edits am gleichen Tag
+
+**Doctor false-positive Klassifizierung:**
+- "Claude-CLI auth profile missing (anthropic:claude-cli)": IRRELEVANT wenn Anthropic-API direkt genutzt wird (nicht Headless-CLI als Provider)
+- "Found 1 agent directory on disk without matching agents.list entry — Examples: main": Architektur-bedingt (siehe oben)
+- "memory-lancedb still uses legacy before_agent_start": nur via Plugin-Maintainer-Update behebbar — keine User-Action
+- "Gateway bound to lan (0.0.0.0) (network-accessible)": bewusst (LAN 192.168.22.206:18789), nicht "fix"
+- Prinzip: Vor jedem doctor-fix die Warnung verstehen statt blind zu folgen — manche sind Architektur-Statements, kein Defekt
+
+**Bonjour-Watchdog Race nach Restart:**
+- `openclaw doctor` direkt nach `systemctl --user restart openclaw-gateway.service` kann mit "gateway timeout after 10000ms" scheitern
+- Ursache: Bonjour-Service-Advertiser haengt manchmal in `announcing` State (>10s), `[ws] closed before connect`-Logs
+- Recovered automatisch nach `restarting advertiser`, Gateway dann gesund
+- Vor Doctor-Lauf nach Restart: 5-6 Sekunden warten, oder `curl -s http://127.0.0.1:18789/healthz` als Smoke-Test
