@@ -465,3 +465,45 @@ git push → 03:00 n8n → Supabase RAG
         → 03:30 systemd → Open WebUI Collection
 ```
 Fire-and-forget: User macht nur `git push`.
+
+### 2026-04-20 — SSH Home-Dir Permissions & btrfs Layout
+
+**UGOS Pro Filesystem-Layout (btrfs-Subvolumes)**
+- `/volume1` ist btrfs-Pool `ug_A602FF_*-volume1` (subvolid=5)
+- `/home` ist Subvolume `@home` (subvolid=261) — **kein separater Mount**, `findmnt /home/<user>` liefert leer
+- Echtes User-Home: `/volume1/@home/Jahcoozi`
+- Versionierungs-Cache: `/volume1/@version_explorer_cache/home/Jahcoozi` (UGOS Snapshot-Feature)
+- Docker-Overlays: `/volume1/@docker/overlay2/*/merged` (pro Container ein Mount)
+
+**SSH Home-Dir Access-Bug (UGOS Default)**
+- UGOS setzt Home-Permissions default auf `drwx------ Jahcoozi:admin` (Mode 700, Primärgruppe admin)
+- Trotz Owner-Match scheitert SSH-Login mit:
+  ```
+  Could not chdir to home directory /home/Jahcoozi: Permission denied
+  bash: /home/Jahcoozi/.bashrc: Permission denied
+  ```
+- User landet in `/` statt `$HOME`, PATH-Setup greift nicht → `claude`, nvm, pyenv nicht verfügbar
+- **Fix:**
+  ```bash
+  sudo chown -R Jahcoozi:users /home/Jahcoozi
+  sudo chmod 755 /home/Jahcoozi
+  sudo chmod 644 /home/Jahcoozi/.bashrc
+  ```
+- `chown -R` kann auf einzelnen verwalteten Dateien (z.B. `CLAUDE.md` mit chattr-Schutz) mit "Operation not permitted" scheitern — **Gesamtfix ist trotzdem erfolgreich**, nur die geschützte Datei bleibt beim alten Owner
+
+**UGREEN User-Setup Referenz (Jahcoozi)**
+- `uid=1000(Jahcoozi)`, `gid=10(admin)` primär
+- Sekundärgruppen: `admin(10)`, `users(100)`, `docker(121)`, `ughomeusers(133)`
+- `ughomeusers` = UGOS-spezifische Gruppe für Home-Management (PAM/Encryption-Hooks)
+- Für normale Home-Operation sollte Owner-Gruppe `users`, nicht `admin` sein
+
+**Claude-Installation auf NAS**
+- NAS hat `claude` nicht vorinstalliert, nicht im PATH
+- Install via npm global: `sudo npm install -g @anthropic-ai/claude-code`
+- Alternativ: pipx oder curl-Installer (siehe Claude Code Docs)
+
+**Diagnose-Anti-Pattern (Selbstkorrektur)**
+- Nach Fix-Vorschlag IMMER aktuellen Zustand vs. Vorher-State vergleichen — nicht blind in tiefere Diagnose-Pfade abbiegen
+- "Operation not permitted" auf EINZELNER Datei ≠ Gesamtfail des Fixes
+- Reihenfolge: (1) Fix anwenden, (2) Zustand verifizieren, (3) erst bei weiterhin-kaputt tiefer graben
+- Session 2026-04-20: fscrypt/ACL/AppArmor-Diagnose war unnötiger Detour — erster Fix-Vorschlag (chown+chmod) hatte bereits funktioniert, wurde aber nicht re-verifiziert
