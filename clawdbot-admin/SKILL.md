@@ -402,6 +402,9 @@ cd ~/clawd && python3 -c "import json,re;from pathlib import Path; ..."
 1. `systemctl --user status openclaw-gateway.service` — laeuft der Gateway?
 2. `curl -sI http://127.0.0.1:18789/` — antwortet er lokal?
 3. `ssh Jahcoozi@192.168.22.90 "sudo systemctl status ssh-openclaw-forward.service"` — SSH-Forward aktiv?
+   - Bei `activating (auto-restart)` + hohem Restart-Counter: `sudo journalctl -u ssh-openclaw-forward.service -n 30` lesen
+   - Haeufige Ursache: Key-Permissions zu offen (`Permissions 0750 for '.ssh/id_ed25519' are too open`)
+   - Fix: `ssh Jahcoozi@192.168.22.90 "chmod 600 ~/.ssh/id_ed25519" && ssh ... "sudo systemctl restart ssh-openclaw-forward.service"`
 4. `ssh Jahcoozi@192.168.22.90 "curl -sI http://127.0.0.1:18790/ --max-time 3"` — Forward funktioniert?
 5. `ssh Jahcoozi@192.168.22.90 "docker logs cloudflared --tail 5"` — Tunnel-Connector OK?
 6. **Tunnel-Config pruefen** (remote-managed!):
@@ -1030,6 +1033,31 @@ systemctl --user restart openclaw-gateway.service
 - Bei wiederholtem 502: IMMER zuerst Ingress-Port via API pruefen (Schritt 5 im Troubleshooting)
 - Cloudflare API PUT ersetzt die GESAMTE Config → GET-modify-PUT Workflow zwingend
 - Tunnel-Config-Aenderungen sind sofort wirksam, kein cloudflared-Restart noetig
+
+### 2026-04-20 — SSH-Key-Permission crasht Tunnel-Backend
+
+**Symptom:** `openclaw.forensikzentrum.com` liefert HTTP 502, Gateway lokal OK (HTTP 200 auf :18789), cloudflared laeuft. SSH-Forward-Service auf NAS im Crash-Loop mit Restart-Counter 1097 (exit 255).
+
+**Ursache:** Private-Key `/home/Jahcoozi/.ssh/id_ed25519` hatte Permissions `0750` (group/other readable). OpenSSH-Client lehnt den Key hart ab (`Permissions ... are too open. This private key will be ignored.`) → Authentication faellt auf Password zurueck → `Permission denied (publickey,password)` → Forward kann Port 18790 nicht oeffnen → cloudflared-Ingress `:18790` ohne Backend → **502**.
+
+**Diagnose-Pfad:**
+1. DNS OK, curl → 502 (Remote: Cloudflare-IP) → Problem liegt hinter Cloudflare
+2. `systemctl --user is-active openclaw-gateway.service` auf ugreen → `active`, HTTP 200 lokal → Gateway OK
+3. `sudo systemctl status ssh-openclaw-forward.service` auf NAS → `activating (auto-restart)`, Restart-Counter 1097
+4. `sudo journalctl -u ssh-openclaw-forward.service -n 30` → `Permissions 0750 ... are too open`
+
+**Fix (eine Zeile):**
+```bash
+ssh Jahcoozi@192.168.22.90 "chmod 600 ~/.ssh/id_ed25519 && sudo systemctl restart ssh-openclaw-forward.service"
+```
+
+**Erkenntnisse:**
+- **Restart-Counter ist stilles Fruehwarnsignal** — 1097 Restarts = Service seit Wochen defekt, aber kein Alert. Monitoring-Luecke: Prometheus-Textfile-Collector oder einfacher Cron-Check auf `systemctl is-failed / ActiveState=activating` auf NAS waere angebracht.
+- **SSH-Tunnel als Cloudflare-Origin ist fragil** — bricht bei Key-Rotation, Perm-Aenderung, Netz-Hiccup. Robustere Alternativen:
+  - `cloudflared` direkt auf ugreen (kein Hop ueber NAS, Proxmox-Firewall muesste aber Outbound zu `*.cfargotunnel.com` erlauben)
+  - WireGuard-Link NAS↔ugreen statt SSH (persistente Verbindung, bessere Reconnect-Semantik)
+- **Diagnose-Heuristik bei 502:** DNS → lokaler Gateway → SSH-Forward-Status + Restart-Counter → Forward-Backend (`curl :18790`) → Tunnel-Config. Restart-Counter sofort lesen, nicht erst nach Port-Checks.
+- **Key-Permissions-Regel:** Jeder SSH-Client-Key MUSS `0600` (oder `0400`) sein. Bei Key-Provisioning via `scp`/`rsync` ohne `-p` oder aus Backup-Restores kann das kippen.
 
 ### 2026-04-05 — Config-Hygiene (8-Punkte-Audit)
 
