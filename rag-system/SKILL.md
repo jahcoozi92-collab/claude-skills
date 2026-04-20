@@ -2111,3 +2111,47 @@ GitHub API Tree (recursive) → Split → Filter SKILL*.md → Fetch Raw
   → Restore Metadata (Code passthrough!)
   → Supabase Vector Insert (Document Loader, Recursive Splitter 1000/200, Embeddings OpenAI 3072)
 ```
+
+---
+
+### 2026-04-20 — Chat-UI Card-Gating + RAG-Debug-Reihenfolge
+
+**medifox-chat.html: `parseStructuredResponse()` NIE bei Multi-Kapitel-Antworten**
+- `formatAsCards()` fragmentiert Multi-Weg-Antworten (Weg 1 / Weg 2) in 4 Kacheln
+  (Zusammenfassung/Schritte/Hinweis/Quellen) → wirkt „tabellarisch", Inhalte gehen verloren
+- Früh-Abbruch-Signale (`return null`) VOR hasSummary/hasSteps-Heuristik:
+  - `heading2Count >= 2` — mindestens zwei `## …`-Überschriften
+  - `numberedBlockStarts >= 2` — Liste startet mehrmals bei `1.` (mehrere Kapitel)
+  - `hrCount >= 2` — mindestens zwei `---`-Trenner
+  - Explizite Regex auf `Weg|Variante|Methode|Option|Ansatz|Möglichkeit \d+` mit Treffer auf `… 2`
+- Bei Treffer → Fließtext-Renderer `formatSimpleMessage()` + Clickpath-Breadcrumbs übernehmen
+- Datei: `/volume1/docker/n8n/medifox-chat.html`, Funktion ab Zeile 3001
+
+**RAG-Debug-Reihenfolge bei „Entschuldigung, ein Fehler ist aufgetreten" im Chat:**
+1. **ZUERST Workflow-Execution im n8n API holen** — das Chat-UI schluckt den echten Fehler
+   ```bash
+   curl -H "X-N8N-API-KEY: $KEY" \
+     "http://192.168.22.90:5678/api/v1/executions?workflowId=SJ47UX9mv8wh1Wwy&limit=5"
+   curl -H "X-N8N-API-KEY: $KEY" \
+     "http://192.168.22.90:5678/api/v1/executions/<id>?includeData=true"
+   ```
+2. **Bei 429/OpenAI-Fehler: Embedding-API DIREKT testen** (nicht erst Workflow debuggen):
+   ```python
+   # Credential aus credentials_entity entschlüsseln (EVP_BytesToKey + AES-256-CBC)
+   # → POST https://api.openai.com/v1/embeddings mit text-embedding-3-large
+   ```
+3. 429 = OpenAI-Billing/Quota, kein Workflow-Bug. Konto aufladen
+   → https://platform.openai.com/account/billing
+4. Migration auf lokale Embeddings (Ollama nomic-embed-text) ist teuer: alle Chunks
+   müssen neu embedded werden (3072d → andere Dimension, HNSW-Index neu bauen)
+
+**Node `Embeddings OpenAI_Abruf` ist Single Point of Failure:**
+- Alle 4 Embedding-Nodes (`_Upload`, `_Upload2`, `_Abruf`, `Form Embeddings`) teilen
+  Credential `QtmiduKKAgX93kQP` (OpenAi account _ RAG_Masterclass)
+- Ausfall dieser einen Credential → kompletter RAG-Chat tot
+
+**Deploy-Hinweis für HTML-Fixes:**
+- `/volume1/docker/n8n/medifox-chat.html` wird von KEINEM NAS-Container serviert
+  (medifox-admin:8086 liefert nur admin-index.html, chat.forensikzentrum.com → open-webui)
+- Vor Fix-Commit klären: wo öffnet Diana die Seite? (Lokaler Browser / Cloudflare Pages /
+  anderer Host). Edit allein reicht nicht — Datei muss zum Deploy-Ort
