@@ -640,6 +640,75 @@ Wie ein Wecker. Jeden Tag um 8 Uhr morgens startet der Workflow.
     → Nummern gehoeren NUR in Schritt-für-Schritt-Anleitungen (1. Navigieren Sie...)
     → Menüpfade IMMER als einfachen Inline-Code mit `>` als Trenner
 
+31. **NIEMALS** `getBinaryDataBuffer(0, 'data')` in `runOnceForEachItem` Code-Nodes!
+    ```js
+    ❌ FALSCH: const buf = await this.helpers.getBinaryDataBuffer(0, 'data');
+    // → Liest IMMER Item[0] → alle 13 Slides bekommen identisches Audio!
+
+    ✅ RICHTIG: const buf = await this.helpers.getBinaryDataBuffer($itemIndex, 'data');
+    ```
+    → Symptom: Pipeline läuft "erfolgreich", aber alle Outputs sind Kopien des ersten Items
+    → Gilt auch für Concat→base64, Normalized→base64, Audio→base64
+
+32. **NIEMALS** `contentType: "raw"` setzen wenn Response als JSON erwartet wird!
+    → Aktiviert intern `useStream: true`, das überschreibt `responseFormat: json/text`
+    → Response kommt als Buffer-Object mit `_writeState`/`_readableState` statt parsed
+    → Lösung: `specifyBody: "json"` mit gestringifyptem Body via Code-Node davor
+
+33. **NIEMALS** annehmen dass n8n nach Workflow-PUT den neuen Code-Node-JS lädt!
+    → Worker hat alten compiled Code im Cache
+    → IMMER nach `PUT /workflows/{id}`:
+      ```bash
+      curl -X POST .../workflows/{id}/deactivate
+      curl -X POST .../workflows/{id}/activate
+      ```
+
+34. **NIEMALS** `pairedItem` in `runOnceForAllItems` Aggregate-Code-Nodes vergessen!
+    → Sonst brechen downstream `$('node').item.json` Lookups mit "Paired item data unavailable"
+    ```js
+    return Object.keys(grouped).map((k, idx) => ({
+      json: { /* ... */ },
+      pairedItem: { item: idx }  // ← PFLICHT
+    }));
+    ```
+
+35. **NIEMALS** SplitOut-Output via `$json.role` ansprechen!
+    → SplitOut auf Array-Feld `segments` packt das Sub-Object UNTER den Feldnamen
+    → Korrekt: `$json.segments.role`, `$json.segments.speaker_text`
+    → Andere Top-Level-Felder bleiben erhalten via `include: "allOtherFields"`
+
+36. **NIEMALS** `httpHeaderAuth` Credential-IDs via n8n Public-API setzen wollen!
+    → API setzt nur `predefinedCredentialType` (z.B. `elevenLabsApi`, `anthropicApi`) auto
+    → Für `genericCredentialType` mit `httpHeaderAuth`: ID bleibt `"PLACEHOLDER"`
+    → User MUSS im UI manuell verknüpfen (Workflow-Tab schließen+öffnen, dann Dropdown)
+    → Public-API GET /credentials gibt 403 (kein Listing möglich)
+
+37. **NIEMALS** `jsonBody` mit `+`-JS-Konkatenation und `JSON.stringify(...)` als Expression bauen!
+    → n8n parst den Body-String als JSON statt die Expression zu evaluieren
+    → Lösung: Code-Node davor baut Body komplett, HTTP-Node nimmt `={{ JSON.stringify($json.requestBody) }}`
+
+38. **NIEMALS** Claude/LLM-Output direkt in `JSON.parse` ohne typografische-Quote-Sanitizer!
+    → Claude mischt `„ " "` mit ASCII `"` → JSON.parse bricht
+    ```js
+    raw = raw
+      .replace(/[\u201E\u201C\u201D\u201F]/g, "'")
+      .replace(/[\u2018\u2019\u201A\u201B]/g, "'");
+    // Brace-Fallback bei Codefence
+    const m = raw.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]);
+    ```
+    → Im Prompt zusätzlich: "Verwende KEINERLEI Anführungszeichen im Output."
+
+39. **NIEMALS** ElevenLabs Multi-Voice-Workflows mit >30 Segmenten ohne aggressive Throttling!
+    → Standard-Plans: max 3 concurrent → 429
+    → Sustained Traffic >15-20 min → ECONNRESET aborted (Connection-Pool)
+    → Mitigation: `batchInterval ≥8000ms` + `retryOnFail` + `maxTries:5` + `waitBetweenTries:8000`
+    → Bei Failure-Rate >50% lieber Single-Voice (z.B. 13 Calls statt 43)
+
+40. **NIEMALS** PPTX `<p:timing>` komplett ersetzen wenn Click-Animationen erhalten bleiben sollen!
+    → AUTOPLAY_TIMING_TEMPLATE.format() killt Original-Bullet-Reveals
+    → Stattdessen: Original `<p:seq>/<p:cTn>/<p:childTnLst>` finden und Autoplay-`<p:par>` per `insert(0)` einfügen
+    → Behält Click-Animationen, fügt nur Audio-Trigger zusätzlich hinzu
+
 ### 🟡 BEVORZUGT
 
 1. **Error Workflow** einrichten für Fehlerbenachrichtigung
@@ -811,6 +880,187 @@ return [{
 ## Gelernte Lektionen
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
+
+### 2026-04-22 - FEM-Pipeline Debugging (12 Lessons aus Multi-Voice TTS-Workflow)
+
+**Kontext:** 15+ Stunden Iteration an n8n-Workflow `ZPBIh5ikV8Q3oMrf` für PPTX-Vertonung mit LLM-Preprocessing (Claude Sonnet 4.5), 3-Voice-Rollen-Splitting, ElevenLabs/Azure/edge-tts, ffmpeg concat + EBU R128 loudness norm, OOXML-AutoPlay-Embed.
+
+#### 🔴 KRITISCH: Binary-Index in Code-Nodes
+
+**FALSCH:**
+```js
+// runOnceForEachItem
+const buf = await this.helpers.getBinaryDataBuffer(0, 'data');
+// → Liest IMMER Binary von Item[0] → alle Items kriegen identisches Audio!
+```
+
+**RICHTIG:**
+```js
+const buf = await this.helpers.getBinaryDataBuffer($itemIndex, 'data');
+```
+
+**Symptom:** Alle Slides hatten dasselbe Audio im fertigen PPTX, obwohl TTS verschiedene MP3s lieferte.
+
+#### 🔴 KRITISCH: n8n Public-API kann Credentials NICHT auto-binden
+
+- `predefinedCredentialType` (z.B. `elevenLabsApi`, `anthropicApi`): Funktioniert via API-PUT, ID wird automatisch gebunden
+- `genericCredentialType` mit `httpHeaderAuth`: ID muss `"PLACEHOLDER"` bleiben → User MUSS im UI manuell verknüpfen
+- Public-API gibt `403` für `GET /credentials` (kein Listing möglich)
+
+**Konsequenz:** Bei Azure/Custom-Header-Auth: Bauen + User-Anweisung "Klick → Dropdown → Save" geben
+
+#### 🔴 KRITISCH: contentType=raw aktiviert useStream und überschreibt responseFormat
+
+```json
+{
+  "contentType": "raw",
+  "rawContentType": "application/json",
+  "options": { "response": { "response": { "responseFormat": "json" }}}
+}
+```
+
+→ Response kommt **trotzdem** als Buffer-Object mit `_writeState`/`_readableState`/etc., nicht als parsed JSON.
+
+**Lösung:** Entweder
+- `specifyBody: "json"` mit gestringifyptem Body via Code-Node davor, ODER
+- Parser-Code-Node der robust beide Shapes (string, object, stream) handelt
+
+#### 🔴 KRITISCH: n8n cached compiled Code-Node-JS
+
+Nach `PUT /workflows/{id}` greift der neue JS-Code nicht automatisch. Worker hat alten Code im Cache.
+
+**Lösung — IMMER nach Workflow-PUT:**
+```bash
+curl -X POST .../workflows/{id}/deactivate
+curl -X POST .../workflows/{id}/activate
+```
+
+#### 🔴 KRITISCH: SplitOut Output-Struktur
+
+`SplitOut` auf Array-Feld `segments` mit `include: "allOtherFields"`:
+
+```js
+// Input:  { slide_num: 2, segments: [{role:'A',text:'..'}, {role:'B'}] }
+// Output: zwei Items, jeweils:
+//   { segments: <single object aus array>, slide_num: 2 }
+```
+
+**Wichtig:** `$json.segments.role`, NICHT `$json.role`. Das Array-Feld wird mit dem aktuellen Element überschrieben — keine Top-Level-Spread.
+
+#### 🟡 pairedItem-Tracking in Custom-Aggregate
+
+`runOnceForAllItems` Code-Nodes müssen `pairedItem` setzen, sonst brechen downstream `$('node').item.json` Lookups mit "Paired item data unavailable":
+
+```js
+return Object.keys(grouped).map((k, idx) => ({
+  json: { /* ... */ },
+  pairedItem: { item: idx }  // PFLICHT
+}));
+```
+
+#### 🟡 ElevenLabs Concurrent + Network-Stability
+
+- Standard-Plans: max **3 concurrent requests** → 429 `concurrent_limit_exceeded`
+- Sustained Traffic >15-20 min → `ECONNRESET aborted` von Connection-Pool
+- Mehr Segmente = höhere Failure-Rate (33/43 → 6/46 bei vielen Calls)
+
+**Mitigation:**
+```json
+{
+  "options": { "batching": { "batch": { "batchSize": 1, "batchInterval": 8000 }}},
+  "retryOnFail": true, "maxTries": 5, "waitBetweenTries": 8000,
+  "alwaysOutputData": true, "onError": "continueRegularOutput"
+}
+```
+
+**Aber:** Concurrent-Limit ist hard. Bei vielen Segmenten: Single-Voice statt Multi-Voice (13 Calls statt 43).
+
+#### 🟡 onError: continueRegularOutput → defensives Downstream
+
+Failed HTTP-Items kommen mit `json: {error: ...}` und `binary: {}` durch.
+
+**Pattern für Audio→base64 Code-Node:**
+```js
+let buf = null;
+try { buf = await this.helpers.getBinaryDataBuffer($itemIndex, 'data'); }
+catch (e) {}
+if (!buf || buf.length === 0) {
+  return { json: { /* meta */, audio_base64: null, _failed: true } };
+}
+return { json: { /* meta */, audio_base64: buf.toString('base64') } };
+```
+
+**Aggregate filtert dann:**
+```js
+if (j._failed) continue;
+```
+
+#### 🟡 LLM-Output JSON-Robustness (Claude/Anthropic)
+
+Claude mischt typografische und ASCII-Anführungszeichen → `JSON.parse` bricht.
+
+**Sanitizer vor `JSON.parse`:**
+```js
+raw = raw
+  .replace(/[\u201E\u201C\u201D\u201F]/g, "'")  // „ " " ‟
+  .replace(/[\u2018\u2019\u201A\u201B]/g, "'"); // ' ' ‚ ‛
+// Codefence strip
+if (raw.startsWith('```')) raw = raw.replace(/^```(json)?\n?/, '').replace(/```\s*$/, '');
+// Brace-Fallback
+let parsed;
+try { parsed = JSON.parse(raw); }
+catch (e) {
+  const m = raw.match(/\{[\s\S]*\}/);
+  if (m) parsed = JSON.parse(m[0]);
+  else throw e;
+}
+```
+
+**Im Prompt zusätzlich:** "Verwende KEINERLEI Anführungszeichen im speaker_text."
+
+#### 🟡 jsonBody-Expression-Probleme
+
+```
+"jsonBody": "={\n  \"text\": ...some + JS.stringify($json.x)...\n}"
+```
+
+→ n8n versucht den Body-String als JSON zu parsen statt die Expression zu evaluieren. Bricht bei `+`/JS-Operatoren.
+
+**Lösung:** Code-Node davor baut Body komplett:
+```js
+return { json: { requestBody: { /* gebaut */ } } };
+```
+HTTP-Node: `"jsonBody": "={{ JSON.stringify($json.requestBody) }}"`
+
+#### 🔵 UI-Save überschreibt API-Patches
+
+Wenn User Workflow im UI offen hat während API-PUT → User-Save überschreibt API-State.
+
+**Workflow:** Vor User-Edit nach API-PUT → Tab schließen + neu öffnen.
+
+#### 🔵 PPTX Animation-Merge statt Strip
+
+`<p:timing>` ersetzen zerstört Original-Click-Animationen (Bullet-Reveals).
+
+**Besser:** Existing `<p:seq>/<p:cTn>/<p:childTnLst>` finden und Autoplay-`<p:par>` per `insert(0)` einfügen — bewahrt Original-Animationen, fügt nur Audio-Trigger zusätzlich hinzu.
+
+#### Workflow-Trigger via Form-Webhook automatisierbar
+
+```bash
+curl -X POST "${N8N_API_URL}/form/${WEBHOOK_ID}" \
+  -F "PowerPoint-Präsentation (.pptx)=@file.pptx;type=..." \
+  -F "Field 2=" -F "Field 3=" \
+  -o resp.bin --max-time 30
+# Returns: {"formWaitingUrl":"https://.../form-waiting/{exec_id}?signature=..."}
+```
+
+Form-Field-Labels mit Sonderzeichen wie `(.pptx)` müssen 1:1 in `-F` Parameter — Binary-Key normalisiert n8n intern aber zu z.B. `PowerPoint_Pr_sentation___pptx_`.
+
+#### Filesystem-v2 Binary-Mode (Recap, weil immer wieder relevant)
+
+`$binary['key'].data` liefert Mode-Marker `"filesystem-v2"`, nicht echten Base64. **Immer** `getBinaryDataBuffer($itemIndex, 'key')` nutzen für Buffer-Zugriff.
+
+---
 
 ### 2026-03-27 - OpenRouter Model-IDs + Anthropic Credits + Anthropic Node Format
 

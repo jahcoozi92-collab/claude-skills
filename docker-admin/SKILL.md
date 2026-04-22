@@ -1065,6 +1065,55 @@ docker exec ollama ollama create model-fast -f /root/.ollama/Modelfile-fast
 
 ---
 
+### 2026-04-22 - FEM-Pipeline Deployment (edge-tts + Multi-Stage Rebuild)
+
+**edge-tts Version-Pinning (KRITISCH):**
+- Symptom: `edge-tts` Container liefert plötzlich `WSServerHandshakeError: 403 Forbidden`
+- Ursache: Microsoft hat Auth-Mechanismus verschärft, alte `edge-tts` Versionen (z.B. `==7.0.0`) bekommen 403
+- Fix: NIE fixed pinning auf alte Version — stattdessen Range:
+  ```
+  edge-tts>=7.0.2,<8
+  ```
+- Lesson: TTS-Provider mit gestreamten WebSockets ändern Auth ohne Vorwarnung — Range-Pinning schützt vor Lock-In
+
+**docker compose Build-Cache vs. requirements.txt Update:**
+- Symptom: `requirements.txt` geändert, `docker compose up --build` neu gebaut, aber alte Package-Version im Container
+- Ursache: Docker nutzt Layer-Cache, wenn `COPY requirements.txt` Datei-Hash gleich aussieht (bei Range-Pin: `>=7.0.2,<8` blieb formal identisch)
+- Fix bei stabilem requirements.txt aber neuem Lockfile-Bedarf:
+  ```bash
+  docker compose build --no-cache <service>
+  docker compose up -d <service>
+  ```
+- Alternative: `pip install --upgrade --force-reinstall` im Dockerfile bei kritischen Paketen
+
+**FastAPI + python-pptx Deployment-Pattern (fem-pipeline):**
+- Stack: FastAPI + uvicorn[standard] + python-pptx + lxml + ffmpeg (System-Pkg) + edge-tts
+- `requirements.txt` mit exakten Pins für Stabilität:
+  ```
+  fastapi==0.115.6
+  uvicorn[standard]==0.32.1
+  python-pptx==1.0.2
+  lxml==5.3.0
+  python-multipart==0.0.20
+  pydantic==2.10.3
+  edge-tts>=7.0.2,<8
+  ```
+- ffmpeg via `apt-get install -y ffmpeg` im Dockerfile (nicht via pip)
+- WICHTIG: `python-multipart` für FastAPI File-Uploads explizit listen (sonst 422 Errors)
+
+**Network-Mismatch zwischen n8n und Service-Container:**
+- Symptom: n8n erreicht neuen Service nicht (`ECONNREFUSED` oder `Name or service not known`)
+- Ursache: Service in `n8n_default` Network, n8n selbst aber in `shared-services` Network
+- Diagnose:
+  ```bash
+  docker inspect n8n-n8n-1 --format '{{json .NetworkSettings.Networks}}'
+  docker inspect <new-service> --format '{{json .NetworkSettings.Networks}}'
+  ```
+- Fix: In compose.yml für neuen Service `networks: [shared-services]` setzen + `external: true`
+- Lesson: Bei NAS mit zentralem n8n IMMER prüfen, in welchem Network n8n läuft, BEVOR neuer Service deployed wird
+
+---
+
 ## Quick Reference Card
 
 ```
