@@ -1416,3 +1416,68 @@ Wenn nur Ebene 1 geaendert wird, laufen Cron-Jobs und Fallbacks weiter mit den a
 - Ursache: Bonjour-Service-Advertiser haengt manchmal in `announcing` State (>10s), `[ws] closed before connect`-Logs
 - Recovered automatisch nach `restarting advertiser`, Gateway dann gesund
 - Vor Doctor-Lauf nach Restart: 5-6 Sekunden warten, oder `curl -s http://127.0.0.1:18789/healthz` als Smoke-Test
+
+### 2026-04-22 — OpenClaw-Limits erkannt: Voice ist separater Stack
+
+**Architektur-Prinzip (wichtigste Lektion der Session):**
+**OpenClaw ist Langform-Backend, KEIN Universal-Backend.** Voice-Assist und Event-Monitoring gehoeren in spezialisierte, unabhaengige Services. OpenClaw bleibt fuer Telegram, komplexe Dialoge, Memory-basierte Konversation. Dieses Prinzip praegt kuenftige Architektur-Entscheidungen.
+- Voice-Stack → HA+OpenAI-Conversation-Integration direkt (siehe `project_voice_assistant.md`)
+- Event-Monitoring (z.B. NAS100-News) → `~/market-monitor/` standalone Node-Service
+- OpenClaw-CLI NIEMALS als Voice-Backend aufrufen
+
+**OpenClaw-CLI-Latenz: 30-45s pro Turn (live gemessen 2026-04-22):**
+- Full-Workspace-Bootstrap laedt 38.473 Input-Tokens bei jedem Aufruf (SOUL + AGENTS + MEMORY + TOOLS + 14 Packages Memory-History)
+- `--session-id <id>` hilft NICHT (48s Latenz trotz Session-Reuse — Gateway pool-waermt Sessions nicht fragment-fein)
+- `--local` embedded mode hilft NICHT (44s — Bootstrap unveraendert, nur Gateway-Bypass)
+- Konsequenz: CLI ist fuer Langform-Tasks (Cron-Jobs, Telegram-Dialog), NICHT fuer Request/Response unter 10s
+
+**Anthropic-API-Key tot (HTTP 401 invalid x-api-key):**
+- Direktcall `POST https://api.anthropic.com/v1/messages` mit Key aus `.env` schlaegt mit `authentication_error` fehl
+- Betrifft ALLE 4 Agents (sonnet, opus, pflege, pflege-eu) — alle nutzen `anthropic/claude-sonnet-4-6` oder `anthropic/claude-opus-4-6`
+- Fallback-Kette greift silent: OpenRouter → `minimax/minimax-m2.7`
+- Qualitativ ein spuerbarer Downgrade (MiniMax hat schwaeches Tool-Calling, langsamer)
+- **Fix:** Neuen Key via https://console.anthropic.com/settings/keys, in `~/.openclaw/.env` als `ANTHROPIC_API_KEY` eintragen, `systemctl --user restart openclaw-gateway.service`
+- **Verifikation:** `curl -s -o /dev/null -w "%{http_code}\n" -H "x-api-key: $ANTHROPIC_API_KEY" -H "anthropic-version: 2023-06-01" -H "Content-Type: application/json" https://api.anthropic.com/v1/messages -d '{"model":"claude-sonnet-4-6","max_tokens":10,"messages":[{"role":"user","content":"ping"}]}'` → muss `200` zurueckgeben
+
+**Fallback-Kette laeuft silent — Debug via `result.meta.agentMeta.model`:**
+- Wenn Primary-Provider tot → Gateway schaltet ohne sichtbaren Fehler auf naechstes Modell
+- User-Wahrnehmung: "Agent versteht mich ploetzlich nicht mehr gut" obwohl Config unveraendert
+- Debug-Pfad: `openclaw agent --json --message "ping"` → `result.meta.agentMeta.model` zeigt TATSAECHLICH genutztes Modell
+- Bei `minimax/*` oder `openrouter/*` als Ausgabe obwohl Agent auf `anthropic/*` konfiguriert → Primary-Provider tot
+
+**Existierende HA-Bridge auf Port 18790 ist Push-only:**
+- Script: `~/bin/openclaw-ha-bridge.py` (Python stdlib HTTP-Server)
+- POST-Endpoint nimmt `{message, deliver:true}`, started Subprocess-Thread mit `openclaw agent --channel telegram --deliver`, antwortet sofort `{status:"queued"}`
+- **KEINE Request/Response-Semantik** — die Agent-Antwort landet via Telegram, nicht im HTTP-Response
+- Rolle: Webhook fuer HA-Automationen ("Tuer auf → OpenClaw schickt Push-Benachrichtigung")
+- **NICHT umbaubar zu Voice-Backend** ohne Full-Rewrite — selbst dann leidet die Latenz-Erwartung (wegen CLI-Bootstrap)
+
+**OpenClaw-Gateway auf Port 18789 ist KEIN programmatischer API-Endpoint:**
+- `/` → Control-Panel-HTML (Theme claw/knot/dash)
+- `/v1/chat/completions` → HTTP 404
+- `/v1/models` → HTTP 200 aber HTML-Response (Catch-All fuer unbekannte Routes)
+- Gateway hat **kein** OpenAI-kompatibles Interface — Extended OpenAI Conversation kann hier nicht andocken
+- Extern sichtbar unter `openclaw.forensikzentrum.com` (via Cloudflare-Tunnel) — ebenfalls nur UI, keine programmatische API
+
+**`openclaw agent --json` — strukturiertes Output-Format:**
+```json
+{
+  "runId": "uuid",
+  "status": "ok",
+  "result": {
+    "payloads": [{"text": "Antwort", "mediaUrl": null}],
+    "meta": {
+      "durationMs": 11707,
+      "agentMeta": {
+        "sessionId": "uuid",
+        "provider": "openrouter|anthropic|openai",
+        "model": "minimax/minimax-m2.7|...",
+        "usage": {"input":..., "output":..., "total":...}
+      }
+    }
+  }
+}
+```
+- `--timeout <seconds>` Override des Config-Defaults (600s)
+- `--deliver` schickt Antwort via Channel; ohne `--deliver` bleibt Antwort nur im JSON
+- Praxis: `--json --timeout 60` fuer programmatische Nutzung; NIE fuer Voice (Latenz-Problem)
