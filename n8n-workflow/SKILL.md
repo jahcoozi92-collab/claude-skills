@@ -1977,3 +1977,80 @@ Schedule/Manual → HTTP GET github.com/.../git/trees/main?recursive=1
 - Private Repos: 404 ohne Token (kein 401) → public machen oder Bearer
 - `/repos/{owner}/{repo}/git/trees/{branch}?recursive=1` → `tree[]` mit `{path, type, sha, size}`
 - raw content via `raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}` (public)
+
+### 2026-04-22 — Deploy-Pattern, Webhook-Cache, Log-Branch-Feldcheck
+
+**Deploy-Pattern für Workflow-Änderungen (etabliert):**
+```python
+# workflows/deploy_*.py Template
+# 1. GET via Internal API (Cloudflare blockt PUT extern)
+# 2. Modify gewünschte Node-Parameters
+# 3. Settings-Filter — NUR diese Keys sind erlaubt:
+allowed_settings = {k: v for k, v in wf.get("settings", {}).items()
+                    if k in ("executionOrder", "timezone", "callerPolicy")}
+# 4. PUT-Body minimal halten:
+put_body = {"name": wf["name"], "nodes": wf["nodes"],
+            "connections": wf["connections"], "settings": allowed_settings}
+# 5. Active-State: NICHT im PUT-Body! Separate POST-Endpoints:
+api_post(f"/workflows/{WORKFLOW_ID}/deactivate")
+api_put(...)
+api_post(f"/workflows/{WORKFLOW_ID}/activate")
+```
+
+**Webhook-Cache bei API-PUT:**
+- Nach API-PUT hält n8n im Webhook-Router noch alte HTML/Response-Configs.
+- Zwei Lösungen:
+  1. `deactivate → activate` via API triggert Re-Registration.
+  2. `docker restart n8n-n8n-1` — garantiert, aber 20s Downtime.
+- Bei kritischen Prompt-Änderungen: beides machen.
+
+**Log-Branch-Feldcheck (Fehlerursache war 3 Wochen unentdeckt!):**
+- Symptom: Supabase_Insert_Trace schickt alles — aber kein Eintrag landet in
+  `answer_traces`. n8n zeigt die Execution als "success", der HTTP-Request-Node
+  gibt aber still 400 zurück.
+- Ursache: Im `Log_Answer_Trace`-Code-Node wurde `low_grounding` ins Output-JSON
+  geschrieben, obwohl die Supabase-Spalte fehlte. Supabase rejected → 400.
+  `Prefer: return=minimal` verschluckt den Fehler.
+- Diagnose: Test-INSERT direkt in Supabase mit allen Feldern aus dem Code-Node.
+  Liefert klare Fehlermeldung ("column X does not exist").
+- Fix-Strategie: ENTWEDER Spalte in DB anlegen (wenn Feld wertvoll ist) ODER
+  Feld im Code entfernen. Hier: Spalte `low_grounding boolean DEFAULT false` +
+  zwei Debug-Spalten `terms_checked`, `context_length` hinzugefügt.
+
+**workflow_history (Update bei jeder SQLite-Direkt-Änderung):**
+- n8n liest ACTIVE workflows aus `workflow_history`, nicht `workflow_entity`.
+- `workflow_entity.activeVersionId` zeigt auf history-Eintrag.
+- Bei SQLite-Direkt-Edits BEIDE Tabellen updaten + `docker restart n8n-n8n-1`.
+- Bei API-PUT wird workflow_history automatisch korrekt befüllt — nur direkte
+  SQLite-Bastelei braucht das manuell.
+
+**Cron-Schedules für n8n-adjacent Scripts:**
+- Python-Crawler & Skripte NICHT über n8n-Container laufen lassen (Container-
+  Isolation, kein `pdfplumber` etc.).
+- Host-Cron via `/etc/cron.d/<name>` mit Format:
+  ```
+  SHELL=/bin/bash
+  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  30 4 * * 1 Jahcoozi /volume1/docker/n8n/workflows/<script>.sh >/dev/null 2>&1
+  ```
+- Wrapper-Script schreibt Logs nach `workflows/logs/<name>_YYYYMMDD_HHMMSS.log`,
+  Rotation (letzte 10), optional Telegram-Notify bei Erfolg/neuen Daten.
+- sudo auf NAS verfügbar ohne Passwort — Cron-File direkt `sudo cp` + `chown root`
+  + `chmod 644`.
+
+**Settings-Filter-Bug (400 bei PUT):**
+- PUT schlägt fehl, wenn `settings` extra Felder enthält:
+  - ❌ `timeSavedMode`, `availableInMCP`, `saveExecutionProgress`, `saveDataErrorExecution`
+  - ✅ Nur `executionOrder`, `timezone`, `callerPolicy`
+- Deploy-Skripte müssen explizit filtern, nicht blind `wf["settings"]` weitergeben.
+
+**Sanity-Check nach Deploy:**
+```bash
+# 1. Workflow ist aktiv?
+curl -s -H "X-N8N-API-KEY: $KEY" \
+  http://192.168.22.90:5678/api/v1/workflows/$ID | jq '.active, .name'
+# 2. Gewünschter Code/Prompt steht drin?
+curl -s ... | jq '.nodes[] | select(.name=="Node_Name") | .parameters'
+# 3. Nach Restart: Docker-Status
+docker ps --filter name=n8n-n8n-1 --format "{{.Status}}"
+```

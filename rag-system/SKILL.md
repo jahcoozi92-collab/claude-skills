@@ -2155,3 +2155,113 @@ GitHub API Tree (recursive) → Split → Filter SKILL*.md → Fetch Raw
   (medifox-admin:8086 liefert nur admin-index.html, chat.forensikzentrum.com → open-webui)
 - Vor Fix-Commit klären: wo öffnet Diana die Seite? (Lokaler Browser / Cloudflare Pages /
   anderer Host). Edit allein reicht nicht — Datei muss zum Deploy-Ort
+
+### 2026-04-22 — Anti-Tabellen-Fix, Signaturkollision, Boost-Matrix, Trace-Feldcheck
+
+**Prompt-Imitations-Antipattern (KRITISCH):**
+- Markdown-Tabellen im System-Prompt (Tool-Listen, Menüstrukturen) führen zwangsläufig zu
+  tabellarischen LLM-Antworten — das Modell behandelt sie als Few-Shot-Muster.
+- Symptom: "Chat gibt nur noch Tabellen zurück", mehrfach wiederkehrend.
+- Lösung zweistufig:
+  1. Alle `| Tool | Zweck |`-Blöcke im Prompt in Bullet-/Nummernlisten umbauen.
+  2. Explizite VERBOTEN-Regel: "NIEMALS Markdown-Tabellen in der Antwort. Ausnahme:
+     Nutzer fragt wortwörtlich nach Tabelle/Matrix."
+- Deploy-Skript: `workflows/deploy_no_tables_prompt.py` als Referenz.
+- Memory: `feedback_llm_imitates_prompt_tables.md` warnt vor Wiederkehr.
+
+**hybrid_search_v3 Signatur-Kollision (PGRST203):**
+- Symptom: PostgREST-Fehler "Could not choose the best candidate function between:
+  public.hybrid_search_v3(..., vector, ...) und public.hybrid_search_v3(..., halfvec, ...)".
+- Ursache: Zwei gleichnamige Funktionen mit unterschiedlichen Vektor-Typen.
+- Check vor jeder Migration:
+  ```sql
+  SELECT proname, pg_get_function_arguments(oid)
+  FROM pg_proc WHERE proname = 'hybrid_search_v3';
+  ```
+- Legacy-Variante droppen:
+  ```sql
+  DROP FUNCTION IF EXISTS public.hybrid_search_v3(text, vector, integer, integer);
+  ```
+- Produktions-Signatur ist `halfvec` mit 6 Args (match_count, min_trust_level,
+  product_filter, rrf_k).
+
+**source_type-Boost-Matrix (MUSS aktuell gehalten werden):**
+- Neue Content-Typen landen im `ELSE 1.0`-Bucket und werden von geboosteten Quellen
+  verdrängt — selbst wenn sie qualitativ hochwertiger sind.
+- Aktueller Stand (2026-04-22):
+  | source_type            | Boost |
+  |------------------------|-------|
+  | faq                    | 1.30  |
+  | confluence_wiki        | 1.25  |
+  | update_info_10x        | 1.22  |
+  | cached_wiki_page       | 1.20  |
+  | qm_handbuch_md         | 1.20  |
+  | wiki_article           | 1.18  |
+  | structured_click_path  | 1.15  |
+  | ELSE                   | 1.00  |
+- Regel: Bei jedem neuen source_type → CASE-Statement in `hybrid_search_v3` erweitern.
+
+**answer_traces-Insert-Feldcheck:**
+- Symptom: Log-Branch war 3 Wochen tot (01.04.–22.04.), alle Inserts schlugen still
+  mit HTTP 400 fehl, weil Code-Node das Feld `low_grounding` schickte — die Spalte
+  existierte aber nicht.
+- Ursache: Supabase REST API rejected unbekannte Felder, aber `Prefer: return=minimal`
+  unterdrückt die Fehlermeldung im n8n-Log.
+- Check vor Deploy jeder Code-Node-Änderung:
+  ```sql
+  -- Dummy-Insert mit ALLEN Feldern aus dem Code
+  INSERT INTO answer_traces (session_id, query, answer, grounding_score,
+    abstain_triggered, low_grounding, grounding_alert, terms_checked,
+    context_length, model, created_at)
+  VALUES ('test', 'test', 'test', 0, false, false, null, 0, 0, 'test', now())
+  RETURNING id;
+  -- Danach DELETE des Test-Eintrags.
+  ```
+
+**Canonical-Prompt ≠ Active-Prompt:**
+- `workflows/ENHANCED_SYSTEM_PROMPT_v5.md` ist die Dokumentations-Version.
+- Der aktive Prompt liegt in `parameters.options.systemMessage` des
+  `Supabase KI-Agent`-Nodes im Workflow `SJ47UX9mv8wh1Wwy`.
+- Bei Prompt-Änderungen BEIDE Orte updaten, sonst driftet die Doku.
+- Zum Lesen: GET auf `/api/v1/workflows/SJ47UX9mv8wh1Wwy`, dann nach Node-Name filtern.
+
+**Produkt-Versions-Sync (MediFox 8.x → 10.x):**
+- MediFox hat einen Versionssprung (vermutlich bei Fusion mit DAN) gemacht:
+  8.19.10 → 10.3 → 10.27.12 (Stand April 2026).
+- Datenbank kannte vorher nur 8.x — eine komplette Produktgeneration fehlte.
+- Automatischer Crawler: `workflows/crawl_medifox_updates_10x.py` + wöchentlicher
+  Cron `/etc/cron.d/medifox-crawler` (Mo 04:30).
+- Neue `source_type = update_info_10x`, Boost 1.22.
+
+**knowledge_gaps-Trigger als Auto-Feedback-Loop:**
+- Trigger `trg_answer_traces_feed_gaps` auf `answer_traces`:
+  bei `low_grounding=true OR abstain_triggered=true` wird ein Gap-Eintrag
+  angelegt/inkrementiert, Tags per Regex abgeleitet.
+- UNIQUE INDEX auf `normalized_query` → ON CONFLICT inkrementiert `occurrence_count`.
+- Wichtig beim Trigger-Funktionscode: `derived_tags || ARRAY['tag']`,
+  nicht `derived_tags || 'tag'` — sonst "malformed array literal".
+
+**PDF-Extraktion mit pypdf:**
+- Mehrspaltige Confluence-PDFs zerreißen bei pypdf-Extraktion: Listen-Zahlen und
+  Pfeile landen auf eigenen Zeilen (`\n1\n→\nBewohner\n` statt `1 → Bewohner`).
+- Postprocess-Regex-Muster in `cleanup_pdf_text()`:
+  - `\n\s*(\d{1,2})\s*\n\s*(→|->)\s*\n\s*([A-ZÄÖÜ][^\n]*)` → `\n\1 \2 \3`
+  - `(→|->)\s*\n\s*([A-ZÄÖÜ][^\n]{2,})` → `\1 \2`
+  - Isolierte Zahl-only-Zeilen entfernen.
+- Für hochwertigere Extraktion langfristig `pdfplumber` oder `pymupdf` installieren.
+
+**Eval-Muster (aus prompting-muster-Bibliothek):**
+- Nach jedem größeren RAG-Rollout: Qualitäts-Prüfer-Muster anwenden.
+- Messbare Kriterien trennen (B-Retrieval, D-Infrastruktur, E-Performance — sofort
+  per SQL testbar) von subjektiven Kriterien (A-Antwortform, C-Abstain — brauchen
+  Live-Chat).
+- Beleg für Erfolg der Retrieval-Änderungen:
+  - Fixe Erwartung: Chunk-ID auf Rang 1, sim ≥ Schwellwert.
+  - Diversität: Top-3 bei "Was ist neu in 10.27?" alle `update_info_10x`.
+
+**Security-Schuld: Keys im Klartext:**
+- OPENAI_API_KEY und SUPABASE_SERVICE_ROLE_KEY liegen im Klartext in:
+  - `/volume1/docker/open-webui/backups/*/env`
+  - `/volume1/docker/lightrag/.env.lightrag`
+- Helfen beim pragmatischen Zugriff (`embed_new_chunks.py`, Cron-Wrapper), aber
+  bei nächster geplanter Key-Rotation unbedingt entfernen.
