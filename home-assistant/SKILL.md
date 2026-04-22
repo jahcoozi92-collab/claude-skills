@@ -9,8 +9,11 @@ Patterns and best practices for working with Home Assistant configuration on thi
 - **Internal URL**: `http://192.168.22.90:8123`
 - **External URL**: `https://homeassistant.forensikzentrum.com`
 - **Container Name**: `homeassistant` (NICHT `home-assistant`)
-- **HA Version**: 2026.3.x (stable)
+- **HA Version**: 2026.4.x (stable, verifiziert 2026-04-22)
 - **Docker**: `network_mode: host`, `privileged: true`
+- **Voice-Container** (laufen parallel auf NAS):
+  - `ha-wyoming-whisper` (Port 10300, STT lokal, rhasspy/wyoming-whisper:latest)
+  - `ha-wyoming-piper` (Port 10200, TTS lokal, rhasspy/wyoming-piper:latest, default voice `de_DE-thorsten-medium`)
 
 ## Common Commands
 
@@ -89,6 +92,124 @@ Die Thermostate liefen frueher ueber Bosch SHC (Zigbee), jetzt ueber **Matter**.
 | Fenster GZ | `binary_sensor.fensterkontakt_rechts` | Bosch SHC |
 | Fenster SZ | `binary_sensor.fensterkontakt_rechts_2` | Bosch SHC |
 | Person | `person.diana` | Mobile App (Samsung S25 Ultra) |
+
+## Voice Assistant / Assist Pipeline
+
+Vollständiges Voice-Setup für HA — STT, Conversation, TTS. Gilt seit HA 2024+.
+
+### Architektur
+
+```
+Mobile-App (HA Companion, Wake-Word "Hey Nabu" on-device)
+  └─ STT-Engine     (stt.faster_whisper  — lokal via Wyoming)
+  └─ Conversation   (conversation.openai_conversation — gpt-4.1, Tool-Calling)
+  └─ TTS-Engine     (tts.openai_tts "shimmer" — cloud, oder tts.piper lokal)
+```
+
+### Conversation-Entity-ID ≠ Integration-Title (KRITISCH)
+
+Die Conversation-Entity-ID leitet sich vom **Domain + Unterscore-Title** ab, nicht vom UI-Titel:
+
+| Integration-Title (UI) | Conversation-Entity-ID |
+|---|---|
+| "ChatGPT" | `conversation.openai_conversation` |
+| "Claude" | `conversation.anthropic` (voraussichtlich) |
+| "Home Assistant" (Default) | `conversation.home_assistant` |
+
+Immer prüfen via `GET /api/states` mit Prefix-Filter `conversation.`, niemals raten. Falsche `agent_id` → `"invalid agent ID"` 400.
+
+### Voice-Pipeline via REST testen
+
+```bash
+curl -X POST -H "Authorization: Bearer $HA_LONG_LIVED_TOKEN" \
+  -H "Content-Type: application/json" \
+  http://192.168.22.90:8123/api/conversation/process \
+  -d '{"text":"Schalte das Flur EG Licht aus","language":"de",
+       "agent_id":"conversation.openai_conversation"}'
+```
+
+Erwartbare Latenz:
+- Reine Konversation (ohne Tool-Call): **~2-3s** mit gpt-4.1
+- Tool-Calling (Licht, Szene, Klima): **~6-9s**
+- Optimierung: `gpt-4o-mini` ist ~2x schneller, 5x günstiger, leichter Verständnis-Verlust
+
+### Entity-Exposure für Voice — Domain-Whitelist
+
+NICHT alle Entities exponieren, nur steuerbare. Sonst Tool-Call-Verwässerung (LLM bekommt 439 Optionen und wählt schlecht).
+
+**Whitelist** (für Voice-Tool-Exposure verwenden):
+```
+light, switch, scene, climate, script, media_player, cover, fan, lock
+```
+
+**Blacklist** (niemals exponieren für Voice):
+```
+sensor, binary_sensor, device_tracker, weather, sun, zone,
+input_*, automation (triggerbar via script statt direkt)
+```
+
+### WebSocket-Pattern für Pipeline + Expose
+
+**`homeassistant.expose_entity` ist KEIN Service** — nicht via REST oder `POST /api/services/...` erreichbar. Nur via WebSocket-Command:
+
+```json
+{"id": N, "type": "homeassistant/expose_entity",
+ "assistants": ["conversation"], "entity_ids": [...],
+ "should_expose": true}
+```
+
+Ebenso: `assist_pipeline/pipeline/{list,create,update,set_preferred}` nur via WebSocket.
+
+Script-Pattern (permanent besser in `~/bin/ha-*.py` ablegen):
+```python
+import os, json, asyncio, websockets
+async def main():
+    async with websockets.connect("ws://192.168.22.90:8123/api/websocket") as ws:
+        await ws.recv()  # auth_required
+        await ws.send(json.dumps({"type":"auth","access_token":os.environ["HA_LONG_LIVED_TOKEN"]}))
+        assert json.loads(await ws.recv())["type"] == "auth_ok"
+        # ... commands hier
+asyncio.run(main())
+```
+
+Installation der lib (Debian PEP 668-safe):
+```bash
+python3 -m venv /tmp/hamv && /tmp/hamv/bin/pip install websockets
+```
+
+### TTS-Probe via REST funktioniert nicht trivial
+
+`POST /api/tts_get_url` gibt häufig `Extra data` oder leere Response. Zum Audio-Testen besser: im HA-UI unter Settings → Voice Assistants → Pipeline → "Test" klicken, oder echten End-to-End-Test via Companion-App.
+
+## Native LLM-Integrations ab HA 2024+
+
+Große Provider sind seit HA 2024.x **nativ** integriert — **kein HACS mehr nötig** für Conversation-Agents:
+
+| Provider | Handler (für Flow-API) | Subentry |
+|---|---|---|
+| OpenAI | `openai_conversation` | Conversation + AI Task |
+| Anthropic | `anthropic` | Conversation |
+| Google Generative AI | `google_generative_ai_conversation` | Conversation |
+
+Installation via REST (statt UI):
+
+```bash
+# Flow starten
+curl -X POST -H "Authorization: Bearer $HA_LONG_LIVED_TOKEN" -H "Content-Type: application/json" \
+  http://192.168.22.90:8123/api/config/config_entries/flow \
+  -d '{"handler":"openai_conversation"}'
+# Response enthält flow_id und data_schema (api_key required)
+
+# Key submit
+curl -X POST .../flow/<flow_id> -d '{"api_key":"sk-..."}'
+```
+
+Subentries haben `llm_hass_api: ["assist"]` → Tool-Calling mit allen exponierten Entities ist automatisch aktiv.
+
+**HACS bleibt nötig für:**
+- ElevenLabs TTS (kein natives Integration bis HA 2026.4)
+- Spezial-Provider ohne offizielle Integration
+- Custom Community-Komponenten
 
 ## Modern Action Syntax (HA 2024.8+)
 
@@ -216,3 +337,6 @@ docker exec homeassistant chmod 600 /config/secrets.yaml
 5. **states.sensor Iteration in Templates**: Performance-Killer, explizite Listen nutzen
 6. **Condition mitten in Sequence**: Blockt ALLE nachfolgenden Actions, nutze `if/then`
 7. **Placeholder-Entities**: Automationen fuer nicht-existierende Geraete disablen
+8. **agent_id raten**: Conversation-Entity-ID != Integration-Title. "ChatGPT"-Integration hat `conversation.openai_conversation`, nicht `conversation.chatgpt`. Immer via `GET /api/states` prüfen.
+9. **Expose via REST-Service**: `homeassistant.expose_entity` existiert NICHT als Service-Call. Exposure (und Pipeline-Config) gehen NUR über WebSocket.
+10. **HACS-Reflex für OpenAI/Anthropic**: Beide Provider sind seit HA 2024+ nativ eingebaut. HACS nur noch für Nischen-Integrationen (z.B. ElevenLabs TTS).
