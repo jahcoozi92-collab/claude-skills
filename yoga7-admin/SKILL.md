@@ -345,3 +345,56 @@ Folgende Befehle werden von Claude Code AUTOMATISCH erlaubt — niemals in `sett
 - Postgres NAS: `cx83gXjDOqCuXZtm` (persistent)
 - Abrufen per API: GET `/api/v1/workflows/{id}` → `nodes[].credentials`
 - Auf Credential-IDs referenzieren statt neu anlegen
+
+### 2026-04-22 — 3D-Modellierung aus Grundrissen + Fotos (Blender + bpy)
+
+**Foto > Plan bei Konflikten (KRITISCH):**
+- Handgezeichnete Grundrisse allein reichen NICHT fuer 1:1 Rekonstruktion
+- Pruefe IMMER ob Originalfotos (Straße/Garten/Dach) vorhanden sind, bevor du Annahmen triffst
+- Bei Widerspruch Plan vs. Foto: Foto gewinnt (reale Aenderungen waehrend Bauzeit)
+- Beispiele: Material (Plan = abstrakt, Foto = Klinker/Putz-Mix), Dach-Orientierung, Anbau-Laenge
+
+**Schrittweise + Zwischenvalidierung (Diana-Praeferenz):**
+- Diana bevorzugt 1-3 sichtbare Aenderungen pro Turn + Render-Check statt Big-Bang-Umbau
+- Bei "vollumfaenglich" Anfrage: Top 10 Punkte priorisieren, nicht alles auf einmal
+- Pattern: Nummerierte Schritte (Schritt 1, 2, 3...) damit User gezielt validieren/korrigieren kann
+- Nach jedem Schritt: kurz berichten was geaendert wurde, dann naechster Schritt vorschlagen
+
+**Praezise Maße aus Plaenen ablesen (nicht runden):**
+- Toleranz von 30cm kann sichtbar falsch werden (9.58 ≠ 9.28, 4.49 ≠ 4.78)
+- Bei kleiner Schrift: PIL-Crop in `/tmp/` erstellen, dann mit Read-Tool anzeigen
+- Crop-Strategie: Bild in 4 Quadranten (Top/Bottom/Left/Right) schneiden
+- Wichtige Maße notieren: Hausbreite, Wandstaerke, Geschosshoehen, Fenster-/Tuerbreiten
+
+**Blender UV-Unwrap fuer Brick-Texturen:**
+- `Generated` oder `Object` Koordinaten → vertikale Streifen statt Mauerwerk
+- Loesung: `bpy.ops.uv.smart_project(angle_limit=66)` + `tc.outputs["UV"]` nutzen
+- Mapping Scale ~4.0, Brick Scale ~12 ergibt ~50 Ziegel pro UV-Quadrat
+- Alternative fuer Klinker: Noise-Textur mit ColorRamp (3 Stops: anthrazit → rotbraun → hellorange)
+
+**Filmic reduziert Farbsaettigung:**
+- Cycles + Filmic View Transform entsaettigt Materialien deutlich
+- Klinker/Dachziegel im Material-Slot SATTER anlegen als fotorealistisch gewuenscht
+- Basis-Farbe z.B. (0.45, 0.22, 0.16) statt (0.35, 0.18, 0.13)
+
+**bpy-Helper-Muster:**
+- `add_cube(name, loc, size)` wrapper mit transform_apply fuer skaliertes Mesh
+- `boolean_diff(target, cutter)` fuer Fenster/Tuer-Aussparungen
+- `uv_unwrap(obj)` nach `add_cube` fuer saubere Textur-Mapping
+- Cutter IMMER `transform_apply` vor boolean_diff aufrufen, sonst Skalierung ignoriert
+
+**Chain-of-Density S0→S4 Pattern fuer iterative Modellierung:**
+- S0: Grobe Kubatur (Haus als Quader)
+- S1: Beleuchtung + Basis-Materialien (Sonnenwinkel, Putz/Klinker)
+- S2: Architektur-Details (Fensterrahmen, Schornstein, Dachueberstand)
+- S3: Umgebung (Vegetation, Gehweg, Nachbarn)
+- S4: Innenausbau (Aushoehlung, Etagen, Treppen)
+- Pattern gut kombinierbar mit Qualitaets-Pruefer + RICE-Scoring vorab
+
+**Kamera-Konstellation fuer Aussenansichten:**
+- Target-Empty als Track-To Ziel (statt Rotations-Winkel raten)
+- cam_strasse: (0, -22, 6), lens 35-45mm (frontal)
+- cam_garten: leicht schraeg mit Offset X=8-14 (nicht frontal wegen Vegetation)
+- cam_seite: X=20-26, lens 32-40mm, mit Option Nachbar_L/R ausblenden
+- cam_axo: hoch oben schraeg (14, -18, 14), lens 35mm fuer Uebersicht
+- Vegetation AM RAND platzieren (x=±8), nicht zentral zwischen Kamera und Haus
