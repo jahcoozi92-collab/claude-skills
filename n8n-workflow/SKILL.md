@@ -881,6 +881,117 @@ return [{
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
 
+### 2026-04-23 - FEM-Pipeline Phase 2 (Video-Branch mit All-in-One-Service-Endpoint)
+
+**Kontext:** Phase 2 des FEM-Projekts — n8n-Workflow um Video-Output erweitert (MP4 mit Ken-Burns + Untertitel). Statt 8+ neue n8n-Nodes: monolithischer `/compose_full_video`-Endpoint im fem-pipeline Service, der PPTX-Render + Whisper-STT + ffmpeg-Compose intern macht.
+
+#### 🔴 KRITISCH: Form-Completion scannt ALLE connected vorgelagerten Nodes nach Binary
+
+**Symptom:** Nach Switch-Node mit conditional Branches: `ExpressionError: Node 'X' hasn't been executed` beim `Datei zurückgeben` (`respondWith: returnBinary`).
+
+**Ursache:** n8n Form-Completion-Node mit Binary-Response iteriert intern über ALLE Input-Quellen und ruft `getBinaryDataFromNode` — auch auf Nodes, die im aktuellen Pfad NICHT ausgeführt wurden (anderer Switch-Zweig).
+
+**Fix:** **Ein Form-Completion-Node pro Switch-Output-Pfad**, nicht alle auf denselben Node routen.
+
+```
+❌ FALSCH:
+  Switch ─┬─► Datei zurückgeben
+          └─► Compose Full Video ──► Datei zurückgeben  (crash bei PPTX-Pfad!)
+
+✅ RICHTIG:
+  Switch ─┬─► Datei zurückgeben                     (PPTX)
+          └─► Compose Full Video ──► Datei zurückgeben (Video)   (MP4/ZIP)
+```
+
+**Stack-Trace-Signatur:** `binaryResponse` → `getBinaryDataFromNode` → `ensureNodeExecutionData` → "hasn't been executed".
+
+#### 🔴 KRITISCH: Cloudflare blockt n8n-API PUT-Requests (error code 1010)
+
+**Symptom:** `urllib.error.HTTPError: HTTP Error 403: Forbidden` mit Body `error code: 1010` beim PUT `/api/v1/workflows/{id}`.
+
+**Ursache:** n8n läuft hinter Cloudflare (`n8n.forensikzentrum.com`). GETs gehen durch, aber PUT/POST mit größerem JSON-Body triggern Cloudflare-WAF (Bot-Management/Browser-Integrity-Check).
+
+**Workaround-Pattern:** Lokale `workflow.json` bearbeiten + User re-importiert in n8n-UI. Kein Code-zu-Workflow-Deployment via API über Cloudflare.
+
+**Alternative:** Falls Automatisierung zwingend nötig — entweder Cloudflare-Regel für IP whitelisten, oder n8n über NAS-IP direkt ansprechen (`http://192.168.22.90:5678`).
+
+#### 🟡 WICHTIG: Service-zentrisch vs. Node-zentrisch bei Multi-Step-Pipelines
+
+**Entscheidung:** Bei Pipelines mit 3+ HTTP-Calls in Sequenz (z.B. Render → STT → Compose) EINEN monolithischen Backend-Endpoint bauen statt 8-10 n8n-Nodes.
+
+**Vorteile:**
+- **Performance:** Whisper-Modell (500MB) bleibt geladen zwischen Slides — nicht pro n8n-Iteration neu laden
+- **Base64-Effizienz:** Kein Ping-Pong von binary durch n8n (jedes Mal base64-encoden/decoden)
+- **Workflow-Lesbarkeit:** 3 statt 11 neue Nodes
+- **Error-Handling:** Ein Try/Except im Service statt N Retry-Nodes
+- **Testing:** Ein curl-Test deckt die komplette Kette ab
+
+**Nachteile:**
+- Weniger Sichtbarkeit in n8n-Execution-View (nur ein Call, kein per-Slide-Log)
+- Kein n8n-native Retry zwischen Sub-Steps
+
+**Heuristik:** >2 HTTP-Calls mit geteiltem State → monolithischer Endpoint. <3 Calls oder komplexes Branching → n8n-Nodes.
+
+#### 🟡 WICHTIG: HTTP Binary-Response in n8n-HTTP-Node
+
+**Config für Binary-Downloads (MP4, ZIP, PNG, etc.) aus einem HTTP-Endpoint:**
+```json
+{
+  "options": {
+    "response": {
+      "response": {
+        "responseFormat": "file",
+        "outputPropertyName": "data"
+      }
+    }
+  }
+}
+```
+
+- Content-Disposition-Header liefert automatisch `fileName` in `$binary.data.fileName`
+- MIME-Type aus `Content-Type`-Header in `$binary.data.mimeType`
+- Direkt durchschleifbar an `Form-Completion` (returnBinary) oder Speicher-Nodes
+
+#### 🟡 WICHTIG: ffmpeg Silence-Padding gegen Crossfade-Echo
+
+**Problem:** `acrossfade=d=0.5` zwischen zwei Video-Clips mit Sprachaudio mischt die letzten 0.5s von Clip N mit den ersten 0.5s von Clip N+1 → **Echo/Doppelung** von Wörtern.
+
+**Fix:** Jeden Clip (außer Erster vorne / Letzter hinten) mit 500ms Silence padden:
+```python
+# Pro Clip:
+pad_start = 0.0 if i == 0 else 0.5
+pad_end = 0.0 if i == n-1 else 0.5
+af_parts = []
+if pad_start > 0: af_parts.append(f"adelay={int(pad_start*1000)}|{int(pad_start*1000)}")
+if pad_end > 0:   af_parts.append(f"apad=pad_dur={pad_end}")
+```
+
+Resultat: `acrossfade` mischt nur Silence-Regionen, Sprachinhalte bleiben sauber getrennt.
+
+#### 🟡 WICHTIG: Whisper initial_prompt für Fachvokabular
+
+**Problem:** Whisper-small transkribiert deutsche Fachbegriffe wie „Gurt" als „Go-", „Bettgitter" als generisch.
+
+**Fix:** `initial_prompt` mit Domain-Glossar als Kontext:
+```python
+FEM_INITIAL_PROMPT = (
+    "Freiheitsentziehende Maßnahmen, Bettgitter, Gurtsysteme, Bauchgurt, "
+    "Fixierung, mechanische Einschränkung, Pflegebedürftige, "
+    "Paragraph 1906 BGB, Werdenfelser Weg, Dokumentationspflicht."
+)
+model.transcribe(audio_path, language="de", initial_prompt=FEM_INITIAL_PROMPT, ...)
+```
+
+**Effekt:** Signifikant genauere Transkription ohne Model-Upgrade auf `medium`/`large`. Erspart 2-3× Rechenzeit.
+
+#### 🔵 OBSERVATION: HTTP 400 „credit balance too low" ist KEIN Workflow-Bug
+
+**Signatur:** `{"error": {"type": "invalid_request_error", "message": "Your credit balance is too low..."}}` vom Anthropic-Endpoint.
+
+**Merken:** Bevor bei LLM-Nodes debuggt wird → zuerst [console.anthropic.com/settings/billing](https://console.anthropic.com/settings/billing) prüfen. Gilt analog für OpenAI/ElevenLabs (dort HTTP 402 oder 401).
+
+---
+
 ### 2026-04-22 - FEM-Pipeline Debugging (12 Lessons aus Multi-Voice TTS-Workflow)
 
 **Kontext:** 15+ Stunden Iteration an n8n-Workflow `ZPBIh5ikV8Q3oMrf` für PPTX-Vertonung mit LLM-Preprocessing (Claude Sonnet 4.5), 3-Voice-Rollen-Splitting, ElevenLabs/Azure/edge-tts, ffmpeg concat + EBU R128 loudness norm, OOXML-AutoPlay-Embed.

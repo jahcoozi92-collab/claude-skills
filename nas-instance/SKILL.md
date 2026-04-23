@@ -223,6 +223,38 @@ Unterstuetzt: Schmidt-Meier, von der Heide, Oezdemir, étranger-Varianten
 
 ## Gelernte Lektionen
 
+### 2026-04-23 — fem-pipeline Service-Deployment
+
+**Verzeichnis-Struktur:**
+```
+/volume1/docker/fem-pipeline/
+├── docker-compose.yml        # Service-Def + Network: shared-services (external)
+└── service/
+    ├── Dockerfile             # python:3.12-slim + libreoffice + ffmpeg + poppler
+    ├── app.py                 # FastAPI mit Endpoints /extract, /tts_edge, /render_slides, /whisper_stt, /compose_video, /compose_full_video
+    └── requirements.txt       # fastapi, python-pptx, lxml, edge-tts, faster-whisper
+```
+
+**Container-Port:** `8746:8000` (Host:Container)
+**Docker-Network:** `shared-services` (nicht `n8n_default`!) — n8n läuft dort, intern erreicht man den Service als `http://fem-pipeline:8000`
+**Volumes:** 
+- `fem_tmp:/tmp/fem` (scratch space)
+- `fem_models:/root/.cache/huggingface` (Whisper-Model-Cache, 500MB)
+
+**SSH-Pattern für Auto-Deploy:**
+```bash
+sshpass -p '<pwd>' ssh -o StrictHostKeyChecking=no Jahcoozi@192.168.22.90 \
+  'cd /volume1/docker/fem-pipeline && docker compose build && docker compose up -d'
+```
+
+**Datei-Sync via NAS-Mount:**
+- Lokale Dev-Kopie in `/tmp/fem-pipeline/`
+- Sync auf NAS via `cp ... /mnt/nas/docker/fem-pipeline/service/`
+- Dann SSH für Build-Trigger
+- Alternativ: direkt in `/mnt/nas/docker/fem-pipeline/` editieren (aber Git-Versioning verlieren)
+
+---
+
 ### 2026-02-08 — Initiale Einrichtung
 
 **Instanz-Differenzierung:**

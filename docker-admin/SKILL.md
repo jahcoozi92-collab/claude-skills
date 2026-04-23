@@ -1065,6 +1065,36 @@ docker exec ollama ollama create model-fast -f /root/.ollama/Modelfile-fast
 
 ---
 
+### 2026-04-23 - faster-whisper 1.0.3 Metadata-Bug + LibreOffice headless Pipeline
+
+**faster-whisper 1.0.3 Import-Fehler `No module named 'requests'`:**
+- `faster-whisper 1.0.3` nutzt `requests` in `utils.py`, deklariert es aber NICHT als Dependency → `ModuleNotFoundError` beim Import
+- Fix: `faster-whisper>=1.1.1,<2` UND explizit `requests>=2.31,<3` in requirements.txt
+- Debug-Pattern: `docker exec <container> python -c "import faster_whisper; print(faster_whisper.__version__)"` gibt den echten Import-Fehler
+- `faster-whisper` mit CPU-only auf NAS: `WhisperModel("small", device="cpu", compute_type="int8")` — int8 ist 2-3× schneller als float32
+
+**Whisper-Model-Cache persistieren:**
+- `/root/.cache/huggingface` als Docker-Volume (`fem_models:/root/.cache/huggingface`)
+- Lazy-Load beim ersten `/whisper_stt`-Call — erster Call ~20s (Model-Download), danach ~3s für 5s Audio
+- Volume überlebt `docker compose down && up` → kein Re-Download nach Container-Restart
+
+**LibreOffice headless PPTX → PNG Pipeline:**
+- Robuster via PDF-Zwischenschritt als direkt-PNG:
+  ```
+  soffice --headless --convert-to pdf deck.pptx  →  deck.pdf
+  pdftoppm -png -r 150 deck.pdf raw              →  raw-01.png, raw-02.png, ...
+  ffmpeg -i raw-XX.png -vf "scale=1280:720:force_original_aspect_ratio=decrease,pad=..." out.png
+  ```
+- Required apt-Packages:
+  ```
+  libreoffice-impress libreoffice-core poppler-utils
+  fonts-liberation fonts-dejavu fonts-noto-core
+  ```
+- Ohne `fonts-noto-core` fehlen Unicode-Ligaturen (Pflege-Zitate mit §, €, etc.)
+- `soffice --norestore --nolockcheck` wichtig in Container — sonst blockiert Recovery-Dialog
+
+---
+
 ### 2026-04-22 - FEM-Pipeline Deployment (edge-tts + Multi-Stage Rebuild)
 
 **edge-tts Version-Pinning (KRITISCH):**
