@@ -328,6 +328,73 @@ Logger-Config wird NACH dem Bootstrap geladen. Fruehe Warnings (prompt_loader, p
 docker exec homeassistant chmod 600 /config/secrets.yaml
 ```
 
+## /config Refactoring-Patterns
+
+Gewachsene HA-Configs (6+ Monate Iteration) sammeln Duplikate, Backup-Dateien und verwaiste Dashboards. Saubere Konsolidierungs-Patterns:
+
+### Git-Repo in /config/.git nutzen
+Die HA-Config auf dieser NAS ist ein Git-Repo. **Jeder Refactoring-Durchgang beginnt mit:**
+```bash
+ssh Jahcoozi@192.168.22.90 docker exec homeassistant sh -c \
+  "cd /config && git add -A && git -c user.name=auto -c user.email=auto@localhost commit -m 'pre-cleanup snapshot <datum>'"
+```
+Das Safety-Net macht jeden späteren Schritt reversibel per `git revert` oder `git checkout <hash> -- <datei>`.
+
+### Zero-Delete-Cleanup via `_attic/`
+Statt Dateien zu löschen:
+```bash
+mkdir -p /config/_attic/{dashboards,packages,root}
+mv /config/dashboards/smart_home_v3.yaml /config/_attic/dashboards/
+mv /config/packages/*.pre-fix /config/_attic/packages/
+```
+- Psychologisch: User sieht "entfernt" ohne Verlustangst
+- Praktisch: 30s bis zum Zurück-Move falls doch gebraucht
+- Nach 3-6 Monaten in zweiter Cleanup-Runde endgültig entscheiden
+
+### YAML-Edit via SSH-Round-Trip
+Für größere Edits an `configuration.yaml`, `automations.yaml` etc.:
+```bash
+# Pull
+ssh Jahcoozi@192.168.22.90 'docker exec homeassistant cat /config/configuration.yaml' > /tmp/ha-config.yaml
+# ...lokal mit Edit-Tool/Editor bearbeiten...
+# Push
+cat /tmp/ha-config.yaml | ssh Jahcoozi@192.168.22.90 'docker exec -i homeassistant tee /config/configuration.yaml > /dev/null'
+```
+Vorteile: präzises Editing mit strukturierten Tools, kein `sed` auf Mehrzeiliges.
+
+### HA-Restart via REST-Service
+```bash
+curl -X POST -H "Authorization: Bearer $HA_LONG_LIVED_TOKEN" \
+  http://192.168.22.90:8123/api/services/homeassistant/restart -d '{}'
+```
+Sauberer als `docker restart homeassistant` (sauberer Shutdown, kein Container-Crash-State), ~30s bis wieder up.
+
+### Storage-mode Default-Dashboard
+Das Default-Dashboard (`.storage/lovelace`) erscheint **zusätzlich** zu allen in `configuration.yaml` konfigurierten YAML-Dashboards in der Sidebar. Lässt sich NICHT aus YAML entfernen — nur via HA-UI:
+`Settings → Dashboards → Overview (Default) → Hide in sidebar`
+
+### Voice-Pipeline-Persistenz über Restart
+Die Assist-Pipeline liegt in `.storage/assist_pipeline.pipelines` + `.storage/core.entity_registry`. Full-Restart (siehe oben) ändert daran nichts. YAML-Refactoring in `/config/*.yaml` ist risikoarm, solange `.storage/` nicht angefasst wird.
+
+## check_config — Warnungs-Zeilennummern-Versatz
+
+HAs `check_config` meldet bei duplicate-key-Warnings oft Zeilennummern, die **um 1-2 Zeilen vom echten Vorkommen abweichen**. Beispiel:
+```
+WARNING: duplicate key "mode". Check lines 185 and 187
+```
+Tatsächliche mode-Zeilen waren 186 und 188. Verifikation vor Fix:
+```bash
+grep -n "^  mode:\|^- id:" automations.yaml
+```
+Dann sed-delete auf die ECHTEN Zeilen. `sed -i "186d;212d;289d;327d" datei` matcht gegen Original-Zeilennummern (sed iteriert die Datei einmal, Reihenfolge im Ausdruck egal).
+
+## Zero-Warnings-Discipline
+
+Ziel für `check_config`-Output: **komplett leer** (nicht nur "error-frei").
+- Jede Warning = Rauschen, das legitime Fehler versteckt
+- Nach erfolgreichem Cleanup: `python3 -m homeassistant --script check_config --config /config 2>&1` sollte nur `Testing configuration at /config` zeigen
+- Rauschen-Unterdrückung ist wertvoller als der einzelne Fix — zukünftige Warnings sind sofort als "neu" erkennbar
+
 ## Common Mistakes to Avoid
 
 1. **Container-Name**: `homeassistant` (kein Bindestrich!)
@@ -340,3 +407,7 @@ docker exec homeassistant chmod 600 /config/secrets.yaml
 8. **agent_id raten**: Conversation-Entity-ID != Integration-Title. "ChatGPT"-Integration hat `conversation.openai_conversation`, nicht `conversation.chatgpt`. Immer via `GET /api/states` prüfen.
 9. **Expose via REST-Service**: `homeassistant.expose_entity` existiert NICHT als Service-Call. Exposure (und Pipeline-Config) gehen NUR über WebSocket.
 10. **HACS-Reflex für OpenAI/Anthropic**: Beide Provider sind seit HA 2024+ nativ eingebaut. HACS nur noch für Nischen-Integrationen (z.B. ElevenLabs TTS).
+11. **check_config Zeilennummer direkt trauen**: Zeilen-Versatz 1-2 möglich. Immer mit `grep -n` verifizieren bevor sed-basiertes Fixen.
+12. **`sh -c` mit runden Klammern in Kommentaren**: `sh: syntax error: unexpected "("`. In SSH-Commands die durch `sh -c` laufen KEINE Klammern in Echo-Texten. Alternativen: eckige Klammern oder Bash (`bash -c` toleriert mehr).
+13. **Storage-mode Default-Dashboard aus YAML entfernen wollen**: Geht nicht — nur via HA-UI (siehe /config-Refactoring-Patterns).
+14. **Memory-Fakten als Ground Truth behandeln**: Config-Realität driftet — "laut Memory sollte X so sein" ist Hypothese. Vor Aktionen messen (via REST oder WebSocket), Memory bei Abweichung korrigieren.
