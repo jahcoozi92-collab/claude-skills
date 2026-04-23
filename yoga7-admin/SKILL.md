@@ -461,6 +461,38 @@ Folgende Befehle werden von Claude Code AUTOMATISCH erlaubt — niemals in `sett
 - Face-Orientierung abhaengig von xs (links/rechts) — bei xs>0 und xs<0 unterschiedlich
 - Ohne korrekte Orientierung: Normals zeigen falsch, Material sieht schwarz aus
 
+### 2026-04-23 — !-Prefix Terminal-Break + claude-cowork-linux Install
+
+**!-Prefix + sudo + langer Pfad = doppelter Terminal-Break (KRITISCH):**
+- Bekanntes Yoga7-Terminal-Problem (>80 Zeichen Bruch) trifft auch Claude Code `!`-Prefix-Befehle
+- Session-Beispiel: `! sudo ln -s /home/yoga7/.config/Claude/local-agent-mode-sessions/sessions /sessions` wurde ZWEIMAL in Folge zerstört
+  - 1. Versuch: `/sessions` landete auf neuer Zeile → als separates Kommando ausgeführt → "datei oder Verzeichnis nicht gefunden"
+  - 2. Versuch: Pfad falsch zusammengefügt → falscher Symlink in `~/sessions` (statt `/sessions`) angelegt
+- Regeln für `!`-Prefix-Befehle:
+  - **<60 Zeichen** halten (Platz für Prompt + Umbruch lassen)
+  - `$HOME` immer expandieren (`/home/yoga7/...` statt `$HOME/...`)
+  - Bei >60 Zeichen: Script-Datei erzeugen, User ruft `bash ~/tmp/cmd.sh` auf
+  - Nach jedem `!`-Kdo Verifizierung via Bash-Tool (`ls -la <ziel>`)
+
+**claude-cowork-linux Install-Rezept:**
+- Repo: `github.com/johnzfitch/claude-cowork-linux`
+- Prereqs (via npm): `npm install -g @electron/asar electron`
+- Root-Symlink (einmalig, sudo):
+  ```bash
+  sudo ln -s /home/yoga7/.config/Claude/local-agent-mode-sessions/sessions /sessions
+  ```
+- Install: `./install.sh` lädt DMG (~285 MB), extrahiert app.asar, appliziert Cowork-Patch
+- Launcher: `~/.local/bin/claude-desktop`, `~/.local/bin/claude-cowork`
+- AUR-Binary in `/usr/bin/claude-desktop` bleibt parallel — PATH-Reihenfolge muss `~/.local/bin` zuerst listen
+- CLI wird erkannt wenn `~/.npm-global/bin/claude` existiert
+- Doctor vor Install: `./install.sh --doctor` — zeigt fehlende Prereqs/Symlinks ohne Änderungen
+
+**Pre-Clone-Check-Pattern:**
+- Vor `git clone <repo>`: prüfen ob Zielverzeichnis schon existiert
+- Wenn ja: `git status` im bestehenden Repo → auf uncommitted Änderungen prüfen
+- Dann User fragen: pull / reclone (rm -rf) / anderer Pfad
+- Bei `rm -rf` des Zielverzeichnisses: vorher `cd` woanders hin, sonst bricht die Shell (siehe 2026-03-14)
+
 ### 2026-04-23 — Blender-Session 3 (Raumlogik + Tuer-Konstruktionen)
 
 **Raumlogik-Konsistenz vertikal (KRITISCH):**
