@@ -398,3 +398,52 @@ Folgende Befehle werden von Claude Code AUTOMATISCH erlaubt — niemals in `sett
 - cam_seite: X=20-26, lens 32-40mm, mit Option Nachbar_L/R ausblenden
 - cam_axo: hoch oben schraeg (14, -18, 14), lens 35mm fuer Uebersicht
 - Vegetation AM RAND platzieren (x=±8), nicht zentral zwischen Kamera und Haus
+
+### 2026-04-23 — Blender-Session Fortsetzung (Detail-Lektionen)
+
+**Kontext-Elemente dezent halten (KRITISCH):**
+- Abgrenzungen wie vertikale Trennfugen zwischen Haeusern koennen das Hauptobjekt verdecken
+- Regel: Material-Kontrast zwischen Nachbarn + kleines Gap (10cm) reicht
+- NIEMALS dunkle Fugen ueber volle Haushoehe, die wirken wie Gefaengnis-Gitter
+- Signal "durch die Abtrennungen sieht man das Objekt nicht mehr" → sofort entfernen
+
+**Sichtbarkeit durch Ueberdimensionierung:**
+- Kleine Details wie Vordaecher, Briefkaesten verschwinden im Cycles+Filmic-Rendering
+- Vordach: mindestens 1.3x Tuerbreite + 1.1-1.4m Auskragung + sichtbarer Rand (5-15% dunkler)
+- Briefkasten: mindestens 0.40 × 0.55m pro Einheit
+- Im Zweifel: in Dimensionen groesser anlegen als real, dann schrittweise reduzieren
+
+**Sichtblocker per-Render ausblenden:**
+- Nachbargebaeude blockieren Garten-/Seitenperspektive
+- Muster: `for obj in bpy.data.objects: if obj.name.startswith("Nachbar"): obj.hide_render = hide_nb`
+- `startswith("Nachbar")` faengt auch abgeleitete Kinder (Glas-Fenster, Daecher)
+- Renders als Tupel: `(camera, filename, hide_neighbors)` fuer saubere Per-Camera-Logik
+
+**Fenster vs. Tuer unterscheiden (Foto-Lesen):**
+- Schmale hohe Oeffnung (0.8-1.0m × 2.0-2.1m) mit Griff = TUER
+- Breite rechteckige Oeffnung (1.0-3.0m × 1.3-1.6m) = FENSTER
+- Nicht vorschnell als Fenster modellieren — bei Unsicherheit Diana fragen
+- Bei Balkontuer: Hochformatig, oft mit Glas-Einsatz
+
+**Material = bauliche Struktur, nicht Fensterglas:**
+- "Wintergarten aus Beton" → WAND aus Beton, MIT Fensteraussparungen eingesetzt
+- NICHT: alles Glas
+- Wintergarten-Typologie: Beton-Brüstung/Waende + eingesetzte Fenster + Acryl-Dach
+- Innenwand-Andeutung (Holz-Panelen) sichtbar durch Fenster hindurch → Realismus-Boost
+
+**Tuerfarbe nicht standardisieren:**
+- Auch Balkontueren koennen weiss sein (nicht alle Tueren = schwarz-modern)
+- `farbe_weiss` Parameter in tuer() einbauen statt globales Material
+- Pattern: `tb.data.materials.append(mat_tuer_weiss if farbe_weiss else mat_tuer)`
+
+**Material-Trennung fuer zweifarbige Fassaden:**
+- EG-Rueckwand weisser Putz + OG/DG Klinker → separate Objekte (eg_rueck als Putz-Vorsatz)
+- Putz-Vorsatz dünn (0.04m) vor Klinker-EG positionieren
+- Fenster-Booleans auf das Putz-Objekt anwenden (nicht auf EG-Klinker)
+
+**bpy 8-Vertex Trapez-Prisma:**
+- Fuer Wintergarten-Seitenwaende (unterschiedliche Hoehe vorn/hinten)
+- 8 Vertices (4 aussen + 4 innen, 0.12m Wanddicke)
+- 6 Faces (Aussen, Innen, Oben, Unten, Vorne, Hinten)
+- Face-Orientierung abhaengig von xs (links/rechts) — bei xs>0 und xs<0 unterschiedlich
+- Ohne korrekte Orientierung: Normals zeigen falsch, Material sieht schwarz aus
