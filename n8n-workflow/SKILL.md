@@ -881,6 +881,36 @@ return [{
 
 <!-- Dieser Abschnitt wird automatisch durch Reflect-Sessions aktualisiert -->
 
+### 2026-04-23 - FEM-Pipeline Stufe E Performance-Baseline
+
+**Volle Pipeline 13 Slides FEM_Kurzschulung via `/compose_full_video`:**
+
+| Phase | Zeit | Anmerkung |
+|-------|------|-----------|
+| `/extract` (PPTX → Texte/Notes) | <1s | |
+| TTS edge-tts sequentiell (13 Slides) | 57s | ~4-5s/Slide bei 500-800 Chars |
+| `/compose_full_video` gesamt | 500s | Render + 13× Whisper-STT + ffmpeg |
+| **Gesamt (Service-Seite)** | **~9 min** | |
+
+**Output-Charakteristik:**
+- 13 Slides → 11:54 min MP4, 33 MB, H.264/AAC, 1280×720@30fps
+- Bitrate ~390 kbps (angemessen für Training-Videos)
+
+**Sizing-Heuristik für neue Projekte:**
+```
+compose_full_video_seconds ≈ N_slides × 40s + 30s Overhead
+# Gilt für ~5s Audio/Slide, Whisper-small, CPU, 1280×720
+```
+
+**n8n HTTP-Timeout:** Mindestens 1800000 ms (30 min) für Decks >10 Slides. 
+
+**Optimierungspotential (nicht umgesetzt):**
+- TTS parallel (13 concurrent Requests) würde TTS-Zeit von 57s → ~5s drücken
+- Whisper-medium statt -small: +30% Genauigkeit, aber ~2-3× Compose-Zeit
+- GPU-Host statt CPU: Whisper 10-20× schneller (nicht relevant solange NAS-CPU reicht)
+
+---
+
 ### 2026-04-23 - FEM-Pipeline Phase 2 (Video-Branch mit All-in-One-Service-Endpoint)
 
 **Kontext:** Phase 2 des FEM-Projekts — n8n-Workflow um Video-Output erweitert (MP4 mit Ken-Burns + Untertitel). Statt 8+ neue n8n-Nodes: monolithischer `/compose_full_video`-Endpoint im fem-pipeline Service, der PPTX-Render + Whisper-STT + ffmpeg-Compose intern macht.

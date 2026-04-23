@@ -126,6 +126,19 @@ Bei jeder Bereinigung ALLE 5 Dimensionen abarbeiten — nicht nur Speicher:
 
 ## Gelernte Lektionen
 
+### 2026-04-23 — User-Datei-Pfade nicht über Sessions cachen
+
+**Beobachtung:** PPTX `FEM_Kurzschulung.pptx` lag in einer Session in `~/.local/share/Trash/files/` (aus Papierkorb), in späterer Session aber wiederhergestellt in `~/Downloads/`. Der aus Memory übernommene Trash-Pfad verursachte FileNotFoundError.
+
+**Lektion:** Bei User-gelieferten Datei-Pfaden (Downloads, Desktop, Trash) immer **frisch mit `find`/`Glob` suchen**, statt Pfade aus Session-Memory zu recyceln. Gilt besonders für:
+- Downloads-Ordner (Dateien werden verschoben/gelöscht)
+- Desktop (regelmäßig aufgeräumt)
+- Trash (Dateien werden wiederhergestellt oder endgültig gelöscht)
+
+**Ausnahmen:** Projekt-kanonische Pfade (z.B. `~/Desktop/FEM/` oder `/mnt/nas/docker/X/`) sind stabil genug fürs Caching, weil Benutzer sie bewusst strukturiert hat.
+
+---
+
 ### 2026-02-08 — Initiale Einrichtung
 
 - Instanz-Skills auf allen drei Maschinen angelegt
