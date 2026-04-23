@@ -447,3 +447,44 @@ Folgende Befehle werden von Claude Code AUTOMATISCH erlaubt — niemals in `sett
 - 6 Faces (Aussen, Innen, Oben, Unten, Vorne, Hinten)
 - Face-Orientierung abhaengig von xs (links/rechts) — bei xs>0 und xs<0 unterschiedlich
 - Ohne korrekte Orientierung: Normals zeigen falsch, Material sieht schwarz aus
+
+### 2026-04-23 — Blender-Session 3 (Raumlogik + Tuer-Konstruktionen)
+
+**Raumlogik-Konsistenz vertikal (KRITISCH):**
+- Raumaufteilung zwischen Stockwerken MUSS konsistent sein
+- Beispiel: Kueche im OG liegt in X-Position UEBER Kueche im EG
+- Besondere Indikatoren: Kuppeln/Schaechte/Installationen verbinden Raeume vertikal
+- Signal: "Fenster auf Hoehe der Kuppelreihe" = Diana meint X-Ausrichtung (vertikale Achse durch Kuppel → Raum oben)
+
+**"Auf Hoehe von" = X-Position (nicht Z-Hoehe):**
+- Diana's Positionsangaben "auf Hoehe" beziehen sich auf raeumliche Ausrichtung ENTLANG einer Achse
+- NICHT vertikale z-Koordinate
+- Pruefen: Welches Referenzelement wird genannt? → X oder Y nehmen, nicht Z
+
+**Terrassen-/Balkontueren = GLASTUEREN (nicht solide):**
+- NIEMALS solide Tuerblaetter fuer Terrassen-/Balkontueren
+- Konstruktion:
+  1. Aeusserer Rahmen (Cube, Material weiss)
+  2. Inneren Bereich via Boolean ausschneiden
+  3. Glasscheibe innen (duenn, Glas-Material)
+  4. Senkrechter Tuergriff (duenner Streifen, anthrazit/metallisch)
+- `farbe_weiss=True` Parameter in tuer() → Glastuer-Branch
+- `farbe_weiss=False` → schwarze Haustuer mit Lichtschlitz-Glas
+
+**Wintergarten-Typologie (Beton + Glas-Front):**
+- Aussenwaende: BETON (weiss/hell) mit Wanddicke 0.12-0.15m
+- Frontfenster: FAST DURCHGEHEND, links + rechts der Tuer (Wandpfeiler nur 15cm breit)
+- Tuer MITTIG in der Frontwand
+- Seitenwaende: dickes Trapez-Prisma aus Beton
+- Dach: 3 rechteckige Acryl-Panele getrennt durch schwarze Rahmen-Pfosten
+- Neigung flach (~10-15°), am Haus hoch, zur Wiese runter
+
+**Innenwand-Andeutung fuer Realismus:**
+- Hinter transparenten Flaechen (Wintergarten-Front, Balkontuer) Innenmaterial als Plane platzieren
+- Holzpanel (0.52, 0.38, 0.25) oder Teppich (0.55, 0.38, 0.30) hinter Glasflaechen
+- Tiefenwirkung durch sichtbare Innenwand
+
+**Element-Position iterativ verfeinern:**
+- Diana: erst Element setzen → dann Korrektur mit Bezug auf anderes Element
+- Bezugsrahmen: Fuer "auf Hoehe von X" → X.location oder feste Raum-Koordinate
+- Pattern gilt fuer alle Fenster/Tueren in Fassaden mit mehreren Elementen
