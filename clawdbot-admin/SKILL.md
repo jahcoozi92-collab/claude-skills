@@ -1481,3 +1481,42 @@ Wenn nur Ebene 1 geaendert wird, laufen Cron-Jobs und Fallbacks weiter mit den a
 - `--timeout <seconds>` Override des Config-Defaults (600s)
 - `--deliver` schickt Antwort via Channel; ohne `--deliver` bleibt Antwort nur im JSON
 - Praxis: `--json --timeout 60` fuer programmatische Nutzung; NIE fuer Voice (Latenz-Problem)
+
+### 2026-04-23 — Claude Cowork for Linux auf moltbot installiert
+
+**Repo:** `https://github.com/johnzfitch/claude-cowork-linux` (v4.0.0, unofficial)
+
+**Was ist Cowork?** Claude-Desktop-Feature das einen Folder als Sandbox nutzt und Dateien lokal liest/schreibt. Normalerweise macOS-only (mit Linux-Sandbox-VM darunter); dieses Repo ersetzt die macOS-nativen Module (`@ant/claude-swift`, `@ant/claude-native`) durch JS-Stubs und uebersetzt VM-Pfade auf Host-Pfade, sodass Cowork direkt auf Linux x86_64 laeuft — ohne VM, ohne macOS.
+
+**KRITISCH — Kommunikations-Regel bei Dritt-Repos mit mehrdeutigen Namen:**
+- IMMER im ersten Antwort-Satz nach `git clone` benennen was installiert wird und was es NICHT ist
+- Grund (2026-04-23): User fragte nach komplettem Install "claude cowork will ich installieren", weil ich nie sagte "dieses Repo = Claude Cowork (nicht der regulaere Claude Desktop)"
+- Pattern: "Dieses Repo installiert X (nicht Y). Unterschied: ..."
+
+**Install-Pfade (moltbot):**
+- App: `~/.local/share/claude-desktop/` (enthaelt `linux-app-extracted/` mit entpacktem macOS-App-Bundle + JS-Stubs)
+- Launcher: `~/.local/bin/claude-desktop`, `~/.local/bin/claude-cowork` (Symlink auf ersteren — **beide sind dasselbe Binary**, Cowork-Feature ist via `enable-cowork.py`-Patch in der `app.asar` aktiviert)
+- Sessions-Symlink: `/sessions → ~/.config/Claude/local-agent-mode-sessions/sessions` (Root-Symlink, braucht sudo)
+- Logs: `~/.local/state/claude-cowork/logs/startup.log` (Launcher started nohup detached — Shell kehrt sofort zurueck, Fenster oeffnet asynchron)
+
+**Abhaengigkeiten (bereits auf moltbot):**
+- System: `git`, `7z` (p7zip-full), `node` v22, `npm`, `bwrap` (bubblewrap) — alle via apt
+- npm-global: `electron` (v41.3), `@electron/asar` (v4.2) — `npm install -g electron @electron/asar`
+- DMG-Download: `fetch-dmg.js` zieht den macOS-DMG (~200MB) direkt vom Anthropic-CDN — KEIN macOS-Host noetig
+
+**Doctor-Check:** `claude-desktop --doctor` oder `bash ~/claude-cowork-linux/install.sh --doctor` (17 Checks, muss 17/17 OK zeigen)
+
+**`/sessions`-Symlink-Falle (Session-Erkenntnis 2026-04-23):**
+- `install.sh` scheitert bei `sudo ln -s` wenn der Symlink bereits existiert — **auch wenn er auf einen fremden User zeigt**
+- Auf moltbot gesehen: `/sessions → /home/yoga7/.config/Claude/...` (vermutlich aus frueherem yoga7-User-Versuch hier auf der Box)
+- **Fix:** `readlink /sessions` pruefen, dann `sudo ln -sfn "$HOME/.config/Claude/local-agent-mode-sessions/sessions" /sessions` (`-sfn`: force + no-deref, ueberschreibt Directory-Symlink korrekt)
+
+**Headless-VM + Electron-GUI:**
+- `claude-desktop` ist eine Electron-App (kein CLI) — braucht `$DISPLAY` oder `$WAYLAND_DISPLAY`
+- moltbot ist headless → Start nur via X11-Forwarding (`ssh -X moltbotadmin@192.168.22.206`), VNC/RDP oder angeschlossenem Monitor
+- Alternative: Cowork nicht auf moltbot betreiben, sondern auf einem Desktop-Host (yoga7 Kali WSL hat Display)
+
+**Non-interaktives sudo in Claude-Code-Sessions:**
+- `install.sh` faellt still zurueck wenn `sudo` ohne TTY gerufen wird (`sudo: Zum Lesen des Passworts ist ein Terminal erforderlich`) — das Script logged einen `log_warn` mit dem manuellen Command
+- Funktionierendes Pattern: User tippt `! <command>` am Claude-Code-Prompt — der `!`-Prefix hebt den Befehl in eine interaktive Subshell und liefert Output zurueck in die Session
+- Anwendung: Alle sudo-Schritte explizit als `! sudo ...` formulieren, nicht versuchen sie ueber Bash-Tool auszufuehren
