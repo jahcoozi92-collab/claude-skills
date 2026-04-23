@@ -533,3 +533,101 @@ Folgende Befehle werden von Claude Code AUTOMATISCH erlaubt — niemals in `sett
 - Diana: erst Element setzen → dann Korrektur mit Bezug auf anderes Element
 - Bezugsrahmen: Fuer "auf Hoehe von X" → X.location oder feste Raum-Koordinate
 - Pattern gilt fuer alle Fenster/Tueren in Fassaden mit mehreren Elementen
+
+### 2026-04-23 — System-Cleanup (Security + Services + Hygiene Patterns)
+
+**Password-Leak in systemd-Service-Dateien (KRITISCH)**
+- Gefunden in `/etc/systemd/system/nas-docker-mount.service`: `ExecStart=... mount -t cifs -o username=X,password=Y,...` — Klartext-Password in systemd-Logs, journalctl und ggf. Git-History
+- IMMER `credentials=/etc/samba/X-credentials` Pattern nutzen (Datei 600, root:root)
+- Audit-Check vor Release: `sudo grep -r 'password=' /etc/systemd/system/`
+- Beim Finden: Password rotieren (kann bereits via Logs geleakt sein)
+
+**CIFS-Services scheitern an Boot-Race-Condition**
+- Alle NAS/SSHFS-Services (nas-docker-mount, nas-mount, moltbot-sshfs) failed beim Boot — Netzwerk noch nicht ready zum Start-Zeitpunkt
+- Manuell nach Boot gestartet funktionieren alle → reiner Race-Condition
+- Fix-Pattern in `[Unit]`:
+  ```
+  After=network-online.target
+  Wants=network-online.target
+  ```
+- Plus: `sudo systemctl enable systemd-networkd-wait-online.service`
+
+**Service-Check muss DREI Ebenen pruefen**
+- Initial: `systemctl --failed` zeigte 2. Dritter versteckter: `nas-mount.service` (user) verweist auf nicht-existentes Script `/home/yoga7/mount-nas` (korrekt: `mount-nas-permanent.sh`)
+- `systemctl --failed` zeigt nur aktiv-fehlgeschlagene, nicht die mit kaputtem ExecStart-Pfad
+- Zusätzlich prüfen:
+  ```bash
+  systemctl list-unit-files --state=enabled --no-pager | awk 'NR>1 && $2=="enabled" {print $1}' | \
+    xargs -I{} sh -c 'p=$(systemctl cat {} 2>/dev/null | grep -m1 ^ExecStart | cut -d= -f2- | awk "{print \$1}"); [ -n "$p" ] && [ ! -e "$p" ] && echo "{}: $p fehlt"'
+  ```
+
+**Verschiebungen sparen KEINEN Speicher (selbe Partition)**
+- Bei Cleanup-Sessions explizit trennen: "Struktur-Gewinn" vs "echter Speicher-Gewinn"
+- `mv ~/Desktop/X ~/06_DOKUMENTE/` = 0 Byte auf df, nur Inode-Update
+- Bei Diana's "Auf NAS archivieren" + NAS offline → lokal verschieben ist Struktur, kein Speicher
+- IMMER klarstellen: "Das ist nur Struktur. Speicher spart erst Wechsel auf anderes FS (NAS, externe Platte) oder rm."
+
+**Duplikat-Erkennung via MD5 — NIEMALS blind loeschen**
+- Browser-Downloads mit `(1)`, `(2)` Suffix sind **oft verschiedene Versionen** (anderer Export, andere Encoding-Runde)
+- Session-Beispiele:
+  - `Hugo_Renn_Musikvideo.mp4` Desktop 119M ≠ Downloads/Hugo 148M → andere Version
+  - `Topliner_Bardenberger.mp3` vs. `(1)` → unterschiedlicher Hash
+  - ABER: `otto_ki.mp4` = `Otto/finale_musicvideo.mp4` → identisch, sicher löschbar
+  - `jessica_achim.WAV` in ALT = in Voice-Recordings (identisch)
+- Pattern: `md5sum file1 file2` oder `cmp -s file1 file2 && echo identisch` VOR `rm`
+
+**Desktop/Interessant = Voice-Dump (bekanntes Diana-Pattern)**
+- Diana sammelt Sprachaufnahmen in `~/Desktop/Interessant/` (WAV/MP3, 6+ GB)
+- Vor Move Cruft raus: `venv/` (70M Python venv war drin), `node_modules/`, Temp-Files
+- Kanonisches Ziel: `~/06_DOKUMENTE/Voice-Recordings/`
+
+**~/~ Anomalie durch Shell-Expansion-Fail**
+- 127M-Ordner namens `~` mit Chromium-Profile-Daten (Confluence-Profile, AutofillStates)
+- Entsteht durch Chromium `--user-data-dir=~/X` wo `~` NICHT expandiert wird (in `.desktop`-File oder systemd-Unit)
+- Fix im Root-Verursacher: IMMER `$HOME` statt `~` in Config-Dateien verwenden
+
+**Tier 1 Cleanup-Checkliste erweitern um AI-Tool-Outputs**
+- `~/Downloads/demucs_output` (AI-Stem-Separation, 120M Session-Fund)
+- `.cxx` Android NDK Build-Caches (per Projekt 300M+)
+- ComfyUI-Outputs, SD-WebUI-Outputs
+- Pattern-Search:
+  ```bash
+  find ~ -maxdepth 4 -type d \( -name "demucs_output" -o -name "*_output" \
+    -o -name ".cxx" -o -name "outputs" \) 2>/dev/null
+  ```
+
+**Case-Konflikt privat vs Privat (ext4 case-sensitive)**
+- Auf case-sensitive FS zwei echte Ordner — Diana's Konvention ist deutsche Kleinschreibung (`privat/`, `geschaeft/`)
+- Vor `mkdir` check: `ls -d ~/PATH/{x,X} 2>/dev/null`
+
+**Downloads/ALT = Catch-All mit Pflege-Docs-Risiko**
+- 156+ Files gemischt, dabei kritische Pflege-Docs (Techniker Krankenkasse .zip, Wundfotos.rar, database.sqlite.backup)
+- NIEMALS pauschal archivieren/löschen. Keyword-Filter vor Bulk-Move:
+  ```bash
+  ls ~/Downloads/ALT | grep -iE "wund|medifox|SIS|pflege|MDK|behandl|patient|Schaut|Göbel|nextcloud_db"
+  ```
+- Pflege-relevantes → `~/06_DOKUMENTE/Medifox/`
+
+**Sensible Dateien in Downloads — Standard-Suche im Cleanup**
+- Session-Funde: 2× Google OAuth Client-Secrets (`client_secret_*.json`), `db_cluster-*.backup.gz`, `Ausweiskopie.pdf`, `Resume.pdf/docx`
+- Standard-Check in jedem Cleanup:
+  ```bash
+  find ~/Downloads -maxdepth 2 -type f \( -iname "*secret*" -o -iname "*credential*" \
+    -o -iname "*token*" -o -iname "*.env*" -o -iname "*ausweis*" -o -iname "*backup*" \
+    -o -iname "client_secret*" -o -iname "*password*" \) 2>/dev/null
+  ```
+- Ziel: `~/06_DOKUMENTE/Credentials/` + `~/06_DOKUMENTE/privat/Persoenliches/` + `~/06_DOKUMENTE/Sicherungen/`
+
+**zsh-Glob `.[^.]*` scheitert bei leerem Match (NULLGLOB)**
+- `mv src/* src/.[^.]* dst/` crasht die Chain bei zsh wenn keine Hidden-Files da sind
+- Fix: `mv src/* src/.[^.]* dst/ 2>/dev/null || mv src/* dst/`
+- Oder: `(setopt NULL_GLOB; mv ...)` lokal
+
+**Cleanup-Kommunikationspattern (Diana-verifiziert)**
+- Tier-Struktur 1-5 nach Risiko: risikofrei → brauchtEntscheidung → sudo → Security
+- Workflow: Bestandsaufnahme ZUERST (5 Dimensionen) → Plan mit Zahlen → AskUserQuestion pro Tier → Ausführung
+- Nach jedem Tier: Vorher/Nachher-Tabelle. Nach Abschluss: Finale Bilanz + verbleibende Entscheidungen + Copy-Paste für sudo-Teile
+
+**Session-Bilanz (Referenz für Grössenordnung)**
+- Disk 300G → 287G (13G frei), Desktop 9,9G → 52K, Downloads 12G → 1,9G
+- Dauer ca. 40 Min, 0 Fehler, 0 Rollbacks nötig

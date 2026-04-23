@@ -539,3 +539,33 @@ Fire-and-forget: User macht nur `git push`.
 - "Operation not permitted" auf EINZELNER Datei ≠ Gesamtfail des Fixes
 - Reihenfolge: (1) Fix anwenden, (2) Zustand verifizieren, (3) erst bei weiterhin-kaputt tiefer graben
 - Session 2026-04-20: fscrypt/ACL/AppArmor-Diagnose war unnötiger Detour — erster Fix-Vorschlag (chown+chmod) hatte bereits funktioniert, wurde aber nicht re-verifiziert
+
+### 2026-04-23 — CIFS-Mount-Services Boot-Race (Client-seitig, Cross-Reference)
+
+**CIFS-basierte systemd-Services auf Clients scheitern beim Boot**
+- Auf Yoga7 beobachtet (siehe `yoga7-admin` 2026-04-23): `nas-docker-mount.service`, `nas-mount.service` (user), `moltbot-sshfs.service` (user) failed beim Boot weil Netzwerk noch nicht ready
+- Relevant für alle CIFS-Clients gegen die NAS (Yoga7, Clawbot VM, andere)
+- Manuell nach Boot gestartet: alle OK → reiner Race-Condition
+- Fix-Pattern in `[Unit]`:
+  ```
+  After=network-online.target
+  Wants=network-online.target
+  ```
+- Plus: `sudo systemctl enable systemd-networkd-wait-online.service`
+- NAS selbst ist Docker-basiert ohne systemd-CIFS-Services → nicht direkt betroffen, aber wichtig für NAS-konsumierende Systeme
+
+**Password-Leak-Pattern in CIFS-Service-Dateien (KRITISCH)**
+- Bei Clients die gegen NAS mounten: Klartext-Password in `ExecStart`-Zeile ist häufig
+  ```
+  ExecStart=... mount -t cifs -o username=Jahcoozi,password=XXX,...
+  ```
+- Das landet in systemd-Logs, journalctl, und ggf. Git-History der Service-Datei
+- IMMER credentials-Datei nutzen: `credentials=/etc/samba/nas-credentials` (mode 600, root:root)
+- Audit bei neuen Clients: `sudo grep -r 'password=' /etc/systemd/system/`
+- Bei gefundenem Leak: **NAS-Password rotieren** (kann via Logs geleakt sein)
+
+**Autofs auf Clients triggert nicht bei allen Operationen**
+- Yoga7: `/mnt/nas/nas/` (Symlink auf `/mnt/autofs/nas/`) wird von `touch` nicht zuverlässig getriggert
+- Symptom: `df -h /mnt/nas/nas` zeigt lokales FS statt NAS → Mount ist inaktiv
+- Mount-Verify: `mount | grep cifs` oder `mountpoint /mnt/nas`
+- Bei "soft failure" scheinbar-schreibbar aber tatsächlich-nicht: Vor Bulk-Moves Write-Test mit Cleanup: `touch /mnt/nas/X/.test_$$ && rm /mnt/nas/X/.test_$$`
