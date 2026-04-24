@@ -569,3 +569,24 @@ Fire-and-forget: User macht nur `git push`.
 - Symptom: `df -h /mnt/nas/nas` zeigt lokales FS statt NAS → Mount ist inaktiv
 - Mount-Verify: `mount | grep cifs` oder `mountpoint /mnt/nas`
 - Bei "soft failure" scheinbar-schreibbar aber tatsächlich-nicht: Vor Bulk-Moves Write-Test mit Cleanup: `touch /mnt/nas/X/.test_$$ && rm /mnt/nas/X/.test_$$`
+
+### 2026-04-24 — n8n Update via update_n8n.sh
+
+**Container-Crash nach `compose recreate` (beobachtet, nicht reproduzierbar)**
+- `bash ops/n8n/update_n8n.sh` pullt Image, recreated Container — Start-Log zeigt `Up 3 seconds`
+- 10-15s später: Container im State `Created` (nicht `Up`), "Last session crashed" im Log
+- Manueller `docker start n8n-n8n-1` lief danach sauber durch, Healthcheck HTTP 200
+- Mögliche Ursache: DB-Migration/Init-Race beim Recreate. Nicht kritisch, aber Verifikation nötig
+- **Pattern:** Nach `update_n8n.sh` → 10s warten → `docker ps` prüfen (nicht nur Startup-Log). Falls `Created`: `docker start n8n-n8n-1` nachschieben
+
+**n8n v3 Migration vormerken (Deprecation Warning)**
+- `/home/node/.n8n/binaryData` wird in v3 zu `/home/node/.n8n/storage`
+- Für Migration: `N8N_MIGRATE_FS_STORAGE_PATH=true` setzen
+- Bei gemountetem Volume: Mount-Config nach Migration aktualisieren
+- Noch nicht akut — erst beim v3-Sprung relevant
+
+**n8n-Update-Skript Verhalten**
+- `ops/n8n/update_n8n.sh` macht: graceful stop (120s) → Backup via `backup_n8n.sh` → pull → `compose up -d`
+- Backup-Format: `/volume1/docker/n8n/backups/n8n-backup-YYYYMMDD-HHMMSS.tar.zst`
+- Image: `docker.n8n.io/n8nio/n8n:latest` (kein Pin) → jeder Update-Run holt latest
+- Version 2.17.6 → 2.17.7 war nur Patch-Bump
