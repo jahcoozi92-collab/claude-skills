@@ -2195,3 +2195,109 @@ curl -s ... | jq '.nodes[] | select(.name=="Node_Name") | .parameters'
 # 3. Nach Restart: Docker-Status
 docker ps --filter name=n8n-n8n-1 --format "{{.Status}}"
 ```
+
+---
+
+### 2026-04-24/25 — Code-Node-Limits + Render-Bug-Diagnose + Markdown-Parser-Pattern
+
+**Code-Node `$('NodeName').all()` — wann es funktioniert:**
+
+✅ **funktioniert** für:
+- Upstream-verbundene Nodes im Hauptpfad (z.B. „Webhook" → „Format Input" → „Code")
+- Im selben Branch eines Splits
+
+❌ **funktioniert NICHT** für:
+- **Tool-Nodes** des LangChain Agents (Supabase Vector Store, Klickpfad-Suche, Reranker etc.)
+- Cross-branch-Zugriffe ohne Verbindung
+- Async/Parallel-Aufrufe in n8n 2.x
+
+Der Versuch wirft synchronen RuntimeError → Workflow hängt 60s+ → Webhook-Timeout. Symptom: Eigentlich funktionierender Code-Node bricht plötzlich ab. **Diagnose**: `try { items = $('X').all(); } catch(e) { /* fallback */ }` ist nicht genug, weil n8n den Error nicht wirft, sondern den Node komplett stoppt.
+
+**Tool-Outputs in Verifier-Code-Nodes — Alternative Strategien:**
+
+1. **LangChain `intermediateSteps`** auf $json — funktioniert nur wenn der Agent Output sie nicht weggrippt; in der Praxis oft leer.
+2. **Externer HTTP-Call** zur Supabase REST API mit `await this.helpers.httpRequest(...)` — funktioniert, aber langsam und fragil bei großen Antworten.
+3. **Antwort selbst parsen** (empfohlen): Quellen aus Bold-Erwähnungen + `**Quelle:**`-Block + Inline-Zitaten extrahieren. Robust gegen LLM-Stilvariation.
+
+**Browser-Render-Bugs in Chat-HTML — Diagnose-Pattern:**
+
+Bei Bugs wie „Buchstaben in einzelnen Spalten" NICHT raten — Pipeline lokal mit Node.js abspielen:
+```javascript
+// Render-Funktionen aus HTML extrahieren
+const fnNames = ['formatMessage', 'formatAsCards', 'formatSimpleMessage',
+                 'formatSteps', 'formatInline', 'formatClickpaths', 'parseStructuredResponse'];
+let code = '';
+for (const fn of fnNames) {
+  const start = html.indexOf('function ' + fn + '(');
+  // Bis zur schließenden Klammer einsammeln
+  let depth = 0, i = start, found = false;
+  while (i < html.length) {
+    if (html[i] === '{') { depth++; found = true; }
+    else if (html[i] === '}') { depth--; if (found && depth === 0) { i++; break; } }
+    i++;
+  }
+  code += html.slice(start, i) + '\n';
+}
+// In neuer Function-Closure ausführen
+global.escapeHtml = s => String(s).replace(/[&<>"]/g, c => ({...}[c]));
+const helpers = (new Function(code + 'return { formatMessage, ... };'))();
+console.log(helpers.formatMessage(echteAntwort));
+```
+Dies zeigt das echte HTML, das der Browser bekommt. Aus diesem Output sieht man sofort, welcher Regex falsch matcht.
+
+**Custom Markdown-Parser — Block-für-Block statt Regex-Salat:**
+
+Globaler `replace`-Pattern mit `^(.+)$/gm → <p>$1</p>` zerstört Block-Elemente (verschachtelt sie in `<p>`) → ungültiges HTML → seltsame Browser-Darstellung. Stattdessen Block-Parser:
+```javascript
+function formatSimpleMessage(text) {
+  // Code-Spans als Platzhalter schützen (CODE0, CODE1, ...)
+  const codeSpans = [];
+  text = text.replace(/`([^`\n]+)`/g, (_, c) => {
+    codeSpans.push(c);
+    return ' CODE' + (codeSpans.length - 1) + ' ';
+  });
+
+  const lines = text.split('\n');
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (/^\s*---+\s*$/.test(lines[i])) { out.push('<hr>'); i++; continue; }
+    let m;
+    if ((m = lines[i].match(/^##\s+(.+)$/))) { out.push('<h3>' + inline(m[1]) + '</h3>'); i++; continue; }
+    if (/^\s*>\s?/.test(lines[i])) { /* Blockquote-Block sammeln */ }
+    if (/^\s*\d+[.)]\s+/.test(lines[i])) { /* OL-Block + Sub-Bullets sammeln */ }
+    if (/^\s*[-•]\s+/.test(lines[i])) { /* UL-Block sammeln */ }
+    // Klickpfad: Zeile mit ≥2 Pfeilen
+    if (lines[i].includes('→') && (lines[i].match(/→/g) || []).length >= 2) {
+      const transformed = formatClickpaths(lines[i]);
+      if (transformed !== lines[i]) { out.push(transformed); i++; continue; }
+    }
+    // Standard: Zeilen sammeln bis Block-Ende → <p>
+  }
+  return out.filter(s => s !== '').join('\n');
+}
+```
+Vorteile: Kein `<p><h3>` mehr, keine zerrissenen Klickpfade, sauberes verschachteltes HTML.
+
+**Klickpfad-Regex — `\s` matched `\n` (KRITISCH):**
+
+```javascript
+// FALSCH (matcht über Zeilenumbrüche, frisst nummerierte Listen):
+const pathPattern = /([\wäöüÄÖÜß\s-]+)\s*[→]\s*([\wäöüÄÖÜß\s-]+...)/g;
+
+// RICHTIG (nur innerhalb einer Zeile):
+const stepChars = '[\\wäöüÄÖÜß ()\\-/.,&]+';   // KEIN \s — nur Space+Tab+Bindestrich
+const pathPattern = new RegExp(
+  '(' + stepChars + ')\\s*[→]\\s*(' + stepChars + ')\\s*[→]\\s*(' + stepChars + '...)',
+  'g'
+);
+```
+Mindestens 2 Pfeile (3 Steps) verlangen, um falsche Treffer zu vermeiden.
+
+**LLM-Provider-Resilienz:**
+
+OpenRouter (Claude Sonnet 4.6) und Anthropic-Direkt sind beide schon leer gelaufen → Workflow lieferte komplette Fehlantworten. **Empfehlung**: Verifier-Node erkennt `$json.error` und zeigt sauberen Fehler-Banner statt Crash. Optionaler nächster Schritt: zweiter LLM-Provider als Fallback im Workflow.
+
+**Trust-Badge in Chat-UI — Pattern:**
+
+Verifier hängt `<!--VERIFY:{tier, score, sources}-->` als HTML-Kommentar an die Antwort. Chat-HTML parst und entfernt vor Rendering, rendert Badge separat. So bleibt die LLM-Antwort frei von Meta-Daten, aber UI hat alle Infos.
