@@ -404,6 +404,82 @@ GET https://wissen.medifoxdan.de/rest/api/content/{PAGE_ID}?expand=body.view
 
 ---
 
+### 2026-04-24/25 — Extrapolations-Verbot + Confluence-API + Boost-Matrix
+
+**Extrapolations-Verbot (KRITISCH):**
+- NIE aus ähnlichen MediFox-Themen extrapolieren — auch wenn Pfade analog scheinen
+- Konkrete Fehlschluss-Beispiele: **Impfung ≠ Infektion**, Mitarbeiter-Impfung ≠ Bewohner-Impfung, Stationäre Dauerpflege ≠ Kurzzeitpflege, MD Stationär ≠ MediFox DAN
+- Wenn kein dediziertes Dokument vorliegt: **abstain** statt schlussfolgern
+- Real-Beispiel: Impfungen wurden mit Update 8.2 (2022) von Vorgabewerte → Pflege nach **Verwaltung → Impfungen** + neuer **Impfstoffe**-Katalog migriert; analoger Schluss aus „Erweiterung der Infektionen" war falsch
+
+**Confluence-REST-API für schnelle Wiki-Recherche (kein Auth):**
+```bash
+# Volltext-Suche im MSKB-Space
+curl -sS "https://wissen.medifoxdan.de/rest/api/content/search?cql=space=MSKB+AND+text~%22Suchbegriff%22&limit=20"
+
+# Einzelseite mit HTML-Body holen
+curl -sS "https://wissen.medifoxdan.de/rest/api/content/{PAGE_ID}?expand=body.view"
+
+# Label-basierte Suche (Tags wie 'admin', 'kataloge', 'rechte')
+curl -sS "https://wissen.medifoxdan.de/label/MSKB/{LABEL}"
+```
+
+**Update-PDFs als Migrations-Quelle:**
+- Wenn ein Pfad in der aktuellen MediFox-Version anders liegt als im alten Wiki: **Update-PDFs durchsuchen**
+- Format: `https://wissen.medifoxdan.de/download/attachments/3375911/Update-Information_YYYY_stationaer_X.Y.pdf`
+- Versions-Migrationen werden dort namentlich beschrieben
+- Mit `pypdf` Text extrahieren, dann nach Schlüsselbegriff grepen
+
+**source_type-Boost-Matrix (in hybrid_search_v3, Stand 2026-04-25):**
+
+| source_type | Boost |
+|-------------|-------|
+| `konzeptstandard` (hausintern Arche Noah) | **1.35** |
+| `faq` | 1.30 |
+| `confluence_wiki` | 1.25 |
+| `update_info_10x` | 1.22 |
+| `cached_wiki_page` | 1.20 |
+| `qm_handbuch_md` | 1.20 |
+| `wiki_article` | 1.18 |
+| `structured_click_path` | 1.15 |
+| `expertenstandard` (DNQP) | 1.15 |
+| sonst | 1.0 |
+
+Zusätzlich: **+5% wenn `verified=true`**, **−10% wenn `metadata.needs_review='true'`**.
+
+**Konzept- vs. Expertenstandard:**
+- Einrichtung Arche Noah hat eigene Konzeptstandards (8 Themen: Dekubitus, Sturz, Schmerz, Mobilität, Hautintegrität, Mundgesundheit, Demenz-Beziehungsgestaltung, Wunden) — gehen IMMER vor DNQP-Expertenstandards
+- Zitier-Regel: „**unser hausinterner Konzeptstandard [Thema]**" / „**DNQP-Expertenstandard [Thema, Jahr]**"
+- Konzeptstandards in „wir/unsere"-Form formulieren — nie als neutrale Empfehlung
+- Themen ohne Konzeptstandard (Kontinenz, Ernährung, Entlassung): kurz erwähnen, dann DNQP-Empfehlung
+
+**Seed-Skript-Pattern (idempotent, RLS-bypass):**
+```python
+# Hash-Präfix pro Lauf (z.B. 'lg2604-', 'std2604-', 'imp2604v2-')
+# 1) SECURITY DEFINER RPC anlegen (umgeht RLS)
+# 2) Pro Artikel: hash via md5(title|chunk_idx)[:12]
+# 3) Existenz-Check vor Insert (Idempotenz)
+# 4) OpenAI text-embedding-3-large (3072d)
+# 5) RPC-Aufruf mit content+metadata+vec
+# 6) Nach Lauf: DROP FUNCTION
+```
+
+**MediFox-Strukturwissen 2026 (Korrekturen):**
+
+| Bereich | Korrekt seit | Pfad |
+|---------|--------------|------|
+| Bewohner-Impfungen | Update 8.2 (2022) | Administration → Kataloge → Verwaltung → **Impfungen** |
+| Impfstoffe (zwingend!) | Update 8.2 (2022) | Administration → Kataloge → Verwaltung → **Impfstoffe** |
+| Infektionen | unverändert | Administration → Kataloge → Vorgabewerte → Pflege → Infektion |
+| Bewohner-Doku Impfung | Update 8.2 | Verwaltung → Bewohner → Register **„Detail"** → Immunisierungen |
+
+**Erkenntnis Wiki-Struktur:**
+- MediFox-Wiki zeigt für viele Admin-Themen NUR 1-2 Treffer + PDFs
+- Wiki ist primär Troubleshooting-FAQ, kein systematisches Handbuch
+- → bei Admin/Konfig-Fragen IMMER Update-PDFs als zweite Quelle prüfen
+
+---
+
 ## Quick Reference
 
 ```
