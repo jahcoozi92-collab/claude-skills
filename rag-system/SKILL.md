@@ -2265,3 +2265,71 @@ GitHub API Tree (recursive) → Split → Filter SKILL*.md → Fetch Raw
   - `/volume1/docker/lightrag/.env.lightrag`
 - Helfen beim pragmatischen Zugriff (`embed_new_chunks.py`, Cron-Wrapper), aber
   bei nächster geplanter Key-Rotation unbedingt entfernen.
+
+---
+
+### 2026-04-24/25 — Verifikations-Pipeline (verified-Flag + 4-Signal-Score + Feedback-Loop)
+
+**verified-Flag-Konzept (kuratierter Boost):**
+```sql
+ALTER TABLE rag_chunks ADD COLUMN verified boolean DEFAULT false;
+CREATE INDEX rag_chunks_verified_idx ON rag_chunks (verified) WHERE verified = true;
+```
+Auto-Mark bei Seed-Lauf für kuratierte Quellen. Wiki-Chunks bleiben `false` bis manueller Review. Boost: **+5% in `hybrid_search_v3` für `verified=true`**.
+
+**Verifier-Pipeline-Lessons-Learned:**
+
+Erster Versuch (v7) basierte auf 4 Signalen aus retrieved_chunks (coverage + authority + topic_match + source_count). **Funktionierte nicht zuverlässig**, weil:
+- `$('NodeName').all()` in n8n Code-Nodes funktioniert NICHT für Tool-Nodes (Tools liegen außerhalb des Code-Pfades)
+- LangChain Agent-Output strippt `intermediateSteps` weg — `$json` enthält nur `output`
+- Externer HTTP-FTS-Call zur Supabase REST API hängte den Workflow
+
+**Verifier v8 — robuste Lösung: Antwort-Parsing:**
+
+LLMs zitieren NICHT zuverlässig in einem strikten Format. Stattdessen erscheinen Quellen als:
+1. Strikte Inline-Zitate `[Quelle: X]`, `[KONZEPTSTANDARD: Y]`, `[KLICKPFAD: Z]`
+2. **Bold-Erwähnungen**: `**Konzeptstandard Sturzprophylaxe**`, `**DNQP-Expertenstandard X**`, `**Update 8.2**`
+3. **Quellen-Block am Antwort-Ende**: `**Quelle:** Titel | Pfad`
+4. Plain-Text-Erwähnungen (für Tier-Berechtigung, nicht Source-Liste)
+
+**Verifier soll alle 4 Patterns parsen, nicht ein striktes Format erzwingen** — robuster und LLM-tolerant. Tier-Schwellen: high ≥ 0.85 / medium ≥ 0.70 / low < 0.70. abstain → score 0.40. error (LLM-Fehler wie OpenRouter Payment Required) → eigener Banner.
+
+**Feedback-Loop schließen:**
+```sql
+ALTER TABLE rag_chunks ADD COLUMN wrong_feedback_count integer DEFAULT 0;
+
+CREATE FUNCTION report_wrong_feedback(p_session_id text, p_chunk_ids bigint[])
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  UPDATE rag_chunks SET wrong_feedback_count = COALESCE(wrong_feedback_count,0)+1
+   WHERE id = ANY(p_chunk_ids);
+  UPDATE rag_chunks
+     SET metadata = metadata || jsonb_build_object('needs_review','true')
+   WHERE id = ANY(p_chunk_ids) AND wrong_feedback_count >= 3;
+END $$;
+```
+Im Retrieval: `metadata.needs_review='true'` → −10% Boost, bis Admin reviewt.
+
+**Trust-Badge-Pattern in Chat-UI:**
+- Verifier-Node hängt `<!--VERIFY:{tier, score, sources, signals}-->` an die Antwort
+- Chat-UI parst Kommentar, entfernt aus Bubble, rendert Badge: 🟢 high / 🟡 medium / 🔴 low / ⚪ abstain / ⚠ error
+- Klickbares Popover mit Top-5-Quellen + Coverage-/Authority-/Topic-Metriken
+- Bei `low`: Banner VOR der Antwort als prominente Warnung
+- `markWrong`-Button extrahiert Chunk-IDs aus VERIFY-Meta + Aufruf der RPC
+
+**System-Prompt-Erweiterungen v5.4:**
+
+Pflicht-Block VOR `# PFLICHT`:
+> Ähnlichkeit zwischen Themen ist KEIN Beleg. Niemals analog schließen von einem Thema auf ein anderes (Impfung ≠ Infektion, Mitarbeiter-Impfung ≠ Bewohner-Impfung, KZP ≠ Dauerpflege, MD Stationär ≠ MediFox DAN). Wenn kein dediziertes Dokument vorliegt: abstain.
+
+Inline-Zitations-Pflicht: `[Quelle: <file_name>]` nach jedem fachlichen Absatz. ABER: Verifier toleriert auch Bold-Erwähnungen, weil LLMs sich nicht 100% an die Regel halten.
+
+**Source-Type-Hierarchie für Boost (Stand 2026-04-25):**
+konzeptstandard 1.35 > faq 1.30 > confluence_wiki 1.25 > update_info_10x 1.22 > cached_wiki_page 1.20 = qm_handbuch_md 1.20 > wiki_article 1.18 > structured_click_path 1.15 = expertenstandard 1.15 > sonst 1.0.
+
+**Live-Verifikation der Pipeline:**
+- 5/5 Testfragen korrekt klassifiziert (high für Sturzprophylaxe/Impfung/Dienstplan, medium oder low/abstain für nicht-belegbare Fragen)
+- Score-Verteilung: 0.85–0.91 für high, 0.55–0.75 für medium, 0.40 für low/abstain
+
+**Plan-Mode + Pre-Mortem für architektonische Aufgaben:**
+Bei mehrstufigen Pipeline-Designs zuerst Pre-Mortem-Muster anwenden (Was geht schief?), dann Plan in 6–7 Phasen strukturieren, dann phasenweise umsetzen mit Test nach jeder Phase. Funktionierte hier sehr gut — die identifizierten Failure-Szenarien (zu strikter Abstain, Score täuscht, UI-Badge übersehen, Performance, Aktualität) flossen direkt in die Implementierung ein.
