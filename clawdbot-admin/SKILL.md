@@ -1520,3 +1520,63 @@ Wenn nur Ebene 1 geaendert wird, laufen Cron-Jobs und Fallbacks weiter mit den a
 - `install.sh` faellt still zurueck wenn `sudo` ohne TTY gerufen wird (`sudo: Zum Lesen des Passworts ist ein Terminal erforderlich`) — das Script logged einen `log_warn` mit dem manuellen Command
 - Funktionierendes Pattern: User tippt `! <command>` am Claude-Code-Prompt — der `!`-Prefix hebt den Befehl in eine interaktive Subshell und liefert Output zurueck in die Session
 - Anwendung: Alle sudo-Schritte explizit als `! sudo ...` formulieren, nicht versuchen sie ueber Bash-Tool auszufuehren
+
+### 2026-04-25 — Self-Improve Cron-Optimierung + Modell-Limits + Tool-Sandbox
+
+Ausgangsbefund (Gateway-Log): self-improve Cron-Job zeigt seit Wochen `stuck session` Warnings (5+ Minuten processing-Zeit, queueDepth=0), ENOENT-Halluzinationen auf `memory/YYYY-MM-DD.md`, INFO-Spam wegen group-writable bin-Dirs. Drei Fixes umgesetzt; sechs Lektionen extrahiert.
+
+**KRITISCH — `code_execution`-Tool ist sandboxed-remote, KEIN Workspace-FS-Zugriff:**
+- Tool-Policy registriert es als "Run sandboxed remote analysis" (siehe `~/.npm-global/lib/node_modules/openclaw/dist/tool-policy-*.js`)
+- Jeder Versuch `open("/home/moltbotadmin/clawd/...")` aus code_execution scheitert mit "Datei nicht gefunden"
+- **Konsequenz fuer Cron-Prompts:** Fuer File-IO immer `read`/`edit`/`write` in der Tools-Allowlist, NIEMALS `code_execution` als File-Tool einplanen
+- Test-Run-Symptom: Job laeuft sauber durch, status=ok, aber inhaltlich gescheitert — Mini halluziniert "Datei nicht gefunden" obwohl sie existiert (aus seiner Sandbox-Sicht stimmt das)
+
+**KRITISCH — gpt-4.1-mini ungeeignet fuer Append-via-edit-Pattern:**
+- Mini kann lange JSONL-Zeilen mit Escapes und Anfuehrungszeichen NICHT byte-genau zwischen Read-Call und Edit-Call reproduzieren
+- Halluzinations-Failure-Mode: erfindet Datei-Namen ("Append-File", "delta.jsonl") statt edit-Fehler zu melden, behauptet false-positive Erfolg
+- Anti-Halluzinations-Klauseln im Prompt ("NIEMALS halluzinieren") werden ignoriert — Trainings-Bias dominiert
+- **Loesung:** Sonnet 4.6 mit `--thinking low --timeout-seconds 180` fuer Cron-Jobs die strukturierte File-Mutation brauchen
+- Mini eignet sich fuer reine Lese/Klassifikations-Workflows, nicht fuer File-Append mit String-Reproduktion
+
+**KRITISCH — Cron-Status `ok` ist semantik-frei:**
+- `lastRunStatus: ok` und `lastDeliveryStatus: delivered` messen NUR "Job getriggert + Telegram-Nachricht raus", nicht "Task korrekt erledigt"
+- Inhaltliche Fehlschlaege (edit failed, halluzinierter Erfolg) gehen als `ok` durch — der User glaubt es lief alles
+- **Validierungs-Pflicht:** Bei Cron-Audit immer `~/.openclaw/cron/runs/<job-id>.jsonl` letzten Eintrag anschauen (`tail -1 | python3 -m json.tool`), nicht nur `cron list`-Status. Felder die zaehlen: `status`, `error`, `summary` und ECHTE Mutation der Ziel-Datei verifizieren (`wc -l` vor/nach)
+
+**OpenClaw-Cron ist Agent-Scheduler, kein Shell-Cron:**
+- `openclaw cron add` kennt nur `--message` (LLM-Prompt) und `--system-event`, KEIN `--command`/`--target system`
+- Reine File-Operationen (touch, cleanup, backup) gehoeren in **systemd-User-Timer**, sonst zahlt man LLM-Kosten + 30s+ Laufzeit fuer eine 0.001s-Operation
+- **Pattern:** `~/.config/systemd/user/<job>.{service,timer}` mit `Type=oneshot` + `Persistent=true` (holt verpasste Runs nach Reboot/Suspend nach)
+- Beispiel umgesetzt: `clawd-daily-log.{service,timer}` legt taeglich 00:05 das `clawd/memory/$(date +%Y-%m-%d).md` an (idempotent via `touch -a`)
+
+**Sonnet 4.6 mit Prompt-Caching: ~$0.035/Run statt $0.30:**
+- Anthropic-Cache hat 5min-TTL, `--thinking off`/`low` reicht fuer strukturierte Workflows
+- Bei Cache-Hit fuer 5k-Char-System-Prompt: `input_tokens: 8` (real) — nur Output zaehlt voll
+- Macht Sonnet 4.6 fuer stabile Cron-Workflows kosteneffektiv genug, dass Modell-Downgrade nicht noetig ist
+- Bei 3 Runs/Tag = ~$3/Monat fuer den Self-Improve-Sprint — kein wirtschaftlicher Druck mehr
+
+**`safeBinTrustedDirs`-Permissions tighten:**
+- Default-Setup hat `~/.local/bin` und `~/.npm-global/bin` als 775 (group-writable) → Gateway-INFO-Spam bei jedem Start
+- Fix: `chmod 755` auf beide Dirs entfernt Warnung ohne Funktionsverlust (single-user host, gruppe nur theoretisch ein Vektor)
+- Wichtig: NICHT aus `safeBinTrustedDirs` entfernen — sonst meldet doctor "openclaw resolves outside trusted safe-bin dirs" weil das CLI in einem davon liegt
+
+**Codex Stop-Hook als Prompt-Review-Layer:**
+- Codex-Plugin prueft nach `Stop` automatisch ob Aenderungen sinnvoll/konsistent sind
+- Hat in dieser Session V2-Prompt blockiert ("Prompt ist in sich widersprüchlich") — fand `max 3 reads` + halluzinierte Tool-API "read gibt total lines zurueck"
+- Wertvoll als Review-Layer wenn ich (Claude) selbst Prompts schreibe — fange Halluzinationen ab bevor sie ans LLM gehen
+- Aktivierbar via `/setup` (Codex-Plugin)
+
+**Ergebnis-Vergleich (6 Iterationen, 1 Sieger):**
+
+| Version | Modell | Dauer | Status | Append | Notiz |
+|---------|--------|-------|--------|--------|-------|
+| V1 (alt) | Sonnet | 195s | ok | unklar | Original-Prompt mit edit-Halluzinationen |
+| V2 | Mini+code_exec | 72s | ok* | ✗ | Sandbox-Fail |
+| V3 | Mini+read | 17s | ok* | ✗ | fragt zurueck statt zu handeln |
+| V4 | Mini+ActionBias | 39s | error | ✗ | edit failed, halluziniert Erfolg |
+| V5 | Mini+Hardened | 45s | error | ✗ | gleicher Fehler |
+| **V6** | **Sonnet+V5-Prompt** | **50s** | **ok** | **✓** | **graph.jsonl 138→140** |
+
+*ok trotz inhaltlichem Fehlschlag — siehe "Cron-Status semantik-frei"
+
+**Backup alter Cron-Job:** `~/.openclaw/cron-self-improve.pre-2026-04-25.json`
