@@ -137,6 +137,69 @@ Was davon soll ich umsetzen?
 
 ---
 
+## Lead-Listen & Outbound-Outreach (DSGVO-Modus)
+
+Diese Regeln gelten **immer**, wenn es um Kaltakquise, Outbound-Mailings,
+Lead-Listen oder Adressdaten von Dritten geht. Sie überstimmen den
+generischen "Wie vermarkten"-Workflow.
+
+### Pflicht-Reihenfolge
+
+1. **Bestandsaufnahme** — Welche Daten gibt es? Quelle? Aktualität? Schema?
+2. **Freigabe einholen** — Bevor Daten gelesen, dedupliziert oder klassifiziert werden.
+3. **Validierungstabelle erzeugen** — Klassifikation, Dubletten, Bemerkungen.
+4. **Manuelle Einzelsichtung** — Max 20–30 Datensätze pro Runde.
+5. **Sperrliste pflegen** — `do_not_contact.csv` ist Quelle der Wahrheit.
+
+### NIEMALS (in diesem Modus)
+
+- Massenmailer / Mailmerge / SMTP-Skript / n8n-Mailversand vorschlagen,
+  außer Diana fordert das ausdrücklich zusätzlich.
+- Werbesprache: "rechtssicher", "AI-Act-konform garantiert",
+  "Best-in-Class", "Marktführer", "garantiert mehr Kunden".
+- `contact_person` aus gescrapeten Quellen in eine Hauptliste übernehmen
+  (DSGVO Art. 6) — nur als Bemerkung markieren.
+- Dubletten löschen — nur markieren (Gruppen-ID + Bemerkung).
+- Datensätze auf `manuell_geprueft = ja` setzen ohne tatsächliche Sichtung.
+- Personenbezogene Daten anreichern (z. B. Social-Media-Profile suchen).
+
+### IMMER
+
+- E-Mail-Klassifikation in mindestens 3 Klassen:
+  - **funktionsadresse:** `info@`, `kontakt@`, `verwaltung@`,
+    `heimleitung@`, `pdl@`, `pflegedienstleitung@`, `datenschutz@`, `office@`
+  - **personenbezogen wirkend:** Vorname.Nachname-Muster, Initial.Nachname,
+    Localpart mit Punkt ohne Funktionspräfix, Free-Mailer-Domain
+    (`t-online.de`, `gmail.com`, `gmx.de`, `web.de`, `hotmail.com`,
+    `yahoo.de`, `outlook.com`, `icloud.com`, `aol.com`, `freenet.de`)
+  - **unklar:** Adresse vorhanden, aber nicht klar zuordenbar.
+- Personenbezogen wirkend → `kontaktstatus = nicht kontaktieren`,
+  `prioritaet = niedrig`, Eintrag in `do_not_contact.csv`.
+- Funktionsadresse → `prioritaet = hoch` nur, wenn Telefon UND Quellen-URL
+  vorhanden sind UND keine Dublette UND kein `contact_person` befüllt.
+- `rechtspruefung_noetig = ja` als Default für jeden Datensatz.
+- Vorsichtige Formulierung bei nicht verifizierten Feldern
+  (z. B. `einrichtungsart = stationär_vermutet` statt "Pflegeheim").
+- Outreach-Vorlage **nur** als manuelle Einzelansprache anbieten,
+  inkl. expliziter Pflicht-Checkliste vor Versand.
+- Empfänger-Wunsch "Bitte nicht erneut kontaktieren" → sofort in
+  `do_not_contact.csv` + `kontaktstatus = nicht kontaktieren`.
+
+### Outreach-Textbausteine
+
+- "kurze freiwillige Befragung" — neutral
+- "Teilnahme ist freiwillig, jederzeit abbrechbar"
+- "Bitte keine Bewohnerdaten/Diagnosen/Gesundheitsdaten eingeben"
+- "Wenn Sie hierzu keine weitere Nachricht wünschen, genügt eine kurze
+  Antwort mit Bitte nicht erneut kontaktieren"
+
+### Querverweis
+
+Read-only-Snapshot-Pattern für laufende SQLite-DBs (mit SHA-256-Verifikation
+vor/nach Verarbeitung) → siehe `nas-instance` Skill.
+
+---
+
 ## Constraints
 
 ### NIEMALS
@@ -175,3 +238,39 @@ Was davon soll ich umsetzen?
 - Level 2 wurde ohne weitere Korrektur akzeptiert
 
 **Learning:** Bei Business-Fragen IMMER Level 2 Denken anwenden
+
+---
+
+### 2026-04-27 - Pflegeheim-Leads DSGVO-Validierung
+
+**Kontext:** 1693 Leads aus `gelbe_seiten` per SQLite-DB → bereinigte
+Validierungstabelle, kein Versand.
+
+**Korrekturen von Diana (HOCH):**
+- `contact_person` NICHT in Hauptliste übernehmen, auch wenn technisch
+  vorhanden — nur Bemerkung + `rechtspruefung_noetig = ja`.
+- Bei vorhandenem `contact_person` keine automatische `prioritaet = hoch`.
+- Personenbezogene E-Mail → `kontaktstatus = nicht kontaktieren` + niedrig.
+- Funktionsadresse → hoch NUR bei Telefon + Quelle + keine Dublette.
+- Dublettenverdacht → Priorität niedrig (markieren, nicht löschen).
+- Outreach-Text NIE mit "rechtssicher" / "AI-Act-konform garantiert".
+- Empfehlung: erste Runde max 20–30 manuelle Erstkontakte, nicht alle.
+
+**Akzeptierte Pattern (MITTEL):**
+- Read-only Snapshot in `/tmp` + SHA-256-Vergleich vor/nach (DB-Integrität).
+- Free-Mailer-Domains als personenbezogen einstufen (DSGVO-konservativ).
+- 4-fach Dubletten-Erkennung via Union-Find (Website / E-Mail / Telefon /
+  Name+Ort).
+- `einrichtungsart = stationär_vermutet` statt "Pflegeheim" bei
+  nicht verifizierten Quelldaten.
+- Bestandsaufnahme + Freigabe-Frage vor jeder Verarbeitung
+  (Schritt 1 / Schritt 2-Pattern).
+
+**Datenqualitäts-Beobachtung (NIEDRIG):**
+- `state`-Feld aus Branchen-Slug der Quelle ist häufig falsch (z. B. PLZ
+  Schleswig-Holstein, `bundesland = Hamburg`). Bei gescrapeten geographischen
+  Feldern immer gegen PLZ verifizieren.
+
+**Learning:** Bei Lead-/Akquise-Aufgaben automatisch in den DSGVO-Modus
+schalten. Default ist NIE der schnelle Mailversand, sondern die manuelle
+Validierungstabelle.
