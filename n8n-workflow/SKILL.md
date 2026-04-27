@@ -709,6 +709,29 @@ Wie ein Wecker. Jeden Tag um 8 Uhr morgens startet der Workflow.
     → Stattdessen: Original `<p:seq>/<p:cTn>/<p:childTnLst>` finden und Autoplay-`<p:par>` per `insert(0)` einfügen
     → Behält Click-Animationen, fügt nur Audio-Trigger zusätzlich hinzu
 
+41. **NIEMALS** zwei `}` direkt aufeinanderfolgend in einer `={{ … }}`-Expression!
+    → n8n's tournament-Parser interpretiert `}}` als vorzeitiges Ende der Expression.
+    → Fehler: `error: "invalid syntax"` im HTTP-Output, Workflow läuft mit leeren LLM-Antworten weiter.
+    → Fix: Whitespace zwischen geschlossenen Objekten — `{ ... } })` statt `{ ... }})`.
+    → Typische Stellen: `JSON.stringify({ ..., obj: { ... }})` oder `response_format: { type: 'json_object' }})`.
+
+42. **NIEMALS** rohe NULL-Bytes (`\x00`) in Code-Node-Quellcode einbetten!
+    → ECMAScript-Lexer terminiert Source bei NULL-Byte → `SyntaxError: Invalid regular expression: missing /`.
+    → Fix: Escape-Notation `\x00` als JS-String literal nutzen (z.B. in raw-Python-Templates `r"replace(/[\x00-\x1F]/g, '')"`), kein Roh-Byte einbetten.
+    → Beim JSON-Round-Trip schreibt Python `json.dumps` rohe NULLs als ` `, n8n parst sie zurück als rohes Steuerzeichen — direkt im JS-Source dann fatal.
+
+43. **NIEMALS** Form Trigger v2.2 zusammen mit `RespondToWebhook` im selben Workflow!
+    → n8n's Validator weigert sich, beim PUT verschluckt er Form Trigger + Folgeknoten STILL (29 statt 32 Nodes), kein Fehler im API-Response.
+    → Erkennen: Knoten-Anzahl nach PUT prüfen.
+    → Form Trigger Antwort-Pattern: `responseMode: "lastNode"` + `n8n-nodes-base.form` (operation `completion`) als Output.
+    → Webhook-Antwort-Pattern: `RespondToWebhook` (gleicher Workflow geht NICHT zusammen).
+    → Wer beides braucht: zwei Workflows + gemeinsamer Sub-Workflow via `Execute Workflow`.
+
+44. **NIEMALS** `responseMode: "responseNode"` für Form Trigger v2.2 nutzen!
+    → In `n8n-nodes-base.formTrigger` v2.2 ist die Option gar nicht mehr vorhanden (Source: `formRespondMode.options.filter(o => o.value !== 'responseNode')`).
+    → Nur `lastNode` und `onReceived` sind erlaubt.
+    → Bei `lastNode` muss der letzte ausgeführte Node ein `n8n-nodes-base.form` mit `operation: completion` sein → rendert HTML-Page.
+
 ### 🟡 BEVORZUGT
 
 1. **Error Workflow** einrichten für Fehlerbenachrichtigung
@@ -741,6 +764,44 @@ Wie ein Wecker. Jeden Tag um 8 Uhr morgens startet der Workflow.
     - User kann Key spaeter ueber n8n UI aendern
 16. **System-Prompt Deploy-Pattern**: Prompt sitzt in `Supabase KI-Agent` Node unter `parameters.options.systemMessage`. Patch via: GET Workflow → Python JSON-Manipulation → PUT (interne API) → deactivate/activate
 17. **RAG Batch-Index-Pattern**: .md lesen → chunk (1500/350) → OpenAI embed (text-embedding-3-large 3072d) → Supabase rag_chunks INSERT mit service_role key. Credentials aus n8n SQLite entschluesseln (CryptoJS AES, EVP_BytesToKey).
+
+18. **Form Trigger Field-Property-Names sind `field-0` … `field-N`** in submit-Daten — nicht der `fieldLabel`!
+    - Mapping in nachgelagertem Code-Node: `[ 'prompt','target_tool', ... ][i] = body['field-' + i]`.
+    - `fieldLabel` steuert nur die UI-Beschriftung. Property-Key wird automatisch fortlaufend vergeben.
+
+19. **Form Trigger POST erwartet `multipart/form-data`** — nicht `application/x-www-form-urlencoded`.
+    - curl: `-F 'field-0=...'` (multipart) statt `-d 'field-0=...'` oder `--data-urlencode`.
+    - n8n-Log bei falschem Content-Type: `Expected multipart/form-data`.
+
+20. **Custom Form-Styling über `options.customCss`** (sowohl `formTrigger` als auch `n8n-nodes-base.form`):
+    - n8n hardcodet `--container-width: 448px` (zu schmal für lange Outputs!) und Light-Mode-Variablen.
+    - Override im customCss: `:root { --container-width: min(1100px, 95vw); }` und `.container { width: 1100px !important; }`.
+    - Dark Mode: alle CSS-Variablen plus `body`-Background plus `.card`-Background mit `!important` (sandbox-CSP setzt sonst Light-Defaults durch).
+    - completionMessage-HTML kommt INNERHALB des Form-Wrappers — Inline-`<style>` ergänzt das customCss.
+
+21. **`/form-test/{webhookId}`** ist nur kurzzeitig aktiv (wenn Editor "Listen for test event"), cached aggressiv und ignoriert customCss-Updates oft.
+    - **UX immer über `/form/{webhookId}`** (Production-Endpoint).
+    - Editor-Test-Button ist nur für Knoten-Debugging gedacht.
+
+22. **`/form-waiting/{exec_id}?signature=…`** existiert nur für **Form-Trigger-Runs**.
+    - Manual-Trigger oder andere Trigger → URL liefert `Cannot read properties of undefined (reading 'resumeToken')`.
+    - Bedingung für `waiting`-Status: `responseMode: "lastNode"` Form Trigger + Pipeline noch nicht durchgelaufen ODER auf Browser-Pickup wartend.
+
+23. **Cloudflare-Tunnel hat ~100 s Request-Timeout.**
+    - Lange synchrone Form-Workflows (z.B. LLM-Pipelines mit 4–7 min) brechen über `*.forensikzentrum.com` mit 524 ab.
+    - Voll-Lauf nur über LAN (`192.168.22.90:5678/form/...`) oder Tailscale.
+
+24. **n8n CLI `n8n execute --id`** kollidiert mit laufendem Server (Port 5679 Task-Broker).
+    - Fehler: `n8n Task Broker's port 5679 is already in use`.
+    - Workaround: Workflow stattdessen via Webhook/Form/Trigger oder API testen, nicht CLI.
+
+25. **n8n PUT entfernt validierungsinkompatible Knoten STILL** ohne Fehler im Response.
+    - Nach jedem PUT: `len(response['nodes'])` mit erwartetem Wert vergleichen.
+    - Beispiel: Form Trigger + RespondToWebhook → PUT 200, aber Form Trigger fehlt im Output.
+
+26. **Webhook mit `authentication: headerAuth` ohne Credential = nicht aktivierbar.**
+    - API-`/activate` antwortet mit HTTP 400: `Missing required credential: httpHeaderAuth`.
+    - Vor Aktivierung Credential im UI anlegen oder via `POST /credentials { type: "httpHeaderAuth", data: { name: "...", value: "..." } }`.
 
 ### 🟢 GUT ZU WISSEN
 
@@ -2301,3 +2362,77 @@ OpenRouter (Claude Sonnet 4.6) und Anthropic-Direkt sind beide schon leer gelauf
 **Trust-Badge in Chat-UI — Pattern:**
 
 Verifier hängt `<!--VERIFY:{tier, score, sources}-->` als HTML-Kommentar an die Antwort. Chat-HTML parst und entfernt vor Rendering, rendert Badge separat. So bleibt die LLM-Antwort frei von Meta-Daten, aber UI hat alle Infos.
+
+---
+
+### 2026-04-28 - Autonomous Prompt Refinery — n8n-Stolperfallen
+
+Beim Bau eines 9-stufigen LLM-Prompt-Refinement-Workflows (`H6WzGh1SQCsqaVEs`) mit Form-Trigger-UI fielen vier kritische n8n-Eigenheiten + mehrere Best-Practices auf:
+
+**Tournament-Parser-Bug bei `}}`:**
+- n8n's Expression-Engine (`tournament`) erkennt `}}` als Ende der `={{ … }}`-Expression, auch wenn semantisch nur ein Object schließt.
+- Fehler-Symptom: HTTP-Output enthält `error: "invalid syntax"`, alle nachgelagerten LLM-Calls fallen still aus.
+- Fix: zwischen geschlossenen Objekten Whitespace einfügen — `{ ... } })` statt `{ ... }})`.
+- Häufigste Stelle: `JSON.stringify({ ..., response_format: { type: 'json_object' } })` (mit Leerzeichen vor letzter `}`).
+
+**NULL-Byte (`\x00`) bricht Code-Node:**
+- ECMAScript-Lexer terminiert Source bei rohem NULL → `SyntaxError: Invalid regular expression: missing /`.
+- Reproduzieren: Python-Generator schreibt rohes `\x00` ins JSON, n8n parst es zurück, JS-Engine kollabiert.
+- Fix: `\x00` als Escape-Notation im Source-Text (z.B. `replace(/[\x00-\x1F]/g, '')`) — beim JSON-Round-Trip bleibt das eine 4-Zeichen-Sequenz.
+
+**Form Trigger v2.2 vs RespondToWebhook:**
+- Inkompatibel im selben Workflow. n8n-Validator wirft beim Lauf `The "Respond to Webhook" node is not supported in workflows initiated by the "n8n Form Trigger"`.
+- API-PUT entfernt den Form Trigger STILL ohne Fehler — nur Knoten-Anzahl-Vergleich erkennt es.
+- Lösung: für Form-UX nur `n8n-nodes-base.form` (operation `completion`) als Antwort, kein RespondToWebhook im Workflow.
+- Wenn beide HTTP-Trigger gewünscht: zwei Workflows + gemeinsamer Sub-Workflow.
+
+**Form Trigger v2.2 hat KEIN `responseNode`:**
+- Source: `formRespondMode.options.filter(o => o.value !== 'responseNode')` für `nodeVersion > 2.1`.
+- Erlaubte Modi: `lastNode` (gibt Output des letzten Nodes zurück), `onReceived` (sofort).
+- Bei `lastNode` muss der letzte Node ein `Form` mit `operation: completion` sein → rendert HTML-Page.
+
+**Form Trigger Property-Naming:**
+- Submit liefert Felder als `field-0`, `field-1`, … (positionsabhängig), nicht als `fieldLabel`.
+- Stage-0-Mapping nötig: kanonische Namen aus festem Array-Index zuweisen.
+- POST-Content-Type: nur `multipart/form-data`. `application/x-www-form-urlencoded` → `Expected multipart/form-data` im Log.
+
+**Custom-Form-Styling über `options.customCss`:**
+- n8n hardcodet `--container-width: 448px` (zu schmal für lange Outputs!) und Light-Mode-CSS-Variablen.
+- Override: `:root { --container-width: min(1100px, 95vw); } .container { width: 1100px !important; }`.
+- Für Dark Mode: alle `--color-*`-Variablen plus Body/Card-Background mit `!important`.
+- Pre-Block: `white-space: pre-wrap !important; overflow-wrap: anywhere !important;` gegen Layout-Sprenger.
+- Wichtig: customCss wirkt auf `/form/...` (Production), aber `/form-test/...` (Editor-Test) cached oft alte Configs → UX immer Production-URL.
+
+**`/form-waiting/{id}`-Falle:**
+- URL existiert nur für **Form-Trigger-Runs**, nicht für Manual oder Webhook.
+- Aufruf für falsche Run-ID → `Cannot read properties of undefined (reading 'resumeToken')`.
+
+**Cloudflare-Tunnel + lange Workflows:**
+- ~100 s Request-Timeout bei `*.forensikzentrum.com` → synchrone Form-Calls über LLM-Pipelines (4–7 min) brechen mit 524 ab.
+- Voll-Lauf nur über LAN/Tailscale.
+
+**Aggregator-Fallback-Pattern gegen LLM-Schema-Drift:**
+- Sonnet 4.5 lässt bei langen Outputs gelegentlich Schema-Felder weg (z.B. `quality_score` fehlt, nur `final_prompt` bleibt).
+- Defensive Aggregator-Logik: wenn Score fehlt aber `final_prompt.length > 400`, default Score 75 / Gate `pass_with_warnings` + explizite Warning-Message.
+- Plus strikterer System-Prompt-Block: „DU MUSST ALLE FELDER LIEFERN. … Schweigen oder Auslassen einzelner Felder ist UNZULAESSIG."
+
+**Multi-Trigger-Source-Detection in Stage 0:**
+- `_trigger_source` aus Markern bestimmen: `body` (object) → webhook, `submittedAt`/`formMode` → form, leeres Objekt → manual.
+- Ermöglicht bedingtes Output-Routing am Ende (z.B. Form Completion vs. RespondToWebhook).
+
+**Bounded-Correction-Pattern statt Loop:**
+- Genau **ein** Korrektur-Pass nach dem Quality Gate, kontrolliert über IF (`max_refinement_rounds >= 2 && quality_gate === 'fail'`).
+- Keine n8n-Loop-Konstruktion → keine Endlos-Schleifen-Gefahr.
+
+**n8n CLI `n8n execute --id` Konflikt:**
+- Bei laufendem n8n-Server: `n8n Task Broker's port 5679 is already in use`.
+- Workaround: Tests nur via Webhook/Form/API auslösen, nicht CLI.
+
+**Webhook-Activate-Block ohne Header-Auth-Credential:**
+- API-POST `/activate` → HTTP 400: `Missing required credential: httpHeaderAuth`.
+- Vor Aktivierung: Credential anlegen via UI oder `POST /credentials { type: "httpHeaderAuth", data: { name: "...", value: "..." } }` und Workflow patchen.
+
+**LLM-Refinement-Pipeline-Pattern (allgemein):**
+- Jede Stage = (1) HTTP-Request mit eigenem System-Prompt + JSON-Schema + `response_format: {type: "json_object"}`, (2) nachgelagerter Code-Parser mit `JSON.parse`-Try, Regex-Fallback `\{[\s\S]*\}`, `_stage_failed`-Flag bei Misserfolg.
+- Stages haben Error-Continuation (`onError: continueErrorOutput`) und der Error-Branch zielt auf den gleichen Parser → robust gegen LLM-Provider-Outages.
+- Aggregator liest alle Stages über `$('Stage X - Parse').first().json` und liefert immer ein gültiges Schema-konformes Objekt zurück, auch wenn einzelne Stages scheiterten.
