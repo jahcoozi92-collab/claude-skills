@@ -410,7 +410,7 @@ GET https://wissen.medifoxdan.de/rest/api/content/{PAGE_ID}?expand=body.view
 - NIE aus ähnlichen MediFox-Themen extrapolieren — auch wenn Pfade analog scheinen
 - Konkrete Fehlschluss-Beispiele: **Impfung ≠ Infektion**, Mitarbeiter-Impfung ≠ Bewohner-Impfung, Stationäre Dauerpflege ≠ Kurzzeitpflege, MD Stationär ≠ MediFox DAN
 - Wenn kein dediziertes Dokument vorliegt: **abstain** statt schlussfolgern
-- Real-Beispiel: Impfungen wurden mit Update 8.2 (2022) von Vorgabewerte → Pflege nach **Verwaltung → Impfungen** + neuer **Impfstoffe**-Katalog migriert; analoger Schluss aus „Erweiterung der Infektionen" war falsch
+- Real-Beispiel: Impfungen liegen NICHT unter Administration → Kataloge (weder Vorgabewerte noch Verwaltung) — direkte MediFox-Support-Auskunft 2026-04-27: Pfad ist **Dokumentation → Dokumentation → Einstellungen (Zahnrad) → Impfungen / Impfstoffe → Neu**. Auch der Update 8.2-PDF-Hinweis auf „Verwaltung → Impfungen" war für die aktuelle UI nicht (mehr) zutreffend.
 
 **Confluence-REST-API für schnelle Wiki-Recherche (kein Auth):**
 ```bash
@@ -466,17 +466,62 @@ Zusätzlich: **+5% wenn `verified=true`**, **−10% wenn `metadata.needs_review=
 
 **MediFox-Strukturwissen 2026 (Korrekturen):**
 
-| Bereich | Korrekt seit | Pfad |
-|---------|--------------|------|
-| Bewohner-Impfungen | Update 8.2 (2022) | Administration → Kataloge → Verwaltung → **Impfungen** |
-| Impfstoffe (zwingend!) | Update 8.2 (2022) | Administration → Kataloge → Verwaltung → **Impfstoffe** |
+| Bereich | Quelle | Pfad |
+|---------|--------|------|
+| Bewohner-Impfungen anlegen | MediFox-Support 2026-04-27 | Dokumentation → Dokumentation → **Einstellungen (Zahnrad)** → Impfungen → Neu |
+| Impfstoffe anlegen (zwingend parallel!) | MediFox-Support 2026-04-27 | Dokumentation → Dokumentation → **Einstellungen (Zahnrad)** → Impfstoffe → Neu |
 | Infektionen | unverändert | Administration → Kataloge → Vorgabewerte → Pflege → Infektion |
-| Bewohner-Doku Impfung | Update 8.2 | Verwaltung → Bewohner → Register **„Detail"** → Immunisierungen |
+| Bewohner-Impfung einsehen | click_paths ID 60 | Dokumentation → Dokumentation → [Bewohner] → Arzt → Medizinische Daten |
+| ⚠️ NICHT mehr gültig | überholt | ~~Administration → Kataloge → Verwaltung → Impfungen~~ (Update-PDF 8.2-Annahme war falsch / inzwischen verschoben) |
 
 **Erkenntnis Wiki-Struktur:**
 - MediFox-Wiki zeigt für viele Admin-Themen NUR 1-2 Treffer + PDFs
 - Wiki ist primär Troubleshooting-FAQ, kein systematisches Handbuch
 - → bei Admin/Konfig-Fragen IMMER Update-PDFs als zweite Quelle prüfen
+
+---
+
+### 2026-04-27 — Quellen-Hierarchie + Embedding-Dim-Unterschiede + Korrektur-Workflow
+
+**Quellen-Hierarchie für MediFox-Pfade (KRITISCH):**
+
+1. **Direkte MediFox-Support-Auskunft** (höchste Priorität) — `trust_level=3`, `verified_by='medifox_support'`
+2. Aktuelle Confluence-Wiki-Seite mit Screenshot
+3. Update-Information PDF (kann durch spätere UI-Änderungen überholt sein!)
+4. Eigene Annahme aus analogem Pfad (FORBIDDEN ohne Quelle — siehe Extrapolations-Verbot)
+
+**Wichtig:** Auch Update-PDFs altern. Beispiel-Fall: Update 8.2 (2022) PDF beschrieb Migration nach „Verwaltung → Impfungen" — 2026-04-27 hat MediFox-Support den Pfad als „Dokumentation → Dokumentation → Einstellungen (Zahnrad) → Impfungen" bestätigt. Bei Konflikt: Support-Auskunft gewinnt; alte Quelle in alten Chunks explizit als „NICHT korrekt" markieren.
+
+**Embedding-Dimensionen je Tabelle (Stolperstein):**
+
+| Tabelle | Spalte | Dimensionen | Modell |
+|---------|--------|-------------|--------|
+| `rag_chunks` | `embedding` | **3072** | `text-embedding-3-large` (`dimensions=3072`) |
+| `rag_chunks` | `embedding_half` | 3072 (halfvec) | automatisch via Trigger `trg_sync_embedding_half` |
+| `click_paths` | `embedding` | **1536** | `text-embedding-3-small` (default) |
+
+Falsches Modell → `22000: expected 1536 dimensions, not 3072` (oder umgekehrt). Vor PATCH die `data_type` der Spalte verifizieren.
+
+**Korrektur-Workflow (5-Schritt-Pattern bei UI-Pfad-Korrekturen):**
+
+```
+1. rag_chunks UPDATE: content + embedding=NULL + embedding_half=NULL + verified=true
+2. workflows/embed_new_chunks.py (mit OPENAI_API_KEY + SUPABASE_SERVICE_KEY)
+   → embedding_half + fts werden automatisch via Trigger gefüllt
+3. click_paths INSERT mit verified=true, verified_by='medifox_support', trust_level=3
+   → search_text + embedding (1536d) manuell mit text-embedding-3-small generieren
+4. Memory-Eintrag (feedback_*.md) + alte widersprüchliche Memory aktualisieren
+5. MEMORY.md Index pflegen
+```
+
+**Env-Quellen für Embedding-Skripte (NAS):**
+- `OPENAI_API_KEY` aus `/volume1/docker/open-webui/backups/complete-update-*/`.env`
+- `SUPABASE_SERVICE_ROLE_KEY` aus `/volume1/docker/lightrag/.env.lightrag`
+
+**Anti-Imitations-Pattern:**
+- Korrigierte Chunks sollen den falschen Pfad explizit als „NICHT korrekt" benennen, nicht stillschweigend ersetzen
+- Sonst können bei Hybrid-Search alte + neue Versionen gleichzeitig gezogen werden → LLM mischt → falsche Antwort
+- Format: „Der Pfad X existiert in dieser Form NICHT (mehr) — korrekt ist: Y"
 
 ---
 
