@@ -1580,3 +1580,82 @@ Ausgangsbefund (Gateway-Log): self-improve Cron-Job zeigt seit Wochen `stuck ses
 *ok trotz inhaltlichem Fehlschlag — siehe "Cron-Status semantik-frei"
 
 **Backup alter Cron-Job:** `~/.openclaw/cron-self-improve.pre-2026-04-25.json`
+
+### 2026-04-28 — openclaw Update + Plugin-Cleanup + Bin-Prefix-Konsolidierung
+
+**openclaw-Service-Stack auf der VM (Stand 2026-04-28):**
+| Unit | Typ | Funktion |
+|---|---|---|
+| `openclaw-gateway.service` | systemd --user | Node-Prozess `/usr/bin/node ~/.local/lib/node_modules/openclaw/dist/index.js gateway --port 18789` |
+| `openclaw-ha-bridge.service` | systemd --user | Python-Bridge `~/bin/openclaw-ha-bridge.py` (ruft `node ~/.local/lib/node_modules/openclaw/dist/entry.js` auf, Port 18790) |
+| `openclaw-gateway-watchdog.service` + `.timer` | systemd --user | alle 15 min `is-active`-Check, startet bei Ausfall neu |
+| `openclaw-runtime-cleanup.service` + `.timer` | systemd --user | täglich 04:00, behält nur aktuelle Plugin-Runtime-Version (siehe unten) |
+| `openclaw-backup.sh` | crontab | alle 5d 03:00, `tar -czf ~/backups/openclaw-$DATE.tar.gz` von `.openclaw/openclaw.json + .env + cron/ + clawd/`, scp auf NAS, MAX_BACKUPS=2 |
+
+**Standard-Update-Pattern (getestet 25→26):**
+```bash
+ssh moltbotadmin@192.168.22.206 '
+  # [0] Backup-First mit Verifikation
+  bash ~/bin/openclaw-backup.sh
+  BFILE="$HOME/backups/openclaw-$(date +%Y-%m-%d).tar.gz"
+  sha256sum "$BFILE" > "${BFILE}.sha256"
+  tar -tzf "$BFILE" >/dev/null  # integrity check
+  # [1] Update auf den Prefix den die Service-Unit lädt (~/.local nach Konsolidierung)
+  npm install -g --prefix ~/.local openclaw@<version>
+  # [2] Restart
+  systemctl --user restart openclaw-gateway.service
+  # [3] Health
+  sleep 30  # Plugin-Staging dauert 10–25s
+  systemctl --user is-active openclaw-gateway.service
+  ss -tlnp | grep ":18789"
+  journalctl --user -u openclaw-gateway.service --since "2 min ago" | tail -10
+'
+```
+
+**Bin-Konflikt-Falle (zwei npm-Prefixes):**
+- VM hatte historisch ZWEI npm-Prefixes konfiguriert: `~/.npm-global` (legacy) + `~/.local` (npm config get prefix).
+- npm legt Bins automatisch in den Prefix aus `npm config get prefix` → bei `npm install -g` landet alles in `.local`, ABER die Service-Unit lud aus `.npm-global` → Update wirkungslos.
+- Zusätzliche Falle: alter Wrapper-Bash-Script unter `~/.local/bin/openclaw` blockiert npm-Install mit `EEXIST` — npm akzeptiert keinen Force-Override ohne `--force`.
+- **Konsolidierung erfolgt:** `prefix=~/.local` (XDG-konform), Service-Unit auf `.local/.../dist/index.js` umgebogen, HA-Bridge-Skript ebenso, `.bashrc` PATH-Eintrag für `.npm-global/bin` entfernt. `.npm-global` enthält noch andere Pakete (clawdhub, electron, pm2, mcporter, @anthropic-ai, @google, @openai, @steipete) — bleiben dort, nur openclaw konsolidiert.
+- **Backups vor Konsolidierung:** `*.pre-prefix-consolidation.bak` neben jeder geänderten Datei.
+
+**Plugin-Runtime-Wachstum (kritisch wenn Disk knapp):**
+- openclaw stagged jede Version separat in `~/.openclaw/plugin-runtime-deps/openclaw-<version>-<hash>/` (Größe ~1.2 GB pro Version).
+- Ohne Cleanup geht 55 GB-VM voll — VM hatte vor dem Cleanup `Use% 100%`.
+- **Lösung:** systemd --user Timer `openclaw-runtime-cleanup.timer` (täglich 04:00, `Persistent=true`) ruft `~/bin/openclaw-runtime-cleanup.sh` auf; Skript liest aktuelle Version aus `~/.local/lib/node_modules/openclaw/package.json` und löscht alle anderen `openclaw-*-*`-Ordner (inkl. `openclaw-unknown-*`). Race-Condition-Guard: skippt wenn `SubState=activating` (Plugin-Staging läuft).
+
+**systemd --user .service+.timer als persönliches Cron-Replacement:**
+- Vorteile gegenüber user-cron: `journalctl --user -u <unit>` für Logs pro Job, `Persistent=true` holt verpasste Runs nach (Reboot/Suspend), Race-Guards via `ExecCondition` oder Skript-Check, atomare deps via `After=` und `Wants=`.
+- Pattern für Wartungs-Skripte:
+  ```ini
+  # ~/.config/systemd/user/<job>.service
+  [Unit]
+  Description=...
+  After=openclaw-gateway.service
+
+  [Service]
+  Type=oneshot
+  ExecStart=%h/bin/<script>.sh
+  StandardOutput=journal
+  StandardError=journal
+
+  # ~/.config/systemd/user/<job>.timer
+  [Unit]
+  Description=...
+
+  [Timer]
+  OnCalendar=*-*-* 04:00:00
+  Persistent=true
+  Unit=<job>.service
+
+  [Install]
+  WantedBy=timers.target
+  ```
+  Aktivierung: `systemctl --user daemon-reload && systemctl --user enable --now <job>.timer`. Test-Run: `systemctl --user start <job>.service && journalctl --user -u <job>.service --since "1 min ago"`.
+
+**Service-Unit-Description ist kosmetisch:**
+- `Description=OpenClaw Gateway (v2026.4.21)` ist hardcoded in der `.service`-Datei — bleibt nach `npm install`-Updates statisch falsch. Funktional egal, aber irritiert beim Debug. Aus `journalctl --user -u openclaw-gateway` zeigt sich die Description; echte Version aus `package.json` lesen.
+
+**Disk-Kritikalitäts-Warnung:**
+- VM-Root-FS war vor Cleanup bei 100% Use% (0 verfügbar). openclaw selbst loggte `[plugins] amazon-bedrock: Low disk space ... 921 MiB available; bundled plugin runtime dependency staging may fail.` — das ist ein Hard-Fail-Signal.
+- Backup-Rotation MAX_BACKUPS=2 ist knapp für tägliche Backups (2 Tage Retention). Bei Update-Vorab-Backup + 1 Daily-Backup besteht Risiko, dass das Vorab-Backup beim nächsten Cron rotiert wird. Empfehlung bei Major-Updates: explizit als `~/backups/openclaw-PRE-UPDATE-<version>.tar.gz` ablegen statt nur Daily.

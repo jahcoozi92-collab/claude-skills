@@ -2436,3 +2436,42 @@ Beim Bau eines 9-stufigen LLM-Prompt-Refinement-Workflows (`H6WzGh1SQCsqaVEs`) m
 - Jede Stage = (1) HTTP-Request mit eigenem System-Prompt + JSON-Schema + `response_format: {type: "json_object"}`, (2) nachgelagerter Code-Parser mit `JSON.parse`-Try, Regex-Fallback `\{[\s\S]*\}`, `_stage_failed`-Flag bei Misserfolg.
 - Stages haben Error-Continuation (`onError: continueErrorOutput`) und der Error-Branch zielt auf den gleichen Parser → robust gegen LLM-Provider-Outages.
 - Aggregator liest alle Stages über `$('Stage X - Parse').first().json` und liefert immer ein gültiges Schema-konformes Objekt zurück, auch wenn einzelne Stages scheiterten.
+
+---
+
+### 2026-04-28 — LLM-Schema-Drift, Doppel-Escape, Token-Caps (Refinery-Härtung)
+
+**Sonnet 4.5 mit `response_format: json_object` lässt bei langen Outputs Pflichtfelder weg:**
+- Bei final_prompt-Outputs > 5 KB sporadisch (~50 % der Läufe) keine `quality_score`/`quality_gate`/`checklist`-Felder im JSON, nur `final_prompt` + `executive_summary`.
+- Auch strikteste System-Prompt-Anweisungen ("DU MUSST ALLE FELDER LIEFERN", "Schweigen oder Auslassen ist UNZULAESSIG") werden bei langen Antworten ignoriert.
+- **Defensive Aggregator-Lösung:** wenn Score fehlt aber `final_prompt.length > 400`, default Score 75 / Gate `pass_with_warnings` + explizite Warning. Verhindert irreführendes 0/fail bei objektiv guten Outputs.
+- Bounded-Correction-Pass-Pattern (1 IF-getriggerter Retry, kein Loop) reicht nicht — Sonnet macht im Korrektur-Pass den gleichen Drift erneut.
+
+**Sonnet liefert manchmal doppelt-escapte Strings im JSON:**
+- response_format=json_object Output enthält `\\n` (4 Bytes) statt echtem Newline. JSON.parse macht daraus 2 Bytes Backslash+n statt echter Newline → `<pre>`-Renderer zeigt literal `\n` als Text.
+- Repair-Pattern im Aggregator (JS, Sentinel-basiert um literale Backslashes zu schützen):
+  - Heuristik: nur unescapen wenn `litN > 5 && litN > realN * 2` (verhindert False-Positives bei legitimen `\n`-Strings).
+  - Schritt 1: literale `\\` durch eindeutigen Sentinel `__APR_BS_SENTINEL_42__` ersetzen.
+  - Schritt 2: `\n` → newline, `\t` → tab, `\r` → CR, `\"` → quote, `\'` → apostrophe.
+  - Schritt 3: Sentinel zurück zu `\`.
+
+**max_tokens-Sweetspot für lange Prompt-Generationen:**
+- 3500 ist zu wenig für 10 KB-Outputs — Sonnet schneidet mid-string ab, oft mitten in Code-Blöcken (Output endet z.B. bei `#!/`).
+- **8000 ist sicher** für Refinery-Stages (Synthesizer, Optimizer, Quality Gate). Latenz +30 %, kein Cutoff-Risiko.
+- Analyse-Stages (Intent, Pre-Mortem, Persona, Criteria, Scaffold) bleiben bei 2200 — strukturiert, kompakt.
+
+**Sprach-Lock via `operator_notes`:**
+- `output_language="German"` reicht NICHT — Sonnet driftet bei DevOps/Tech-Prompts ins Englische ab.
+- Workaround: explizite Anweisung im `operator_notes`-Feld (z.B. "Sprache MUSS Deutsch sein - kein Englisch im finalen Prompt außer Code-Identifier"). Reproduzierbar testbar (67566 EN ohne notes → 67569 DE mit notes → 67570 DE mit notes).
+- Stage 6 (Synthesizer) System-Prompt zusätzlich härten: harte SPRACHE-Regel für `output_language` setzen, Englisch nur für technische Identifier (Variablen, CLI-Flags, API-Keys) erlauben.
+
+**Edit-Tool injiziert Steuerzeichen:**
+- Beim Edit-Tool-Input mit raw-string-Templates (Python `r"""..."""`) können Steuerzeichen wie `\x01` (SOH) oder `\x00` (NULL) ungewollt im File landen.
+- Symptom in n8n: `SyntaxError: Invalid regular expression: missing /` oder ECMAScript-Lexer-Crash ohne Stack-Trace.
+- **Workaround:** für JS-Source mit Steuerzeichen-Filtern direkt Python-Bytewise-Patch nutzen statt Edit-Tool, oder Steuerzeichen als JS-Escape-Notation `\x00`/`\x01` im Source schreiben (nicht als Roh-Byte).
+
+**Reproducibility-Befund über 3 identische Submits:**
+- 67566: EN, Score 75 fallback, 9.9 KB cutoff
+- 67569: DE, Score 96 echt, 18.8 KB komplett
+- 67570: DE, Score 75 fallback, 17.8 KB komplett
+- → Sonnet ist beim Schema-Compliance NICHT deterministisch. Aggregator-Fallback ist Pflicht für stabilen UX-Output.
