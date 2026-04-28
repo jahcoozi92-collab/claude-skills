@@ -525,6 +525,57 @@ Falsches Modell → `22000: expected 1536 dimensions, not 3072` (oder umgekehrt)
 
 ---
 
+### 2026-04-28 — Plattform-Mapping Mobile Apps + Schulungsmandant + Schema-Detail
+
+**MediFox-Plattform-Mapping (Mobile, KRITISCH):**
+
+| Produkt | Plattform | Zweck | Paket-/Identifier |
+|---------|-----------|-------|-------------------|
+| **MD CarePad** | iPad-only (iOS) | Pflegedokumentation am Bewohner | App Store, MEDIFOX DAN GmbH |
+| **MD Stationär** (Android-App) | Android ≥ 9.0 | Pflegedokumentation am Bewohner | Google Play `de.medifoxdan.stationaer.playstore` |
+| **MD CareMobile** | Android | Mobile Zeit-/Leistungserfassung (primär ambulant) | Google Play `medifox.caremobile.android` |
+| **MediFox Connect** | Browser (alle OS) | Mitarbeiter-/Familien-/Arzt-/Apothekenportal | Webanwendung, keine App |
+
+- **Korrektur frühere Annahme:** "CarePad = stationäre App generell" ist falsch — CarePad ist explizit iPad-Marke. Für stationäre Pflege auf Android gibt es eine separate **"MD Stationär" App** im Play Store von MEDIFOX DAN GmbH.
+- **Huawei-Sonderfall:** Kein Google Play → APK-Direktdownload nötig. Samsung/Pixel/etc.: Play Store Standard.
+- **Kompatibilität:** MEDIFOX DAN führt offizielle Liste auf <https://www.medifoxdan.de/service/kompatible-geraete/>. Samsung Galaxy S25 Ultra (Android 15) erfüllt Anforderung deutlich, ist aber nicht namentlich gelistet — bei Anschaffung Vertrieb kontaktieren: +49 5121 28291-9206.
+- **Connect-Setup:** Läuft als separater Dienst auf IIS-Server in der DMZ, TCP 9710 + HTTP(S)-Port zum MediFox-Server, SSL-Zertifikat zwingend. Zugriff für Externe via Login + optional QR-Code-PDF.
+
+**Schulungsmandant = MediFox-Begriff für Testsystem (KRITISCH):**
+
+- **Synonyme:** Testsystem, Sandbox, Spiegel-System, Trainings-Mandant, Schulungs-Datenbank.
+- **Voraussetzung:** Kostenpflichtige Lizenz-Erweiterung — über Vertriebsbeauftragten von MEDIFOX DAN buchen.
+- **Setup:** In der MediFox Versionsverwaltung selben Aktivierungsschlüssel wie Hauptsystem nutzen + Häkchen **"Testsystem"** setzen → leere zweite Datenbank wird angelegt → SQL-Backup vom Echtsystem als Restore einspielen → identische Spiegelung.
+- **Funktionsumfang:** Voll funktionsfähig (FiBu-/LoBu-Exporte, Geräte-Sync, Ausdrucke). Alle Ausdrucke automatisch mit Wasserzeichen **"Muster"**.
+- **Update-Strategie Test→Echt:** Auto-Updates **müssen deaktiviert werden** (Versionsverwaltung → Konfiguration → Reiter Updates → Häkchen "Autom. Updates" entfernen), sonst rollen Updates parallel auf beide Mandanten. 4-Phasen-Workflow: Vorbereitung (Echtsystem-Backup → Schulungsmandant-Restore) → Test → Echt → Nachbereitung.
+- **Auto-Updates funktionieren nur** bei **zentraler** Serverinstallation. Bei dezentral / Terminal Server gar nicht verfügbar — alles strikt manuell.
+
+**rag_chunks-Schema-Detail (Versionsfeld):**
+
+- Bei `metadata.source_type='update_info_10x'`-Chunks (Crawler `crawl_medifox_updates_10x.py`) liegt die Versionsnummer in `metadata.product_version` — **NICHT** in `metadata.version`.
+- Beispiel: `{"source_type": "update_info_10x", "product_version": "10.22.0", "file_name": "Updateinfo 10.22.0.pdf", ...}`
+- Wenn nach Versionen gefiltert werden muss: `metadata->>'product_version'`, nicht `metadata->>'version'`.
+
+**Bewährtes Seed-Pattern (bestätigt funktional):**
+
+- `metadata.content_hash` mit kurzem Datums-Prefix pro Lauf (`andr2604-`, `upd2604-`, `lg2604-`, …) → idempotent gegen Wiederholung.
+- `metadata.topic`-Feld zur späteren thematischen Filterung (z. B. `android-mobile`, `update-workflow`).
+- Defaults: `source_type=cached_wiki_page`, `trust_level=2`, `product_scope=stationaer`, `lifecycle=active`, `category=anleitung`.
+- Hash-Funktion: `md5(f"{title}|{chunk_idx}".encode())[:12]` mit Prefix.
+- Idempotenz-Check: `GET /rest/v1/rag_chunks?metadata->>content_hash=eq.{hash}&limit=1`.
+- Insert ohne SECURITY DEFINER RPC möglich, wenn Service-Role-Key verwendet wird (umgeht RLS direkt).
+
+**FTS-Validation nach Insert:**
+```sql
+SELECT id, ts_rank(fts, query) AS rank
+FROM rag_chunks, plainto_tsquery('german', 'erwartete suchbegriffe') query
+WHERE fts @@ query
+ORDER BY rank DESC LIMIT 5;
+```
+Top-1 sollte die neu eingefügte ID sein, Rang typisch > 0.95.
+
+---
+
 ## Quick Reference
 
 ```

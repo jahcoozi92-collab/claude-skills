@@ -590,3 +590,97 @@ Fire-and-forget: User macht nur `git push`.
 - Backup-Format: `/volume1/docker/n8n/backups/n8n-backup-YYYYMMDD-HHMMSS.tar.zst`
 - Image: `docker.n8n.io/n8nio/n8n:latest` (kein Pin) → jeder Update-Run holt latest
 - Version 2.17.6 → 2.17.7 war nur Patch-Bump
+
+### 2026-04-28 — /schedule Cloud vs Local + n8n CLI Cred-Export + Cron-Wrapper
+
+**/schedule-Vorab-Check (Cloud-Sandbox-Limits, KRITISCH):**
+
+Bevor `/schedule` für eine Routine genutzt wird: prüfen ob die Aufgabe NAS-lokale Ressourcen referenziert. Anthropic-Cloud-Agents laufen in Sandbox und haben **KEINEN** Zugriff auf:
+
+- `/volume1/...` (NAS-Filesystem)
+- `/volume1/docker/<service>/.env` (Service-Secrets)
+- `/etc/cron.d/` (lokale Crons)
+- Lokale Docker-Container (`docker exec ...`)
+- Interne Netzwerk-Services (192.168.22.x)
+
+**Entscheidungsregel:**
+- Aufgabe braucht **nur** öffentliche APIs (GitHub, Slack, externe HTTPs) → `/schedule` Remote-Agent passt
+- Aufgabe braucht **NAS-Pfade oder lokale Secrets** → lokaler Cron-Job auf NAS, **kein** Remote-Agent
+- Bei Mischung: separate beide Teile, Remote macht den Cloud-Teil, lokaler Cron den NAS-Teil
+
+Diana wählt bei NAS-Pfaden konsistent **Variante A (lokaler Cron)** — wegen Token-Verfügbarkeit, MD-Datei-Zugriff, kein Cloud-Token-Verbrauch.
+
+**n8n-Credential-Token-Extraktion (offizielle Methode):**
+
+Statt manueller Vault-Decryption (CryptoJS+EVP_BytesToKey, AES-256-CBC, "Salted__"-Prefix) lieber das offizielle n8n-CLI nutzen:
+
+```bash
+docker exec n8n-n8n-1 n8n export:credentials \
+  --id=<credId> --decrypted --output=/tmp/cred.json
+
+docker exec n8n-n8n-1 cat /tmp/cred.json | python3 -c \
+  "import sys,json; d=json.load(sys.stdin); c=d[0] if isinstance(d,list) else d; print(c['data'].get('accessToken') or c['data'].get('token'))"
+
+docker exec n8n-n8n-1 rm -f /tmp/cred.json
+```
+
+- Funktioniert für Telegram, OpenAI, Anthropic, Supabase, etc. — JSON-Struktur in `data` enthält je nach Credential-Typ unterschiedliche Felder (`accessToken`, `token`, `apiKey`, ...)
+- Erfordert keine Crypto-Library im Host-Python
+- **Permission-Lerneffekt:** Bei sensiblen Operationen (Vault-Decrypt) hat das Permission-System den ersten Versuch (manuelle Crypto-Lib) abgelehnt. Lehre: VORHER Optionen anbieten, nicht direkt durchführen. Diana autorisierte erst nach explizitem Vorschlag.
+
+**System-Zeitzone für Cron auf DXP4800Plus:**
+
+- `timedatectl` → `Time zone: Europe/Amsterdam (CEST, +0200)` — identisch zu Europe/Berlin (gleiche DST-Regeln).
+- `/etc/cron.d/`-Einträge interpretieren Zeit als **lokal**, nicht UTC.
+- `0 9 1 * * Jahcoozi /path/script.sh` = 09:00 Berlin/Amsterdam, KEIN UTC-Mapping nötig.
+- Bestehender Crawler-Cron `30 4 * * 1` = Mo 04:30 lokal (Logfile-Timestamps bestätigen das).
+
+**Cron-Wrapper-Pattern für Scripts mit Secrets:**
+
+Bewährt für alle Cron-Jobs, die Keys aus mehreren Service-`.env`-Files brauchen (Pattern aus `crawl_medifox_updates_cron.sh`, `medifox_update_monthly_report.sh`):
+
+```bash
+#!/bin/bash
+set -u
+
+LOG_DIR="/volume1/docker/n8n/workflows/logs"
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/job_$(date +%Y%m%d_%H%M%S).log"
+
+# Keys aus bekannten Quellen (in mehreren .env verteilt)
+export OPENAI_API_KEY=$(grep "^OPENAI_API_KEY=" /volume1/docker/open-webui/backups/complete-update-*/.env 2>/dev/null | cut -d= -f2-)
+export SUPABASE_SERVICE_KEY=$(grep "^SUPABASE_SERVICE_ROLE_KEY=" /volume1/docker/lightrag/.env.lightrag 2>/dev/null | cut -d= -f2-)
+export TELEGRAM_BOT_TOKEN=$(grep "^TELEGRAM_BOT_TOKEN=" /volume1/docker/n8n/.env 2>/dev/null | cut -d= -f2-)
+
+# Optional/required-Checks
+[ -z "$SUPABASE_SERVICE_KEY" ] && { echo "FEHLER: SUPABASE_SERVICE_KEY fehlt"; exit 1; }
+[ -z "$TELEGRAM_BOT_TOKEN" ] && echo "WARN: Telegram übersprungen"
+
+python3 /pfad/zum/script.py 2>&1 | tee -a "$LOG_FILE"
+RC=${PIPESTATUS[0]}
+
+# Log-Rotation: nur N letzte behalten
+ls -t "$LOG_DIR"/job_*.log 2>/dev/null | tail -n +13 | xargs -r rm
+
+exit $RC
+```
+
+**Idempotenz-State-File-Pattern:**
+
+Für Cron-Jobs, die "neue Daten seit letztem Lauf" verarbeiten — JSON-State-File neben Script:
+
+```python
+STATE_FILE = Path("/volume1/docker/n8n/workflows/.<jobname>_state.json")
+
+def load_state() -> dict:
+    if STATE_FILE.exists():
+        return json.loads(STATE_FILE.read_text())
+    return {"last_max_id": 0, "last_run": None}
+
+def save_state(state: dict) -> None:
+    STATE_FILE.write_text(json.dumps(state, indent=2))
+```
+
+- Initial-Lauf: `last_max_id=0` → verarbeitet alles, setzt dann den State.
+- Folgeläufe: nur `id > last_max_id`.
+- State-Reset für Testlauf: `rm /volume1/docker/n8n/workflows/.<jobname>_state.json`.
