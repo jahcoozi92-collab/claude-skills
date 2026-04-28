@@ -1591,7 +1591,9 @@ Ausgangsbefund (Gateway-Log): self-improve Cron-Job zeigt seit Wochen `stuck ses
 | `openclaw-gateway.service` | systemd --user | Node-Prozess `/usr/bin/node ~/.local/lib/node_modules/openclaw/dist/index.js gateway --port 18789` |
 | `openclaw-ha-bridge.service` | systemd --user | Python-Bridge `~/bin/openclaw-ha-bridge.py` (ruft `node ~/.local/lib/node_modules/openclaw/dist/entry.js` auf, Port 18790) |
 | `openclaw-gateway-watchdog.service` + `.timer` | systemd --user | alle 15 min `is-active`-Check, startet bei Ausfall neu |
-| `openclaw-runtime-cleanup.service` + `.timer` | systemd --user | täglich 04:00, behält nur aktuelle Plugin-Runtime-Version (siehe unten) |
+| `openclaw-runtime-cleanup.service` + `.timer` | systemd --user | täglich 04:00, behält nur aktuelle Plugin-Runtime-Version (siehe unten); seit 2026-04-28 dedupliziert auch innerhalb derselben Version (jüngster Hash gewinnt) |
+| `disk-watchdog.service` + `.timer` | systemd --user | alle 30min, alarmiert via Telegram bei `/`-Use% ≥85% (WARN) / ≥92% (CRIT), 6h Cooldown, all-clear bei Recovery (`~/bin/disk-watchdog.sh`) |
+| `memory-drift-audit.service` + `.timer` | systemd --user | wöchentlich Sonntag 09:00, grep-basierter Audit (kein LLM) auf veraltete Pfade/Agent-IDs/Versionen/Default-Modell in MEMORY/SKILL/AGENTS-Files (`~/bin/memory-drift-audit.sh --quiet`) |
 | `openclaw-backup.sh` | crontab | alle 5d 03:00, `tar -czf ~/backups/openclaw-$DATE.tar.gz` von `.openclaw/openclaw.json + .env + cron/ + clawd/`, scp auf NAS, MAX_BACKUPS=2 |
 
 **Standard-Update-Pattern (getestet 25→26):**
@@ -1783,3 +1785,59 @@ Diana hat explizit nach Selbstkritik gefragt. Diese drei Verhaltensmuster versch
 
 **Zusatz: Insights-Inflation**
 - Im Learning-Output-Style packe ich ★Insights★ in fast jede Antwort. Das verwaessert. **Insights sollten selten und ueberraschend sein** — wenn nichts wirklich neu/unerwartet ist, weglassen.
+
+### 2026-04-28 (Teil 2) — DSGVO-Eigenfehler, Disk-Hygiene, Drift-Audit, Workspace-Resolution
+
+**🔴 Auto-Mode-DSGVO-Constraint** (Eigenfehler, kritisch zu memorieren):
+Heute habe ich im Auto-Mode den `sonnet`-Default-Agent von Anthropic Sonnet 4.6 auf `ollama/deepseek-v3.1:671b-cloud` umgestellt. Diana hat das spaeter im Optimierungs-Reflect aufgedeckt: **Telegram + WebChat (Default-Routing) verarbeiten jetzt potenziell Patientendaten via Ollamas USA-Servern**. Vor der Aenderung war das durch Anthropic-EU geschuetzt.
+- **Regel:** Auto-Mode ist KEINE Erlaubnis fuer DSGVO-Roulette. Default-Agent-Switches die mit Pflege-Daten in Beruehrung kommen koennten (Telegram-Diana, WebChat) brauchen explizite Stop-Frage: "Verarbeitet dieser Agent jemals Pflege-Daten? Wenn ja: hartes Modell-Pin auf Anthropic-EU oder lokal."
+- **Mitigation-Optionen** (noch offen, Diana entscheidet): (a) `pflege`-Agent reaktivieren mit hartem Modell-Pin, ODER (b) `sonnet` zurueck auf Anthropic + separater opt-in `deepseek`-Agent fuer unkritisches.
+
+**🔴 Disk-Cleanup-Hierarchie + automatisierte Wartung:**
+Bei `/`-Use% >90% in dieser Reihenfolge aufraeumen (Recovery 94→63%, 20GB frei in dieser Session):
+1. `npm cache clean --force` (war 7.5GB → 1.7MB)
+2. `uv cache clean` (war 6.9GB → 0)
+3. `rm -rf ~/.npm/_npx` (1.4GB)
+4. `brew cleanup --prune=all` (1.9GB)
+5. `journalctl --user --vacuum-size=200M`
+6. **NIE** `~/.cache/whisper` loeschen (Voice-Pipeline braucht die Modelle, Re-Download teuer)
+7. **NIE** `~/.linuxbrew` cleanup (System-Tools)
+
+Automation: `disk-watchdog.{service,timer}` (alle 30min, Telegram bei ≥85%/≥92%) ist jetzt installiert. Manuelle Tests: `disk-watchdog.sh --status` (ohne Alert), `--force` (Test-Alert).
+
+**🟡 Drei-Stufen Workspace-Resolution Pattern** (fix in `ontology.py`, generisch):
+Skripte mit Default-Pfaden fuer Daten-Files duerfen NICHT rein cwd-basiert sein, sonst akkumulieren sich Daten in falschen Verzeichnissen. Heute: 81 unique Entities lagen monatelang in `clawd/skills/ontology/scripts/memory/ontology/graph.jsonl` (statt main `clawd/memory/ontology/graph.jsonl`), weil Reflect-Calls aus dem `scripts/`-cwd erfolgten.
+**Resolution-Reihenfolge:**
+1. Explizite ENV-Var (z.B. `CLAWD_WORKSPACE`)
+2. cwd, falls dort der Workspace-Marker existiert (z.B. `memory/ontology/`-Verzeichnis)
+3. `__file__`-relative Fallback (`Path(__file__).resolve().parents[N]`)
+
+**🟡 "Leichen verifizieren bevor loeschen":**
+Vor `rm -rf` von Daten-Verzeichnissen IMMER ID/Inhalt-Diff. Heute war ich nahe daran, die scripts/-graph.jsonl als "Subset von main" zu loeschen — Verifikation per Python-Set-Diff zeigte: 81 unique Entities, alle weg gewesen.
+**Snippet:**
+```python
+def ids(p):
+    s=set()
+    with open(p) as f:
+        for line in f:
+            try: s.add(json.loads(line).get('entity',{}).get('id'))
+            except: pass
+    return s
+print(f'in alt aber nicht in neu: {len(alte_ids - neue_ids)}')
+```
+
+**🟡 Pure-Bash-Drift-Audit als LLM-self-improve-Komplement:**
+Mechanische Drifts (veraltete Pfade, Agent-IDs, Versionen, Default-Modell) gehoeren in deterministischen grep-basierten Cron, nicht in teures LLM-self-improve. Heute installiert: `memory-drift-audit.{service,timer}` (Sonntag 09:00).
+- Vorteile: Kein Token-Verbrauch, keine Halluzination, reproduzierbar
+- Skip-Heuristik: Zeilen mit `HISTORISCH`/`veraltet`/`frueher`/`→` Markern werden ignoriert
+- Output: Telegram mit Top-10-Verdachts-Eintraegen, Diana entscheidet manuell pro Sonntag
+- Erster Live-Run: 19 Treffer (alle echt) — bestaetigt dass Drift systemisch ist, nicht Einzelfall
+
+**🔵 Anti-Spam-Watchdog-State-Pattern** (kanonisch fuer kuenftige Watchdogs):
+Pattern aus `gateway-watchdog.sh` jetzt auch in `disk-watchdog.sh`: jq-State-File mit `lastLevel` + `lastAlertAt`, Cooldown nur bei gleichem Level (Eskalation alarmiert sofort), all-clear bei Recovery aus Warn/Crit zurueck nach OK. Verhindert Telegram-Spam wenn Disk lange voll ist. Telegram-Helper `tg_alert()` Funktion einheitlich (TELEGRAM_BOT_TOKEN aus `~/.openclaw/.env`, Chat-ID `2061281331`).
+
+**Backups dieser Session:**
+- `~/bin/openclaw-runtime-cleanup.sh.pre-dedup-fix-2026-04-28` (Skript-Patch: dedup innerhalb derselben Version)
+- `~/clawd/memory/ontology/graph.jsonl.pre-merge-2026-04-28` (vor 82-Lines-Merge aus Stale-Graph)
+- `~/clawd/skills/ontology/scripts/ontology.py.pre-cwd-fix-2026-04-28` (Workspace-Resolution-Fix)
+- `~/.openclaw/openclaw.json.pre-deepseek-primary-2026-04-28` (vor Default-Modell-Switch — fuer DSGVO-Rollback verfuegbar)
