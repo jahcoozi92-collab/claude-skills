@@ -1659,3 +1659,46 @@ ssh moltbotadmin@192.168.22.206 '
 **Disk-Kritikalitäts-Warnung:**
 - VM-Root-FS war vor Cleanup bei 100% Use% (0 verfügbar). openclaw selbst loggte `[plugins] amazon-bedrock: Low disk space ... 921 MiB available; bundled plugin runtime dependency staging may fail.` — das ist ein Hard-Fail-Signal.
 - Backup-Rotation MAX_BACKUPS=2 ist knapp für tägliche Backups (2 Tage Retention). Bei Update-Vorab-Backup + 1 Daily-Backup besteht Risiko, dass das Vorab-Backup beim nächsten Cron rotiert wird. Empfehlung bei Major-Updates: explizit als `~/backups/openclaw-PRE-UPDATE-<version>.tar.gz` ablegen statt nur Daily.
+
+### 2026-04-28 — OpenClaw Modell-Switch-Pattern + Hot-Reload + DeepSeek-Hardware-Realitaet
+
+**3-Stellen-Regel fuer Modell-Wechsel** (KRITISCH — sonst wirkt Aenderung nicht):
+Bei einem echten Default-Modell-Wechsel muessen DREI Stellen in `~/.openclaw/openclaw.json` synchron sein:
+1. `agents.defaults.model.primary` — globaler Default (Cron, embedded-fallback, Defaults-Erbschaft)
+2. `agents.list[<id>].model` — **harter Override** pro Agent. Wenn gesetzt, ignoriert er den Default komplett. Aktuell sind sowohl `sonnet` als auch `opus` mit hartcodiertem `model:` definiert.
+3. `agents.defaults.model.fallbacks` — Reihenfolge anpassen: das frueher-primaere Modell sollte als #1 Fallback rein (Sicherheitsnetz fuer Tool-Use-Issues)
+
+**Wenn nur (1) geaendert wird, passiert NICHTS** — `openclaw agents list` zeigt weiter das alte Modell, Logs zeigen weiter `agent model: <alt>`. Verifikation per Smoke-Test + Log-Grep ist Pflicht.
+
+**Hot-Reload-Verhalten** (verifiziert per Log `config hot reload applied`):
+- `agents.defaults.model.{primary,fallbacks}` → **hot reload, kein Restart noetig**
+- `agents.list[].model` → braucht Gateway-Restart
+- Hot-Reload zeigt in Log-Zeile: `config change detected; evaluating reload (agents.defaults.model.primary, agents.defaults.model.fallbacks)` gefolgt von `config hot reload applied`
+
+**Smoke-Test-Trick: Modell glaubt sich falsch**
+Beim Verifikations-Test nicht der Modell-Selbstauskunft trauen — DeepSeek-V3.1 antwortete auf "Welches Modell bist du?" mit `minimax-m2.7` (= Halluzination). **Wahrheit nur in Gateway-Logs**: `grep "agent model:" /tmp/openclaw/openclaw-$(date +%Y-%m-%d).log | tail -3`.
+
+**Agent-Liste IMMER live verifizieren** (Memory ist veraltungs-anfaellig):
+Vor dem Referenzieren von Agent-IDs `openclaw agents list` ausfuehren. Dieses MEMORY und Skill-Stand 2026-04-10 sagten "4 Agenten: sonnet/opus/pflege/pflege-eu" — Realitaet 2026-04-28: nur `sonnet` (default) und `opus` existieren. pflege/pflege-eu wurden zwischenzeitlich entfernt. Memory in `~/.claude/projects/-home-moltbotadmin/memory/MEMORY.md` entsprechend korrigiert.
+
+**DeepSeek-V4-Hardware-Realitaet** (Self-Host vs. Cloud entscheiden):
+| Modell | Params | RAM Q4_K_M | RAM Q3_K_M | moltbot (9.7GB) | NAS DXP4800 (~32GB max) | Mac Studio M4 Ultra 128GB |
+|---|---|---|---|---|---|---|
+| DeepSeek V4-Flash | 158B (MoE) | ~95 GB | ~75 GB | ❌ | ❌ | ✅ |
+| DeepSeek V4-Pro | groesser | >150 GB | ~120 GB | ❌ | ❌ | ⚠ |
+| DeepSeek V3.1 | 671B | ~400 GB+ | ~280 GB | ❌ | ❌ | ❌ |
+| Qwen 2.5 14B | 14B | ~9 GB | ~7 GB | ⚠ knapp | ✅ | ✅ |
+| DeepSeek-R1 14B | 14B | ~9 GB | ~7 GB | ⚠ knapp | ✅ | ✅ |
+
+V4-Weights sind **frei verfuegbar** (MIT, `deepseek-ai/DeepSeek-V4-Flash` auf HF, GGUF via `tecaprovn/deepseek-v4-flash-gguf`) — Blocker ist rein Hardware. Self-Host ist Mac-Studio-Klasse.
+
+**`:cloud`-Tags sind NICHT lokal** (DSGVO-relevant!):
+NAS-Ollama (192.168.22.90:11436) listet `:cloud`-Modelle wie `deepseek-v3.1:671b-cloud`, `gpt-oss:120b-cloud` etc. — die werden aber von Ollamas USA-Servern bedient. NAS-Ollama proxiert nur. Fuer DSGVO-sensible Agents (z.B. Pflege) NIE `:cloud`-Tags nutzen.
+
+**Aktueller Default** (umgestellt 2026-04-28):
+- Primary: `ollama/deepseek-v3.1:671b-cloud` (FREE, ~800ms direkt / ~75s via Agent wegen Workspace-Loading)
+- Fallback #1: `anthropic/claude-sonnet-4-6` (Sicherheitsnetz)
+- Backup: `~/.openclaw/openclaw.json.pre-deepseek-primary-2026-04-28`
+- Rollback: `cp <backup> ~/.openclaw/openclaw.json` (Hot-Reload macht den Rest)
+
+**Disk-Voll-Warnung im Log** (96% Belegung auf `/`, 2.1GB frei): Erkennbar an Log-Eintrag `startup model warmup failed for ...: Error: ENOSPC: no space left on device, write` — separates Aufraeumen noetig (alte LanceDB-Memory, npm-Caches, Logs). **Cross-Reference:** Siehe Plugin-Cleanup-Sektion oben — die `openclaw-runtime-cleanup.timer` (taeglich 04:00) ist die strukturelle Loesung dafuer (Plugin-Runtime-Verzeichnisse waren der Hauptverbraucher, ~1.2 GB pro Version).
