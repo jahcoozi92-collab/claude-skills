@@ -297,14 +297,15 @@ Der Gateway laeuft auf dem **npm-Paket** (nicht mehr lokalem Build). Extensions 
 
 | Parameter | Wert |
 |-----------|------|
-| ExecStart | `/usr/bin/node ~/.npm-global/lib/node_modules/openclaw/dist/entry.js gateway --port 18789` |
+| ExecStart | `/usr/bin/node ~/.local/lib/node_modules/openclaw/dist/index.js gateway --port 18789` (seit Konsolidierung 2026-04-28; vor `index.js` war es `entry.js`, beide existieren) |
+| EnvironmentFile | `-/home/moltbotadmin/.openclaw/gateway.systemd.env` (optional via `-` Prefix) |
 | bind | `"lan"` (in openclaw.json) |
 | `plugins.load.paths` | `[]` (leer — Extensions im npm-Paket gebundelt) |
 
 **Update-Workflow:**
 ```bash
-npm install -g openclaw@latest    # npm-Paket aktualisieren
-openclaw --version                # Pruefen
+npm install -g --prefix ~/.local openclaw@latest    # explizit .local (XDG-konform; npm config get prefix = .local)
+openclaw --version                                  # Pruefen
 systemctl --user restart openclaw-gateway.service   # Gateway neustarten
 ```
 
@@ -357,10 +358,11 @@ Diagnose (ps, ss, df, ...), Datei-Lesen (cat, head, grep, ...), Git, Python3, No
 
 Schnelles Model-Switching per Shell-Funktion. Wird in `.bashrc` gesourced.
 
-**`openclaw` Binary:** Wrapper-Script in `~/.local/bin/openclaw` (exec node npm-global entry.js). Aliases nutzen `OPENCLAW_CLI` Variable:
+**`openclaw` Binary:** Wrapper-Script in `~/.local/bin/openclaw` (exec node .local-Paket). Aliases nutzen `OPENCLAW_CLI` Variable:
 ```bash
-OPENCLAW_CLI="/usr/bin/node /home/moltbotadmin/.npm-global/lib/node_modules/openclaw/dist/entry.js"
+OPENCLAW_CLI="/usr/bin/node /home/moltbotadmin/.local/lib/node_modules/openclaw/dist/entry.js"
 ```
+> **Pfad-Hinweis (seit 2026-04-28):** Vor der npm-Prefix-Konsolidierung lag das openclaw-Paket unter `~/.npm-global/.../dist/entry.js`. Falls Aliases noch auf den alten Pfad zeigen, in `~/.clawdbot-model-aliases.sh` aktualisieren.
 
 | Alias | Modell | Kosten |
 |-------|--------|--------|
@@ -549,7 +551,7 @@ openclaw devices approve <requestId>
 
 **Rebrand clawdbot → openclaw:**
 - Service: `openclaw-gateway.service` (nicht `clawdbot-gateway.service`)
-- Binary: `/home/moltbotadmin/.npm-global/lib/node_modules/openclaw/dist/index.js`
+- Binary: `/home/moltbotadmin/.local/lib/node_modules/openclaw/dist/index.js` (seit Konsolidierung 2026-04-28; war vorher `~/.npm-global/...`)
 - CLI-Alias: `clawdbot` (noch alter Name)
 - Config: `clawdbot.json` (noch alter Name)
 - Env-Vars in systemd: `OPENCLAW_*` Prefix
@@ -1702,3 +1704,54 @@ NAS-Ollama (192.168.22.90:11436) listet `:cloud`-Modelle wie `deepseek-v3.1:671b
 - Rollback: `cp <backup> ~/.openclaw/openclaw.json` (Hot-Reload macht den Rest)
 
 **Disk-Voll-Warnung im Log** (96% Belegung auf `/`, 2.1GB frei): Erkennbar an Log-Eintrag `startup model warmup failed for ...: Error: ENOSPC: no space left on device, write` — separates Aufraeumen noetig (alte LanceDB-Memory, npm-Caches, Logs). **Cross-Reference:** Siehe Plugin-Cleanup-Sektion oben — die `openclaw-runtime-cleanup.timer` (taeglich 04:00) ist die strukturelle Loesung dafuer (Plugin-Runtime-Verzeichnisse waren der Hauptverbraucher, ~1.2 GB pro Version).
+
+### 2026-04-27/28 — Outcome-First Cron-Audit + Browser-Relay-Limits + systemd-Timer-Pattern
+
+**Outcome-First Cron-Audit-Methode:**
+Pro Job genau 1 Frage stellen: *"Was waere konkret schlechter wenn dieser Job nicht liefe?"* — Diana antwortet ehrlich, dann fliegen meist 60-80% raus. 2026-04-27-Audit: 7 LLM-Crons → 2 (5 weg/ersetzt). Faustregel: **Reduzieren > Optimieren**.
+
+**KRITISCH — Cron-Audit IMMER den Prompt anschauen, nicht nur Job-Namen:**
+- "Nasdaq NQ Schnell-Check" sah nach Routine-Briefing aus, war aber **persoenlicher Margin-Call-Waechter** mit absoluten Schwellen (Liquidation 26.718, Short-Position 0.1935, Entry 25.511)
+- Generische Prozent-Schwellen (0.5/1.5%) haetten den Liquidations-Schutz zerstoert
+- Vor jedem Umbau: `openclaw cron show <id> --json` lesen, die `payload.message` pruefen, dann erst editieren
+
+**OpenClaw Browser Relay = host-local Extension (4.26 Limitation):**
+- `~/.openclaw/browser/chrome-extension/manifest.json` deklariert `host_permissions: ["http://127.0.0.1/*", "http://localhost/*"]`
+- Extension verbindet sich nur mit lokalem CDP-Relay-Server, NIE ueber LAN
+- Konsequenz: Cross-Host-Browser (yoga7-Chrome via moltbot-Gateway gesteuert) ist NICHT moeglich in 4.26 ohne Custom-Setup
+- **Browser-Profile sind hardcoded:** `openclaw browser create-profile --name X` → `browser.request cannot mutate persistent browser profiles`. Die zwei Default-Profile (`openclaw` cdp/Port 18800, `user` chrome-mcp existing-session) sind statisch, kein User-Add via CLI
+
+**systemd-User-Timer als Cron-Ersatz (3 Timer Stand 2026-04-28):**
+- `clawd-daily-log.timer` (00:05 daily) — legt `clawd/memory/$(date +%Y-%m-%d).md` an, idempotent via `touch -a`
+- `clawd-config-backup.timer` (03:00 daily) — git-commit Workspace + JSON-Snapshot mit 30-Tage-Rotation
+- `self-improve-check.timer` (one-shot 2026-05-11 09:00 CEST) — Telegram-Reminder via `curl https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage`
+- **Standard-Pattern fuer alle 3:** `Type=oneshot`, `Persistent=true`, `EnvironmentFile=~/.openclaw/.env` fuer Secrets
+- Regel: Reine File-Operationen (touch, cleanup, backup, curl-API) gehoeren in systemd-Timer, nicht in OpenClaw-Cron
+
+**KRITISCH — systemd `%` muss als `%%` escaped werden:**
+- URL-encoded Strings im ExecStart (`%0A` Newline, `%20` Space) werden von systemd als Specifier interpretiert → `Failed to resolve unit specifiers in '...'`, `Loaded: bad-setting`
+- Fix: alle `%` verdoppeln (`%%0A` etc.)
+
+**Cloud-Routinen (Anthropic CCR) haben keinen Telegram-Connector:**
+- Verfuegbare MCP-Connectors: Excalidraw, Gamma, Supabase, Cloudflare-Dev, Calendar, Hugging-Face, ICD-10 — aber kein Telegram
+- **Calendar-MCP-Connector hat ggf. nur Read-Scopes** — `create_event` failt mit "Request had insufficient authentication scopes"
+- Reminder-Use-Cases besser als lokaler systemd-Timer + direkte Telegram-Bot-API loesen
+
+**Run-Status-Validierung — `lastRunStatus: ok` ist semantik-frei:**
+- Misst nur "Job getriggert + delivered to channel", nicht "task-completion"
+- Validierung: `tail -1 ~/.openclaw/cron/runs/<id>.jsonl | python3 -m json.tool` und `status`/`error`/`summary` lesen
+- Plus echte Datei-Mutation pruefen: `wc -l <ziel-datei>` vor/nach Run
+- Bei manueller Trigger: `openclaw cron run <id>` returnt sofort asynchron. Auf Completion warten via Polling-Loop auf `state.lastRunAtMs`
+
+**Gateway-Init nach Update braucht Polling-Loop:**
+- Default-CLI-Timeout 30s reicht oft nicht fuer ersten `cron list`-Aufruf nach Restart
+- Pattern: `until openclaw cron list 2>/dev/null | head -1 | grep -qE "ID|<job-name>"; do sleep 3; done`
+
+**Sicherheit — Passwoerter NIE im Chat:**
+- 2026-04-27 hat Diana versehentlich ein Passwort im Klartext gesendet → in Conversation-Log und allen Tool-Logs sichtbar
+- Bei Auth-Bedarf: Diana fuehrt SSH/sudo selbst aus (interaktive Shell mit `! <command>` am Claude-Code-Prompt), Claude bekommt nur Output zurueck
+- Bei versehentlichem Posten: User auffordern Passwort SOFORT zu rotieren (`passwd`)
+
+**Multi-Agent-Git-Risk (2026-04-28):**
+- Andere Sessions koennen einen Rebase mitten drin liegen lassen — `git status` zeigt dann "interaktives Rebase im Gange" obwohl die Conflict-Marker schon manuell entfernt sind
+- Beim Reflect-Push IMMER vorher `git status` checken. Bei "Rebase im Gange" / unmerged paths: NICHT autonom `--continue` oder `--abort` machen — User entscheiden lassen
