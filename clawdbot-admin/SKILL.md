@@ -1755,3 +1755,31 @@ Pro Job genau 1 Frage stellen: *"Was waere konkret schlechter wenn dieser Job ni
 **Multi-Agent-Git-Risk (2026-04-28):**
 - Andere Sessions koennen einen Rebase mitten drin liegen lassen — `git status` zeigt dann "interaktives Rebase im Gange" obwohl die Conflict-Marker schon manuell entfernt sind
 - Beim Reflect-Push IMMER vorher `git status` checken. Bei "Rebase im Gange" / unmerged paths: NICHT autonom `--continue` oder `--abort` machen — User entscheiden lassen
+
+### Anti-Patterns — Selbstkritik (2026-04-28, von Claude reflektiert)
+
+Diana hat explizit nach Selbstkritik gefragt. Diese drei Verhaltensmuster verschwenden ihre Zeit oder Token-Budget. **Vor jeder Antwort gegen-checken.**
+
+**1. Optionen-Inflation statt Entscheidung**
+- Anti-Pattern: "(α) X, (β) Y, (γ) Z — was meinst du?" als Default-Format
+- Diana antwortet meist mit 1-2 Zeichen ("J", "I", "OK"). Das ist das Signal: sie will dass ICH entscheide und sie nur korrigiert.
+- **Richtig:** Bei reversiblen Aktionen (Backup vorhanden) DIREKT umsetzen mit Default-Wahl + 1-Zeilen-Begruendung. Nur fragen wenn:
+  - destructive (rm, force-push, db-drop)
+  - kostenintensiv (>5 USD oder LLM-Iteration)
+  - Architektur-aenderung mit unklarem Rollback
+- Beispiel-Faelle wo ich falsch gefragt habe: Cron-Streichungen 2026-04-27 (3 Klärungsrunden statt 1), schedule-Skill-Aufruf vor systemd-Timer-Loesung
+
+**2. Sunk-Cost-Iteration beim LLM-Prompt-Engineering**
+- Anti-Pattern: V2 → V3 → V4 → V5 mit demselben Failure-Pattern, jedes Mal hoffend "der naechste Prompt-Trick loest es"
+- Klassisches Beispiel: Self-Improve-Cron-Migration 2026-04-25/26. Mini scheiterte 4× mit byte-genauem String-Reproduce. Nach V3 war die richtige Hypothese: "Mini ist hier ungeeignet."
+- **Richtig:** Nach **2 Versuchen mit gleichem Failure-Pattern** → Modell/Tool/Architektur infrage stellen, nicht weiter prompten. Frage stellen: "Ist das ein Modell-Capability-Issue oder ein Prompt-Issue?"
+- Heuristik: Wenn der gleiche Tool-Call (z.B. `edit`) 2× schief geht, ist es selten ein Prompt-Problem.
+
+**3. Tiefen-Tauchen bei Limitations statt erster-Prinzip-Frage**
+- Anti-Pattern: 30 Min Code-grep + Manifest-Lesen + CLI-Probieren bei einem "X funktioniert nicht"-Problem, am Ende "geht in dieser Version nicht"
+- Beispiel: Browser-Cross-Host 2026-04-27. Code-Tauchgang war 30 Min, die Antwort war eine Architektur-Limitation.
+- **Richtig:** ZUERST 2 Min "Ist X ein offiziell unterstuetztes Feature?" (docs.clawd.bot, GitHub-Issues, Code-Comments). DANN bei Bedarf tieferer Tauchgang.
+- Heuristik: Wenn ein Feature in der Doku nicht erwaehnt wird → vermutlich nicht supported. Statt 30 Min beweisen, dass es geht: 2 Min beweisen, dass es nicht offiziell ist.
+
+**Zusatz: Insights-Inflation**
+- Im Learning-Output-Style packe ich ★Insights★ in fast jede Antwort. Das verwaessert. **Insights sollten selten und ueberraschend sein** — wenn nichts wirklich neu/unerwartet ist, weglassen.
