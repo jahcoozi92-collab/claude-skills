@@ -684,3 +684,88 @@ def save_state(state: dict) -> None:
 - Initial-Lauf: `last_max_id=0` → verarbeitet alles, setzt dann den State.
 - Folgeläufe: nur `id > last_max_id`.
 - State-Reset für Testlauf: `rm /volume1/docker/n8n/workflows/.<jobname>_state.json`.
+
+### 2026-04-29 — Statisches Webformular auf NAS + Apache-Bind-Mount-Edge
+
+**Edge: `php:8.2-apache` Standard-Image kann Bind-Mounts auf UGREEN-Volumes nicht lesen**
+
+Beobachtet bei `/volume1/docker/nextcloud/ai-act-befragung/` (Owner `1000:uucp`, Mode `775` mit `o+rx`):
+
+```bash
+docker run --rm -d --name X -p 8093:80 \
+  -v /volume1/docker/nextcloud/ai-act-befragung:/var/www/html \
+  php:8.2-apache
+```
+
+Apache-Log liefert sofort 403 auf alles:
+```
+[core:crit] (13)Permission denied: /var/www/html/.htaccess pcfg_openfile:
+  unable to check htaccess file, ensure it is readable and that
+  '/var/www/html/' is executable
+```
+
+- Apache läuft als `www-data` (UID 33), nicht als Owner (1000)
+- `o+rx` ist gesetzt, aber **Synology/UGREEN-ACLs überschreiben POSIX-Bits** und verweigern www-data den Zugriff trotzdem
+- `docker exec --user root` kann lesen → es ist *kein* Container-Konfigurationsfehler
+
+**Drei Auswege (Reihenfolge nach Aufwand):**
+
+| # | Variante | Eingriff |
+|---|---|---|
+| A | Auf Nextcloud Forms ausweichen (App via UI installieren, Fragen 1:1 nachbauen, IP-Speicherung deaktivieren) | keiner am Filesystem |
+| B | Container mit `--user $(stat -c %u:%g <pfad>)` starten — Apache muss dann auf Port ≥1024 lauschen, also Image-Override mit `Listen 8080` + Compose-Datei | mittel, neue Datei |
+| C | `synoacltool -add <pfad> user:www-data:allow:rx` (gezielte ACL, reversibel) | klein, ABER Rechte-Änderung → Diana fragen |
+
+Diana wählte konsistent **A** für Validierungs-Befragungen (geringster Eingriff, nutzt vorhandene Infrastruktur).
+
+**Port-Inventar-Update (vor `docker run -p ...` oder `python3 -m http.server`):**
+
+| Port | Status |
+|------|--------|
+| 8088 | belegt (LiveKit-Token-Server, siehe Architektur-Topologie) |
+| 8089 | belegt (LiveKit-Playground, **NICHT** für andere Tests verwenden) |
+| 8090 | belegt (LiveKit-Playground laut Cloudflare-Route, in Praxis manchmal frei — prüfen) |
+| 8092 | belegt |
+| 8093 / 8095 / 8189 | typischerweise frei — gute Default-Optionen für temporäre Test-Server |
+
+Immer vor Start prüfen: `ss -tln 2>/dev/null \| awk '{print $4}' \| grep -qE '[:.]<port>$' && echo BELEGT \|\| echo frei`.
+
+**Validierungs-Befragungen — Datenschutz-Pattern (Pflege-/Healthcare-Kontext)**
+
+Wenn auf der NAS eine Mini-Befragung gehostet wird (Validierung, Marktforschung, interne Umfrage):
+
+1. **Niemals** Bewohner-/Diagnose-/Gesundheitsdaten abfragen — selbst optional nicht
+2. **Niemals** Mitarbeitenden-Klarnamen abfragen
+3. **Fachliche Antworten und Kontaktdaten getrennt speichern** — *zwei* JSONL-Dateien:
+   - `data/answers.jsonl` — fachliche Antworten mit präzisem UTC-Timestamp
+   - `data/contacts.jsonl` — nur freiwillige Kontaktangabe + Tagesdatum (keine Uhrzeit) → erschwert Re-Korrelation
+4. **Niemals** speichern: IP, User-Agent, Cookies, Session-Daten
+5. Kein externes JS/CSS/Font (kein CDN, kein Google Fonts, kein reCAPTCHA, kein Analytics)
+6. Anti-Spam minimal: Honeypot-Feld + globales Stunden-Rate-Limit (z. B. 200/h) + serverseitige Whitelist-Validierung jeder Auswahl
+7. `data/.htaccess` mit `Require all denied` + `Options -Indexes` (greift nur bei Apache mit `AllowOverride All`)
+8. Direkt vor dem Submit-Button expliziter Hinweis: „keine Bewohnerdaten/Diagnosen/Gesundheitsdaten"
+9. **Default-Empfehlung: Nextcloud Forms** — entfernt das ACL-/Apache-Problem komplett, nutzt vorhandene Infrastruktur
+
+**Prüfprotokoll für statische HTML/PHP-Pakete (vor Container-Test):**
+
+```bash
+# PHP-Lint via Throwaway-Container (ohne PHP auf Host)
+docker run --rm -v <dir>:/app -w /app php:8.2-cli php -l <file>.php
+
+# HTML-Tag-Bilanz
+grep -c '<form '   index.html ; grep -c '</form>'   index.html
+grep -c '<fieldset>' index.html ; grep -c '</fieldset>' index.html
+grep -c '<legend>' index.html ; grep -c '</legend>' index.html
+
+# Forbidden-Pattern-Scan in PHP (keine IP/UA/Cookies)
+grep -nE 'REMOTE_ADDR|HTTP_USER_AGENT|setcookie|session_start|\$_COOKIE' submit.php
+
+# External-Resource-Scan in HTML/CSS (kein Tracking/CDN)
+grep -nE '<script|googleapis|gstatic|fonts\.google|cdn\.|cdnjs|jsdelivr|unpkg|matomo|google-analytics|gtag' *.html *.css
+```
+
+**Spec-Validierung als zweiter Pass — Lehre aus dieser Session:**
+
+- Erste Implementierung übersah die Vorgabe „fachliche Antworten und Kontaktdaten möglichst getrennt behandeln"
+- Diana fand das beim selbstgeschriebenen Prüfauftrag durch eine systematische Checkliste
+- **Konsequenz:** Bei mehrteiligen Specs (Datenschutz-Befragungen, QM-Templates etc.) immer eigene Validierungsrunde mit der Spec-Liste machen, *bevor* der User prüfen muss
