@@ -1791,7 +1791,7 @@ Diana hat explizit nach Selbstkritik gefragt. Diese drei Verhaltensmuster versch
 **🔴 Auto-Mode-DSGVO-Constraint** (Eigenfehler, kritisch zu memorieren):
 Heute habe ich im Auto-Mode den `sonnet`-Default-Agent von Anthropic Sonnet 4.6 auf `ollama/deepseek-v3.1:671b-cloud` umgestellt. Diana hat das spaeter im Optimierungs-Reflect aufgedeckt: **Telegram + WebChat (Default-Routing) verarbeiten jetzt potenziell Patientendaten via Ollamas USA-Servern**. Vor der Aenderung war das durch Anthropic-EU geschuetzt.
 - **Regel:** Auto-Mode ist KEINE Erlaubnis fuer DSGVO-Roulette. Default-Agent-Switches die mit Pflege-Daten in Beruehrung kommen koennten (Telegram-Diana, WebChat) brauchen explizite Stop-Frage: "Verarbeitet dieser Agent jemals Pflege-Daten? Wenn ja: hartes Modell-Pin auf Anthropic-EU oder lokal."
-- **Mitigation-Optionen** (noch offen, Diana entscheidet): (a) `pflege`-Agent reaktivieren mit hartem Modell-Pin, ODER (b) `sonnet` zurueck auf Anthropic + separater opt-in `deepseek`-Agent fuer unkritisches.
+- **Mitigation 2026-04-29 RESOLVED** via Option (b): `sonnet` zurueck auf `anthropic/claude-sonnet-4-6` (DSGVO-safe Default), `defaults.primary` zurueck auf Anthropic, neuer **opt-in `deepseek`-Agent** in `agents.list[]` mit `model: ollama/deepseek-v3.1:671b-cloud` + Name-Markup "NICHT fuer Pflege-Daten!". Routing: Telegram + WebChat → sonnet (EU); `/@deepseek` manuell fuer Massenarbeit. Backup: `~/.openclaw/openclaw.json.pre-dsgvo-mitigation-2026-04-29`.
 
 **🔴 Disk-Cleanup-Hierarchie + automatisierte Wartung:**
 Bei `/`-Use% >90% in dieser Reihenfolge aufraeumen (Recovery 94→63%, 20GB frei in dieser Session):
@@ -1841,3 +1841,33 @@ Pattern aus `gateway-watchdog.sh` jetzt auch in `disk-watchdog.sh`: jq-State-Fil
 - `~/clawd/memory/ontology/graph.jsonl.pre-merge-2026-04-28` (vor 82-Lines-Merge aus Stale-Graph)
 - `~/clawd/skills/ontology/scripts/ontology.py.pre-cwd-fix-2026-04-28` (Workspace-Resolution-Fix)
 - `~/.openclaw/openclaw.json.pre-deepseek-primary-2026-04-28` (vor Default-Modell-Switch — fuer DSGVO-Rollback verfuegbar)
+
+### 2026-04-29 — DSGVO-Recovery-Mechanik + Identity-Markup + Drift-Audit-Heuristik-Erweiterung
+
+**🟢 DSGVO-Recovery via opt-in Agent (RESOLVED gestern Eigenfehler):**
+Saubere Trennung statt Default-Switch: `sonnet`-Default zurueck auf Anthropic, neuer `deepseek`-Agent als opt-in via `/@deepseek`.
+- 3-Agent-Topologie: `sonnet` (default, Anthropic-EU), `opus` (Anthropic Opus, /@opus), `deepseek` (Ollama Cloud, /@deepseek, opt-in)
+- Fallback-Reihenfolge: MiniMax → DeepSeek (Position 1, fuer Cost-Saving im Failover) → Opus → GPT-5.4 → GPT-4.1 → Gemini → Qwen lokal
+- Sonnet bleibt automatisches Sicherheitsnetz fuer DeepSeek-Tool-Use-Issues, weil als Anthropic-Default jetzt
+- Backup: `~/.openclaw/openclaw.json.pre-dsgvo-mitigation-2026-04-29`
+
+**🟡 Identity-Markup-Pattern fuer Agents** (DSGVO-Sichtbarkeit in `agents list`):
+Agent-Namen kommunizieren DSGVO-Klassifizierung sichtbar im `name`-Feld. Vorbild aktuell:
+- `"Sonnet Workhorse (Anthropic-EU, DSGVO-safe fuer Pflege-Daten)"`
+- `"DeepSeek FREE Workhorse (Cloud/USA — NICHT fuer Pflege-Daten!)"`
+
+Wirkung: Bei `openclaw agents list` erscheint die DSGVO-Klassifizierung direkt neben jedem Agent — kein Nachschlagen in Memory noetig. Bei zukuenftigen Agent-Edits dieses Markup-Pattern beibehalten.
+
+**🟡 Drift-Audit-Heuristik erweitert** (`memory-drift-audit.sh`):
+Neue Skip-Heuristiken nach erstem Live-Run-Befund (23 → 3 Treffer, 87% Reduktion):
+1. **Datierte Sektionen ueberspringen** via `in_dated_section()` Helper — erkennt sowohl `### YYYY-MM-DD` (H3 Lessons) als auch `## ... (YYYY-MM-DD)` (H2 Update-Sektionen) als historisch
+2. **`fallback`-Erwaehnungen ueberspringen** beim Primary-Modell-Check — Memory-Eintraege die Fallback-Position beschreiben sind keine Primary-Behauptungen
+3. **Recovery/Mitigation-Beschreibungen ueberspringen** — Wortlist erweitert um: `zurueckgesetzt|mitigation|war.*eingerichtet|wurde.*von|previously|previous`
+
+Resultat: Steady-State 3 Treffer pro Wochen-Audit (alle in nicht-datierten ## Sektionen ohne Date-Suffix). Diana-Triage-Aufwand am Sonntag bleibt klein.
+
+**🔵 Reflect-Heuristik fuer kuenftige Skill-Edits:**
+Datierte Lessons-Sektionen ab Tag 1 mit `### YYYY-MM-DD — Titel` Header schreiben, ODER Update-Sektionen mit `## Titel (YYYY-MM-DD)` Suffix. Dann ignoriert der Drift-Audit sie automatisch ohne extra HISTORISCH-Marker.
+
+**Backup dieser Session:**
+- `~/.openclaw/openclaw.json.pre-dsgvo-mitigation-2026-04-29` (vor DSGVO-Recovery)
