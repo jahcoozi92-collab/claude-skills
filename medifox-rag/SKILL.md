@@ -576,6 +576,95 @@ Top-1 sollte die neu eingefügte ID sein, Rang typisch > 0.95.
 
 ---
 
+### 2026-04-30 — Indexieren reicht nicht: System-Prompt-Patch ist PFLICHT + RPC-Realität
+
+**Diana-Bug "Dazu habe ich keine Information":**
+- Trotz korrekt indexierter MD-Orbit-Chunks (IDs 3844-3852) lieferte der Live-Chat Abstain mit `grounding_score=0.4` (in `answer_traces` belegt).
+- Ursache: System-Prompt v5 enthält die Regel *"Bei Fragen zu MediFox ambulant, MediFox DAN Tagespflege oder anderen **Produktvarianten**: Weise darauf hin, dass nur MediFox stationär abgedeckt ist"*.
+- Das LLM klassifizierte `MD Orbit` und `MD CareMobile` als „andere Produktvariante" → Abstain ausgelöst, OBWOHL Treffer da waren.
+- Gleicher Bug schlug bei MD CareMobile zu — derselbe System-Prompt-Mechanismus.
+
+**Pflicht-Pipeline nach JEDER Indexierung eines neuen Themen-/Modul-/Produktbereichs:**
+
+1. **Tool-Description** des `Supabase - Vector Store_Abruf`-Nodes erweitern um den neuen Bereich (z.B. „… deckt auch MD Orbit, MD CareMobile, MediFox Connect, MD CarePad, Update-Workflows ab").
+2. **System-Prompt** des `Supabase KI-Agent`-Nodes erweitern:
+   - Im Themenbereich-Block (vor `## Abstain-Regeln`) den Bereich mit Stichworten und Partner-/Funktionsliste eintragen.
+   - In der Abstain-Regel den Bereich aus „andere Produktvariante" explizit ausnehmen: *„MD Orbit, MediFox Connect, MD CarePad, MD CareMobile sind Teil der Wissensbasis und sollen vollständig beantwortet werden. NICHT als andere Produktvariante abweisen."*
+3. **Workflow-Deploy** (verifiziert funktional 2026-04-30):
+   ```
+   GET  /api/v1/workflows/{id}                         # Internal API!
+   → Python: in-place patch der nodes
+   → Minimal-Payload: {name, nodes, connections, settings}
+     settings nur mit {executionOrder, timezone, callerPolicy}
+   POST /api/v1/workflows/{id}/deactivate
+   PUT  /api/v1/workflows/{id}                         # name-Feld zwingend
+   POST /api/v1/workflows/{id}/activate
+   docker restart n8n-n8n-1                            # Webhook-Cache leeren
+   ```
+4. **Live-Verifikation** über `answer_traces`:
+   ```sql
+   SELECT id, query, abstain_triggered, grounding_score, LEFT(answer,200)
+   FROM answer_traces WHERE query ILIKE '%neues_thema%' ORDER BY created_at DESC LIMIT 5;
+   ```
+   Gut: `abstain_triggered=false`, `grounding_score > 0.7`. Schlecht: `0.4` und Abstain-Template im answer.
+
+**Workflow-RPC ist `match_qm_chunks`, NICHT `hybrid_search_v3` (KRITISCH):**
+
+- Der Live-Workflow nutzt im `Supabase - Vector Store_Abruf` (LangChain Node) `queryName: match_qm_chunks` mit `topK: 12` und `useReranker: true`.
+- `match_qm_chunks` ist **pure Cosine-Ähnlichkeit auf `embedding_half`** — KEINE source_type-Boosts, KEINE FTS-Komponente.
+  ```
+  SELECT id, content, metadata, (1 - (embedding_half <=> query)) AS similarity
+  FROM rag_chunks WHERE embedding_half IS NOT NULL AND content IS NOT NULL AND length(content) > 20
+  ORDER BY embedding_half <=> query LIMIT match_count;
+  ```
+- `hybrid_search_v3` (Edge Function `n8n-hybrid`) macht RRF + Boosts (FAQ 1.30, Wiki 1.25, …) — wird im Live-Workflow NICHT aufgerufen!
+- Konsequenz: **Tests via `n8n-hybrid` Edge Function sind NICHT repräsentativ** für die Live-Antwort. Echte Test-Pfade:
+  1. **SQL-Test mit Self-Embedding:** `WITH q AS (SELECT embedding FROM rag_chunks WHERE id = <neuer_chunk>) SELECT id, similarity FROM match_qm_chunks((SELECT embedding FROM q), 10, '{}')` — Top-1 muss der neue Chunk sein, danach Cluster verwandter Chunks.
+  2. **Live-Test im Chat** + 30 Sek Wartezeit + `answer_traces` prüfen.
+
+**Reranker (`useReranker: true`) als Filter (Verdächtiger #2):**
+
+- Steht im `Supabase - Vector Store_Abruf`-Node aktiviert.
+- Reranker ordnet die `topK` Treffer nach LLM-basierter Relevanz neu — kann bei Themen, die das Reranker-Modell nicht kennt, Treffer despriorisieren.
+- Wenn nach System-Prompt-Patch der Live-Chat IMMER NOCH nicht antwortet: testweise `useReranker: false` setzen.
+
+**`click_paths.product` Wert-Schema (erweitert 2026-04-30):**
+
+| Wert | Verhalten | Anwendung |
+|------|-----------|-----------|
+| `'stationaer'` | matcht Default-Filter `'stationaer'` | MD Stationär-spezifische Pfade |
+| `'ambulant'` | matcht nur `product_filter='ambulant'` | MD Ambulant-spezifische Pfade |
+| `'alle'` | matcht **immer** (jeder Filter) | Cross-Product-Themen (CareMobile in Mischbetrieb, Ökosystem) |
+| `'cross_product'` | wie `'alle'` | Synonym, gleiche Wirkung |
+| `NULL` | matcht nur, wenn `product_filter IS NULL` | sollte vermieden werden |
+
+`search_click_paths`-Funktion (Stand 2026-04-30):
+```sql
+WHERE cp.fts @@ plainto_tsquery('german', query_text)
+  AND (
+    product_filter IS NULL
+    OR cp.product = product_filter
+    OR cp.product = 'alle'
+    OR cp.product = 'cross_product'
+  )
+  AND COALESCE(cp.trust_level, 2) >= 2
+```
+
+Bestehender Datenbestand-Bug (Stand 2026-04-30): **19 Klickpfade** haben `product='MediFox stationär'` (mit Leerzeichen + Umlaut) — werden vom Default-Filter `'stationaer'` NIE gefunden. One-Time-Migration empfohlen:
+```sql
+UPDATE click_paths SET product = 'stationaer' WHERE product = 'MediFox stationär';
+```
+
+**Edge Function `embed-rag-chunks` (deployed 2026-04-30, slug `embed-rag-chunks`, verify_jwt=false):**
+
+Backfill-Funktion für `rag_chunks.embedding` ohne lokalen `OPENAI_API_KEY` — nutzt den Key aus den Supabase-Function-Secrets.
+- POST `{ids:[3844, 3845, ...]}` → gezielter Backfill der angegebenen IDs.
+- POST `{batch_size:20}` (oder leer) → nimmt die nächsten N Rows mit `embedding IS NULL`.
+- Trigger `trg_rag_chunks_sync_half` füllt anschließend `embedding_half`; `fts` ist Generated Column.
+- Nutzbar als Alternative zu `workflows/embed_new_chunks.py`, wenn die `.env`-Datei nicht zugänglich ist.
+
+---
+
 ## Quick Reference
 
 ```
