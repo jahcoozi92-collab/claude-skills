@@ -643,3 +643,74 @@ Folgende Befehle werden von Claude Code AUTOMATISCH erlaubt — niemals in `sett
 **Session-Bilanz (Referenz für Grössenordnung)**
 - Disk 300G → 287G (13G frei), Desktop 9,9G → 52K, Downloads 12G → 1,9G
 - Dauer ca. 40 Min, 0 Fehler, 0 Rollbacks nötig
+
+### 2026-05-02 — claude-cowork-linux Diagnose + Flatpak-Browser OAuth-Bug
+
+**Diagnose-First Pattern bei System-Software (KRITISCH):**
+- Vor "deinstallieren+neu installieren" IMMER prüfen ob Komponente überhaupt der richtige Pfad ist
+- User sagte "Claude Desktop deinstallieren+neu für Cowork" — ich habe System-.deb erneuert, aber Cowork läuft aus separater User-Installation
+- Pflicht-Checks vor destruktiven System-Aktionen:
+  ```bash
+  which <cmd>                              # welcher Pfad gewinnt?
+  ls /usr/share/applications/*.desktop     # welche Launcher?
+  ls ~/.local/share/applications/*.desktop # User-Overrides?
+  xdg-mime query default x-scheme-handler/<scheme>  # URL-Handler?
+  cat $(which <cmd>)                       # ist es ein Wrapper?
+  ```
+- Wrapper-Skripte in `~/.local/bin/` überschreiben System-Binaries via PATH-Order
+
+**Magic-Link/OAuth-Login bricht im Flatpak-Browser (CLAUDE-COWORK-SPEZIFISCH):**
+- Diana's Default-Browser ist `org.chromium.Chromium` (Flatpak) → sandboxed
+- Symptom: User gibt Email ein → bekommt "Link zum Anmelden" statt Code → Klick öffnet Flatpak-Browser → OAuth-Flow bricht ab oder zeigt keinen Code
+- Lösung: Magic-Link-URL **manuell** in System-Browser (`/usr/bin/firefox` oder `/usr/bin/chromium`) öffnen → Code wird angezeigt → manueller Login
+- Permanent-Fix anbieten: `xdg-settings set default-web-browser firefox.desktop`
+- Gilt vermutlich für ALLE OAuth-Flows die `claude://`/`postMessage`/Cross-Window nutzen
+
+**claude-cowork-linux Architektur (zwei parallele Installationen):**
+- **System-.deb** (`/usr/bin/claude-desktop` von aaddrick) ≠ **Cowork-Build** (`~/.local/bin/claude-desktop` von johnzfitch)
+- Cowork-Build lebt in `~/.local/share/claude-desktop/` (eigenes git-Repo)
+- PATH-Order: `~/.local/bin` vor `/usr/bin` → User-Wrapper gewinnt bei `claude-desktop` Aufruf
+- ABER: Dock-Icon kann auf `/usr/share/applications/claude-desktop.desktop` (System-.deb) zeigen → Cowork wird umgangen
+- `launch.sh` synct `stubs/` bei jedem Start automatisch in `linux-app-extracted/` und repackt `app.asar` → kein erneutes `install.sh` nötig nach stub-Änderungen
+- `enable-cowork.py` ist idempotent ("Already patched" bei Re-Run)
+
+**.desktop-Datei-Diagnose-Pattern:**
+```bash
+for f in ~/.local/share/applications/claude*.desktop /usr/share/applications/claude*.desktop; do
+  echo "--- $f ---"; grep -E "^(Name|Exec|MimeType)=" "$f"
+done
+```
+- Mehrere .desktop-Files mit identischem `Name=Claude` → Dock zeigt unklar welcher gewinnt
+- Bei Diana waren 4 parallele Files (Sept 25, Okt 25, Cowork April 26, .deb Mai 26)
+- xdg-mime URL-Handler unabhängig von .desktop-Reihenfolge — separat prüfen
+
+**"Download Claude for Mac" / "Download Claude for Windows" ist KEIN Plattform-Bug:**
+- UI-String-IDs in `.../linux-app-extracted/resources/ion-dist/assets/v1/index-*.js`:
+  - `BobP7MV3sG` = "Download Claude for Mac"
+  - `qZjfHa3uMI` = "Download Claude for Windows"
+  - `Av25B3J2jg` = "Download Cowork"
+- Render-Logik: `e ? "Cowork" : nH() ? "Mac" : "Windows"` — `e` = Cowork-User-Account
+- → Wenn User "Mac" sieht: ist nicht eingeloggt oder Account hat kein Cowork
+- NICHT: Plattform-Detection ist kaputt (UA wird absichtlich als Mac gefälscht in `frame-fix-wrapper.js` Zeile ~976, sonst "Linux nicht unterstützt")
+
+**lokale stub-Reverts in Cowork-Repo (Aufmerksamkeit beim Update):**
+- April 26: 3 Dateien hatten lokale Reverts in `~/.local/share/claude-desktop/stubs/`
+- 73 Zeilen Linux-Titlebar-Fix waren raus → Tab-Leiste unklickbar, Plattform-Patches deaktiviert
+- Vor `git pull` IMMER `git status` + `git diff --stat` checken
+- Reset-Workflow: Patch sichern (`git diff > ~/cowork-local-reverts-$(date +%Y%m%d_%H%M%S).patch`) → `git reset --hard origin/master` → `--doctor` validieren
+
+**Backup-Pattern vor System-Paket-Operationen:**
+- Vor `apt remove` / `dpkg -r` selektiv Configs sichern (NICHT Caches/Cookies):
+  ```bash
+  BACKUP=~/.config/<app>_backup_$(date +%Y%m%d_%H%M%S)
+  mkdir -p "$BACKUP"
+  cp ~/.config/<app>/{*.json,CLAUDE.md} "$BACKUP/" 2>/dev/null
+  cp -r ~/.config/<app>/mcp-servers "$BACKUP/" 2>/dev/null
+  ```
+- Nicht: ganzes `~/.config/<app>/` — enthält 100+MB Caches die nicht relevant sind
+
+**Meta-Lektion (Eigen-Reflexion):**
+- Bin zu schnell zur Aktion gesprungen (System-.deb deinstallieren+neu installieren)
+- Habe NICHT geprüft ob die .deb der relevante Pfad für Cowork ist
+- Hätte ich `which claude-desktop` als allerersten Schritt gemacht, wäre sofort klar gewesen: User-Wrapper aus `~/.local/bin/` ist der Cowork-Pfad, .deb-Reinstall ändert daran nichts
+- Regel: Bei "X funktioniert nicht, bitte X neu installieren" — IMMER erst diagnostizieren ob X wirklich der richtige Hebel ist
