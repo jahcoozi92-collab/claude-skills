@@ -2475,3 +2475,39 @@ Beim Bau eines 9-stufigen LLM-Prompt-Refinement-Workflows (`H6WzGh1SQCsqaVEs`) m
 - 67569: DE, Score 96 echt, 18.8 KB komplett
 - 67570: DE, Score 75 fallback, 17.8 KB komplett
 - → Sonnet ist beim Schema-Compliance NICHT deterministisch. Aggregator-Fallback ist Pflicht für stabilen UX-Output.
+
+---
+
+### 2026-05-02 — Pipeline-Fail-Erkennung & Provider-Error-Handling
+
+**HTTP-Node `continueErrorOutput` liefert strukturiertes error-Objekt:**
+- Bei Provider-Errors (HTTP 402/429/5xx) hängt n8n ein `error`-Objekt ans Item, NICHT eine leere LLM-Antwort.
+- Struktur: `{ message: "...", description: "...", httpCode: "402", name: "NodeApiError" }`.
+- Parse-Nodes müssen **explizit** auf `raw.error.message`/`raw.error.description` prüfen, sonst maskiert man den wahren Fehler als generisches "Leere oder unerwartete LLM-Antwort".
+- Klassifizierungsregeln (im Parser):
+  - `httpCode === '402'` ODER `/payment/i.test(msg)` ODER `/credit/i.test(desc)` → "Credits unzureichend"
+  - `httpCode === '429'` ODER `/rate.?limit/i` → "Rate-Limit"
+  - `httpCode.startsWith('5')` ODER `/timeout/i` → "Server-/Timeout-Fehler"
+- Resultat: `_provider_error: true`, `_provider_http_code`, `_provider_raw_message` ins parsed-Output, damit der Aggregator gezielte Action-Items generieren kann.
+
+**Cascading-Failures transparent durchreichen statt erneut maskieren:**
+- Wenn Stage N failed, sehen Stages N+1..M im Input das `_stage_failed: true`-Flag (durch error-branch geleitet).
+- Naive Parser melden dann erneut "Leere LLM-Antwort" für N+1 — Ursache geht verloren.
+- Korrekt: Parser-Top-Check `if (raw._stage_failed === true)` → durchreichen mit `_cascaded_from: raw._failed_stage`. So bleibt im finalen Output sichtbar, dass z.B. Stage 5 nicht eigenständig versagt hat, sondern wegen Stage 4 gefailt ist.
+
+**Aggregator: Pipeline-Fail-Erkennung statt Fallback-Kaskade:**
+- Naive Aggregatoren versuchen `finalSource.final_prompt || stage8.final_prompt_draft || stage7.safety_revised_prompt || ...` — produziert Pseudo-Output bei Cascade-Failure mit Score 0.
+- Korrekt: zähle `failedStages` und `failedCritical` (Stages 6/7/8/9 = critical, ohne die kein verlässlicher Final Prompt). Wenn `failedCritical.length > 0 || failedStages.length >= 2` → `pipeline_failed = true`.
+- Bei pipeline_failed: `final_prompt = ''`, `quality_score = 0`, `quality_gate = 'fail'`, `failure_actions` mit konkreten Schritten (z.B. "OpenRouter aufladen: https://openrouter.ai/settings/credits"), `executive_summary` mit Failure-Sprache. KEIN Pseudo-Final-Prompt mit "manuell prüfen"-Text.
+- Form Completion Page: bei `pipeline_failed === true` rotes Fail-Banner OHNE Final-Prompt-Box rendern, damit Nutzer keinen unbrauchbaren Output versehentlich übernimmt.
+
+**Form Trigger Status-Flow: `waiting` MIT `stoppedAt` = fertig durchgelaufen:**
+- Nach Form-POST läuft die Pipeline durch und Status wird auf `waiting` gesetzt mit gefülltem `stoppedAt`.
+- Das ist KEIN Hänger — die Pipeline wartet nur darauf, dass der Browser die `formWaitingUrl` abruft und die Completion-Page rendert.
+- Für headless-Tests: nicht die formWaitingUrl pollen, sondern direkt `runData` aus `execution_data` lesen (flatted format, rekursiv via Index-Reference auflösen).
+
+**OpenRouter Credit-Exhaustion ist häufigster Pipeline-Killer:**
+- Error-Format: `Payment required - perhaps check your payment details? - This request requires more credits, or fewer max_tokens. You requested up to N tokens, but can only afford M.`
+- Lösung 1: https://openrouter.ai/settings/credits aufladen.
+- Lösung 2: `max_tokens_*` im Stage 0 Normalizer reduzieren bis Credits reichen (Notbetrieb).
+- Pipeline darf KEIN automatisches Retry machen → würde nur Token-Verschwendung sein bei dauerhaftem 402. Cost-Guard-Pattern: harter Fail + User-Action.
