@@ -65,6 +65,21 @@ In allen HA-Skripten/Bash-Routinen `source ~/.config/homeassistant/env` als erst
 Token-Generation: HA UI → Profil → Sicherheit → "Lange gültige Zugriffstokens".
 Bei Leak (Token im Chat/Commit/Screenshot): sofort revoken in derselben UI-Sektion.
 
+### Env-Export für Python-Subprocesses
+`source <env>` setzt Variablen nur in der aktuellen Shell, **nicht** für aufgerufene Python-Skripte. Wenn ein Python-Helper `os.environ["HA_LONG_LIVED_TOKEN"]` liest, KeyError. Lösung:
+```bash
+set -a
+source ~/.config/homeassistant/env
+set +a
+/tmp/hawsv/bin/python3 /tmp/ha_helper.py
+```
+`set -a` markiert alle gesourcten Variablen als exportiert (`export`). Nach Subprocess: `set +a` zurücksetzen.
+
+Schnelles WebSocket-Helper-Setup:
+```bash
+python3 -m venv /tmp/hawsv && /tmp/hawsv/bin/pip install -q websockets
+```
+
 ## Package System
 
 Home Assistant loads all YAML files from `config/packages/` automatically:
@@ -409,6 +424,27 @@ Das Default-Dashboard (`.storage/lovelace`) erscheint **zusätzlich** zu allen i
 ### Voice-Pipeline-Persistenz über Restart
 Die Assist-Pipeline liegt in `.storage/assist_pipeline.pipelines` + `.storage/core.entity_registry`. Full-Restart (siehe oben) ändert daran nichts. YAML-Refactoring in `/config/*.yaml` ist risikoarm, solange `.storage/` nicht angefasst wird.
 
+### Entity-Registry direkt editieren funktioniert NICHT
+`.storage/core.entity_registry` mit `python3` oder Editor zu ändern und HA neu zu starten **überlebt den Restart nicht** — HA pflegt die Registry in-memory und schreibt beim Boot/State-Sync zurück, was das gesamte File überschreiben kann. Manuelle JSON-Edits sind nur valide, wenn HA komplett gestoppt ist (`docker stop homeassistant`, was via REST nicht geht).
+
+**Sauberer Weg für entity_id-Renames** — bei laufender HA via WebSocket-Command `config/entity_registry/update`:
+```python
+# In WebSocket-Helper (siehe REST-Auth Sektion oben):
+await ws.send(json.dumps({
+    "id": msg_id,
+    "type": "config/entity_registry/update",
+    "entity_id": "sensor.haus_verbrauch_monat_gemessen",   # alt
+    "new_entity_id": "sensor.haus_verbrauch_monat",         # neu
+}))
+```
+Das Update ist atomic, persistent, überlebt Restart. Erlaubt umfassenden Rename ohne YAML-Trickserei (`unique_id`-Match-Verhalten).
+
+Andere nützliche WebSocket-Commands für Registry:
+- `config/entity_registry/remove` — Eintrag löschen (re-creates beim nächsten Reload aus YAML)
+- `config/entity_registry/list` — alle Einträge
+- `config/entity_registry/get` — einzelner Eintrag mit allen Properties
+- `template.reload` (via `call_service`) — Template-Sektion neu lesen ohne Full-Restart
+
 ## check_config — Warnungs-Zeilennummern-Versatz
 
 HAs `check_config` meldet bei duplicate-key-Warnings oft Zeilennummern, die **um 1-2 Zeilen vom echten Vorkommen abweichen**. Beispiel:
@@ -446,6 +482,29 @@ curl -X POST -H "Authorization: Bearer $HA_LONG_LIVED_TOKEN" -H "Content-Type: a
 ```
 Werte sind nach dem Setzen in `.storage/` persistiert, überleben Restarts.
 
+### utility_meter bleibt `unknown` bis zum ersten Source-Tick
+- `utility_meter` mit Source-Sensor (`state_class: total_increasing`) startet **nicht spontan** mit Wert 0
+- State bleibt `unknown` bis sich der Source-Sensor ändert (= mindestens ein kWh-Tick = ~5–10 W für mehrere Minuten)
+- Bei Geräten in Standby (0 W) kann das Stunden bis Tage dauern
+- **Konsequenz für Templates**: jede Referenz auf utility_meter braucht `| float(0)` als Fallback, sonst `TypeError` oder Sensor wird `unknown`
+- **Lovelace**: `unknown` als „0 kWh" oder „—" rendern, nicht als Fehler
+
+### state_class ist Pflicht für Energy-Dashboard-Fähigkeit
+Aggregat-Sensoren, die im Energy Dashboard als Grid-Source oder Long-Term-Statistic dienen sollen, brauchen **beide** Felder:
+```yaml
+- name: "Haus Verbrauch Lifetime"
+  unique_id: haus_verbrauch_lifetime
+  unit_of_measurement: "kWh"
+  device_class: energy            # Klassifiziert als Energie-Sensor
+  state_class: total_increasing   # PFLICHT für Long-Term-Statistics + Energy Dashboard
+  state: >
+    {% set sensors = [...] %}
+    {{ (sensors | map('states') | map('float', 0) | sum) | round(3) }}
+```
+- `device_class: energy` allein → Sensor wird gespeichert, aber NICHT in Statistics-Tabelle
+- Ohne `state_class` kann der Sensor nicht als Grid-Source im Energy Dashboard ausgewählt werden
+- Für monoton steigende Summen: `total_increasing`. Für resetbare Zähler: `total`. Niemals `measurement` für kWh
+
 ### Slugify-Verhalten (Entity-ID aus `name:`)
 HA bildet entity_ids aus `name:` per Slugify — **Umlaute werden als reines ASCII gemappt, nicht ausgeschrieben**:
 | name (Quelle) | entity_id (Ergebnis) |
@@ -459,6 +518,48 @@ Vor REST-Aufrufen mit raten: lieber `GET /api/states` filtern mit Prefix:
 curl -s -H "Authorization: Bearer $HA_LONG_LIVED_TOKEN" "$HA_URL/api/states" \
   | python3 -c "import sys,json; [print(s['entity_id']) for s in json.load(sys.stdin) if 'stawag' in s['entity_id']]"
 ```
+
+## Energy Dashboard (HA 2026+)
+
+### Schema-Änderung in 2026.4 — Grid-Source nur noch via UI
+Das Schema von `energy/save_prefs` hat sich in HA 2026.4 geändert:
+- Alte Felder `flow_from`/`flow_to` werden mit `extra keys not allowed` abgelehnt
+- Neue Felder (`import_meter`, `power_sensor`, etc.) sind ebenfalls schemafremd, exakte Struktur intransparent
+- Reverse-Engineering via Trial-and-Error trifft das aktuelle Schema nicht
+- **Pragmatisch: Grid-Source via UI konfigurieren** — Settings → Dashboards → Energie → "Stromnetz hinzufügen"
+
+WebSocket bleibt aber für **`device_consumption`** zuverlässig nutzbar:
+```python
+# Funktioniert in HA 2026.4:
+{
+  "type": "energy/save_prefs",
+  "energy_sources": [],
+  "device_consumption": [
+    {"stat_consumption": "sensor.shelly_X_total_energy"},
+    ...
+  ],
+}
+```
+Neu in HA 2026+: `device_consumption_water` als separates Feld für Wasser-Tracking.
+
+### Voraussetzungen für Sensoren im Energy Dashboard
+- `device_class: energy` + `state_class: total_increasing` (siehe Helper-Entities Sektion)
+- Long-Term-Statistics aktiv (default seit HA 2022.4)
+- Verifikation via WebSocket `recorder/list_statistic_ids`:
+  ```python
+  await ws.send(json.dumps({"id": N, "type": "recorder/list_statistic_ids",
+                            "statistic_type": "sum"}))
+  # Sensor muss in Result-Liste auftauchen
+  ```
+
+### Grid-Source vs. Individuelle Geräte — Mehrwert
+| Bereich | Zeigt | Voraussetzung |
+|---|---|---|
+| **Grid Source** (Strom-Karte oben) | Verbrauch + €-Kosten in EUR | kWh-Sensor mit `total_increasing` + Tarif-Sensor |
+| **Individuelle Geräte** (Verteilungs-Karte) | nur kWh-Verteilung über Zeit | kWh-Sensor mit `total_increasing` |
+| Solar / Battery / Gas / Wasser | je nach Sektion | spezifische Sensoren |
+
+Daher die übliche **A+B-Empfehlung** (siehe Vertragsdaten-Pattern unten): Energy Dashboard für Standardvisualisierung, Custom Template-Package für €-Aggregate.
 
 ## Vertragsdaten-Package-Pattern
 
@@ -484,7 +585,28 @@ Statische Verträge (Strom/Gas/Internet/Mobilfunk) als wiederverwendbares Packag
 - Kundennummer/Vertragskonto im Klartext (allenfalls in `secrets.yaml` falls überhaupt nötig)
 - Klartext-Adresse der Lieferstelle, falls anders als Wohnsitz
 
-**Implementiert (Beispiel):** `packages/stawag_strom.yaml` (16 Entities, deployed 2026-05-02).
+**Implementiert (Beispiele):**
+- `packages/stawag_strom.yaml` (16 Entities, deployed 2026-05-02) — Stromtarif + Vertragsdaten
+- `packages/energy_costs.yaml` (22 Entities, deployed 2026-05-02) — Verbrauch+Kosten der Shelly-PMs gegen Stawag-Tarif
+
+### Variante A + B Doppel-Pattern (Verbrauch + Kosten)
+Vertragsdaten allein zeigen den Tarif. Für **konkreten Verbrauch + €** ergänzt man:
+
+**Variante A — HA Energy Dashboard** (UI/WebSocket):
+- `device_consumption` mit den vorhandenen Geräte-Energy-Sensoren (z. B. Shelly PM `*_total_energy`)
+- Grid-Source via UI (Schema-Änderungen 2026.4) mit Tarif-Sensor als Preisreferenz
+- Liefert: Tag/Woche/Monat/Jahr-Verlauf, Geräte-Verteilung, €-Kosten in Standard-Karte
+
+**Variante B — Custom Template-Package**:
+- `utility_meter` pro Gerät (cycle: monthly) → Monatszähler
+- `template.sensor.<gerät>_kosten_lifetime` = `total_energy × tarif`
+- `template.sensor.<gerät>_kosten_monat` = `utility_meter × tarif`
+- Aggregat: `haus_verbrauch_lifetime/monat` (mit `state_class: total_increasing`!)
+- Aggregat: `haus_kosten_monat_total` = Arbeitspreis-Anteil + Grundpreis
+- Differenz-Sensor: `kosten_monat_total - abschlag` → Status („unter/über Abschlag")
+- Liefert: €-Aggregate, Lovelace-tauglich, Abschlags-Vergleich
+
+A+B kombinieren — A für Standard-Visualisierung, B für €-Logik die Energy Dashboard nicht abdeckt (Abschlags-Vergleich, Geräte-Kosten).
 
 ## Common Mistakes to Avoid
 
@@ -506,3 +628,7 @@ Statische Verträge (Strom/Gas/Internet/Mobilfunk) als wiederverwendbares Packag
 16. **SSH zum NAS als Default-Edit-Weg**: Auf Yoga7 ist `/mnt/nas/docker/home-assistant/config/` via CIFS gemountet — direkt schreiben statt SSH-Roundtrip. SSH-Key ist auf NAS oft nicht eingerichtet, Password-Prompt blockt Automation.
 17. **`input_datetime` mit `initial:`-Feld konfigurieren**: Existiert nicht. Werte nach erstem Restart via `input_datetime/set_datetime` REST-Service setzen, sonst bleiben abhängige Template-Sensoren auf `unknown`.
 18. **Slugify-Annahme `ü → ue`**: Falsch — HA mappt Umlaute zu reinem ASCII (`ü → u`, `ö → o`, `ß → ss`). Vor REST-Aufrufen entity_id mit `GET /api/states` verifizieren.
+19. **`.storage/core.entity_registry` direkt editieren**: Überlebt Restart NICHT — HA überschreibt die Datei beim Boot/Sync. Für Renames: WebSocket `config/entity_registry/update` mit `new_entity_id` (atomic, persistent). Manuelle JSON-Edits nur bei vollständig gestoppter HA (`docker stop`).
+20. **HA 2026.4 Energy-Schema raten**: `flow_from`/`flow_to`/`import_meter` werden alle abgelehnt mit `extra keys not allowed`. Schema-Reverse-Engineering ist Sackgasse — Grid-Source via UI konfigurieren. Nur `device_consumption` ist via WebSocket zuverlässig setzbar.
+21. **utility_meter braucht ersten Source-Tick**: Bleibt `unknown` bis sich der Source-Sensor ändert — bei 0 W Standby kann das Stunden dauern. Templates müssen `| float(0)` Fallback haben, Lovelace-Karten `unknown` als „—" rendern.
+22. **`device_class: energy` ohne `state_class`**: Sensor erscheint NICHT als Wahlmöglichkeit im Energy Dashboard. Beide setzen — `state_class: total_increasing` für Long-Term-Statistics-Aufnahme.
