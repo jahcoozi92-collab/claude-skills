@@ -27,10 +27,22 @@ Diese Skill gilt **ausschliesslich** fuer:
 | ~/architecture/ARCHITECTURE_LOCK.md | — | Architektur-Constraints |
 
 ### Konfiguration
-| Datei | Zweck |
-|-------|-------|
-| ~/.claude/settings.local.json | Claude Code Permissions |
-| ~/.claude/skills/ | Skill Repository (git: jahcoozi92-collab/claude-skills) |
+| Datei | Zweck | Permissions |
+|-------|-------|-------------|
+| ~/.claude/settings.local.json | Claude Code Permissions | default |
+| ~/.claude/skills/ | Skill Repository (git: jahcoozi92-collab/claude-skills) | default |
+| ~/.config/homeassistant/env | HA-API: `HA_URL` + `HA_LONG_LIVED_TOKEN` | **0600** (Token!) |
+| ~/.config/n8n-mcp/n8n-api-config.sh | n8n API-Key | **0600** (Token!) |
+| ~/.config/shelly/credentials | Shelly Cloud Server + Auth-Key (falls genutzt) | **0600** (Token!) |
+
+### Token-Speicher-Konvention
+Tokens für externe APIs (HA, n8n, Shelly, etc.) gehören in `~/.config/<service>/env` oder `~/.config/<service>/credentials`, **chmod 600**, source-bar in Bash:
+```bash
+source ~/.config/homeassistant/env  # setzt HA_URL + HA_LONG_LIVED_TOKEN
+```
+**Anlegen IMMER via `nano <datei>`**, nie via `printf 'TOKEN=…' > datei` — der Klartext-Token landet sonst in der Shell-History (`~/.zsh_history`) und ist via `Ctrl+R` wieder auffindbar. Nach dem Speichern: `chmod 600 <datei>`.
+
+Wenn ein Token doch in History/Chat/Commit landet: in der jeweiligen Service-UI revoken und neu generieren — der Schaden ist nicht durch Bereinigen rückgängig zu machen.
 
 ---
 

@@ -18,11 +18,17 @@ Patterns and best practices for working with Home Assistant configuration on thi
 ## Common Commands
 
 ```bash
-# Restart Home Assistant
-docker restart homeassistant
+# Restart Home Assistant (sauberer als docker restart)
+curl -X POST -H "Authorization: Bearer $HA_LONG_LIVED_TOKEN" \
+  "$HA_URL/api/services/homeassistant/restart" -d '{}'
+# Fallback: docker restart homeassistant
 
-# Check config validity
-docker exec homeassistant python3 -m homeassistant --script check_config --config /config
+# Check config validity (REST — schneller, kein NAS-Login nötig)
+curl -X POST -H "Authorization: Bearer $HA_LONG_LIVED_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$HA_URL/api/config/core/check_config" -d '{}'
+# Liefert: {"result":"valid","errors":null,"warnings":null}
+# Fallback: docker exec homeassistant python3 -m homeassistant --script check_config --config /config
 
 # View logs
 docker logs homeassistant --tail 100 -f
@@ -40,6 +46,24 @@ for e in data['data']['entities']:
         print(e['entity_id'], e.get('platform'))
 "
 ```
+
+## REST-Auth & Token-Speicher (Yoga7)
+
+HA Long-Lived Tokens persistent in `~/.config/homeassistant/env` ablegen, **niemals im Chat oder Shell-History eintippen**:
+
+```bash
+# Token-Datei anlegen — IMMER via Editor, nie via printf/echo (Shell-History-Leak)
+nano ~/.config/homeassistant/env
+# Inhalt:
+# HA_URL=http://192.168.22.90:8123
+# HA_LONG_LIVED_TOKEN=eyJ…
+chmod 600 ~/.config/homeassistant/env
+```
+
+In allen HA-Skripten/Bash-Routinen `source ~/.config/homeassistant/env` als ersten Schritt. URL ist die LAN-Variante (schneller, internetausfall-fest), externe URL nur wenn ausdrücklich aus dem WAN gerufen wird.
+
+Token-Generation: HA UI → Profil → Sicherheit → "Lange gültige Zugriffstokens".
+Bei Leak (Token im Chat/Commit/Screenshot): sofort revoken in derselben UI-Sektion.
 
 ## Package System
 
@@ -351,8 +375,17 @@ mv /config/packages/*.pre-fix /config/_attic/packages/
 - Praktisch: 30s bis zum Zurück-Move falls doch gebraucht
 - Nach 3-6 Monaten in zweiter Cleanup-Runde endgültig entscheiden
 
-### YAML-Edit via SSH-Round-Trip
-Für größere Edits an `configuration.yaml`, `automations.yaml` etc.:
+### YAML-Edit via NAS-CIFS-Mount (Yoga7, BEVORZUGT)
+Auf Yoga7 ist der NAS-Docker-Share via CIFS gemountet (siehe `nas-docker-mount.service`):
+- `/mnt/nas/docker/home-assistant/config/` ↔ `/volume1/docker/home-assistant/config/` auf NAS
+- Direkter Read/Write/Edit mit allen lokalen Tools, kein SSH/Docker-Roundtrip nötig
+- Beispiel: `cp /tmp/stawag_strom.yaml /mnt/nas/docker/home-assistant/config/packages/`
+- YAML-Validierung lokal: `python3 -c "import yaml; yaml.safe_load(open('...'))"`
+- Anschließend `check_config` + Restart via REST-API (siehe Common Commands oben)
+- Restriktion: NAS-Home-Verzeichnis (`/volume1/homes/Jahcoozi/...`) ist NICHT gemountet — nur der Docker-Share
+
+### YAML-Edit via SSH-Round-Trip (Fallback)
+Wenn NAS-Mount nicht verfügbar (andere Maschine, Mount kaputt):
 ```bash
 # Pull
 ssh Jahcoozi@192.168.22.90 'docker exec homeassistant cat /config/configuration.yaml' > /tmp/ha-config.yaml
@@ -360,7 +393,7 @@ ssh Jahcoozi@192.168.22.90 'docker exec homeassistant cat /config/configuration.
 # Push
 cat /tmp/ha-config.yaml | ssh Jahcoozi@192.168.22.90 'docker exec -i homeassistant tee /config/configuration.yaml > /dev/null'
 ```
-Vorteile: präzises Editing mit strukturierten Tools, kein `sed` auf Mehrzeiliges.
+Vorteile: präzises Editing mit strukturierten Tools, kein `sed` auf Mehrzeiliges. Nachteil: SSH-Key zum NAS oft nicht eingerichtet → Password-Prompt blockiert Automation.
 
 ### HA-Restart via REST-Service
 ```bash
@@ -395,6 +428,64 @@ Ziel für `check_config`-Output: **komplett leer** (nicht nur "error-frei").
 - Nach erfolgreichem Cleanup: `python3 -m homeassistant --script check_config --config /config 2>&1` sollte nur `Testing configuration at /config` zeigen
 - Rauschen-Unterdrückung ist wertvoller als der einzelne Fix — zukünftige Warnings sind sofort als "neu" erkennbar
 
+## Helper-Entities (input_*)
+
+### `initial:` ist nur bei input_number/input_boolean/input_text
+- `input_number`/`input_boolean`/`input_text`: `initial:` setzt Wert beim **allerersten Start** (wenn keine .storage-Datei existiert). Bei späteren Restarts gewinnt der gespeicherte Wert.
+- `input_datetime`: hat **kein** `initial:` Feld. Frisch deployed = State `"unknown"` bis zum ersten `input_datetime.set_datetime`-Service-Call.
+- Konsequenz: Template-Sensoren, die `as_datetime(states('input_datetime.x'))` nutzen, müssen den Fall `'unknown'/'unavailable'/''` behandeln, sonst `TypeError`.
+
+### Initial-Werte nach Deploy via REST setzen
+Nach erstem Restart die Datums-Helper befüllen:
+```bash
+source ~/.config/homeassistant/env
+curl -X POST -H "Authorization: Bearer $HA_LONG_LIVED_TOKEN" -H "Content-Type: application/json" \
+  "$HA_URL/api/services/input_datetime/set_datetime" \
+  -d '{"entity_id":"input_datetime.stawag_vertragsende","date":"2026-12-31"}'
+# Bei has_time: true zusätzlich "time":"HH:MM:SS", oder "datetime":"YYYY-MM-DDTHH:MM:SS"
+```
+Werte sind nach dem Setzen in `.storage/` persistiert, überleben Restarts.
+
+### Slugify-Verhalten (Entity-ID aus `name:`)
+HA bildet entity_ids aus `name:` per Slugify — **Umlaute werden als reines ASCII gemappt, nicht ausgeschrieben**:
+| name (Quelle) | entity_id (Ergebnis) |
+|---|---|
+| `Stawag Tage bis Kündigungsfrist` | `stawag_tage_bis_kundigungsfrist` (ü→u, **nicht** ue) |
+| `Stawag — Ablesetermin in 2 Tagen` | `stawag_ablesetermin_in_2_tagen` (Bindestrich raus, Zahl bleibt) |
+| `Wohnzimmer (oben)` | `wohnzimmer_oben` |
+
+Vor REST-Aufrufen mit raten: lieber `GET /api/states` filtern mit Prefix:
+```bash
+curl -s -H "Authorization: Bearer $HA_LONG_LIVED_TOKEN" "$HA_URL/api/states" \
+  | python3 -c "import sys,json; [print(s['entity_id']) for s in json.load(sys.stdin) if 'stawag' in s['entity_id']]"
+```
+
+## Vertragsdaten-Package-Pattern
+
+Statische Verträge (Strom/Gas/Internet/Mobilfunk) als wiederverwendbares Package-Schema in `config/packages/<anbieter>_<sparte>.yaml`:
+
+| Block | Zweck | Begründung |
+|---|---|---|
+| `input_number.<anbieter>_arbeitspreis_netto` | variable Tarifkomponenten | Tarif ändert sich → UI-Edit ohne YAML-Restart |
+| `input_number.<anbieter>_grundpreis_netto_jahr` | Grundpreis pro Jahr netto | – |
+| `input_number.<anbieter>_abschlag_brutto` | Monatlicher Abschlag | Cashflow-Tracking, kann vom Anbieter-Vorschlag abweichen |
+| `input_number.<anbieter>_zaehlerstand_basis` | Zählerstand bei Abrechnung | Referenz für Verbrauchs-Templates |
+| `input_datetime.<anbieter>_vertragsende` | Vertragsende | Tage-bis-Sensor + Status-Templating |
+| `input_datetime.<anbieter>_kuendigungsfrist` | letzter Kündigungstermin | Reminder-Trigger |
+| `input_datetime.<anbieter>_ablesetermin` | nächster Ablesetermin | Jahres-Reminder |
+| `template.sensor.<anbieter>_*_brutto` | Brutto-Berechnungen aus Netto×1.19 | Single Source of Truth = netto-Felder |
+| `template.sensor.<anbieter>_tage_bis_*` | Countdown bis Datum | Dashboard + Automation-Trigger |
+| `template.sensor.<anbieter>_vertrag_status` | Stati `läuft/möglich/dringend/verpasst` | UI-Statusbadge |
+| `automation.<anbieter>_kuendigung_reminder` | Push an Tag 90/60/30/14/7/1 | Verhindert Auto-Verlängerung |
+| `automation.<anbieter>_ablesetermin_reminder` | Push am 09.01. (z. B.) | Manuelle Ablesung erinnern |
+
+**Bewusst NICHT ins Package:**
+- IBAN, BIC, SEPA-Mandat, Bankverbindung (PII, gehören nicht in YAML)
+- Kundennummer/Vertragskonto im Klartext (allenfalls in `secrets.yaml` falls überhaupt nötig)
+- Klartext-Adresse der Lieferstelle, falls anders als Wohnsitz
+
+**Implementiert (Beispiel):** `packages/stawag_strom.yaml` (16 Entities, deployed 2026-05-02).
+
 ## Common Mistakes to Avoid
 
 1. **Container-Name**: `homeassistant` (kein Bindestrich!)
@@ -411,3 +502,7 @@ Ziel für `check_config`-Output: **komplett leer** (nicht nur "error-frei").
 12. **`sh -c` mit runden Klammern in Kommentaren**: `sh: syntax error: unexpected "("`. In SSH-Commands die durch `sh -c` laufen KEINE Klammern in Echo-Texten. Alternativen: eckige Klammern oder Bash (`bash -c` toleriert mehr).
 13. **Storage-mode Default-Dashboard aus YAML entfernen wollen**: Geht nicht — nur via HA-UI (siehe /config-Refactoring-Patterns).
 14. **Memory-Fakten als Ground Truth behandeln**: Config-Realität driftet — "laut Memory sollte X so sein" ist Hypothese. Vor Aktionen messen (via REST oder WebSocket), Memory bei Abweichung korrigieren.
+15. **Token via `printf`/`echo` schreiben**: Token landet in Shell-History und ggf. Tool-Logs. IMMER `nano <datei>` nutzen, danach `chmod 600`. Bei Verdacht auf Leak: sofort revoken (HA UI → Profil → Sicherheit).
+16. **SSH zum NAS als Default-Edit-Weg**: Auf Yoga7 ist `/mnt/nas/docker/home-assistant/config/` via CIFS gemountet — direkt schreiben statt SSH-Roundtrip. SSH-Key ist auf NAS oft nicht eingerichtet, Password-Prompt blockt Automation.
+17. **`input_datetime` mit `initial:`-Feld konfigurieren**: Existiert nicht. Werte nach erstem Restart via `input_datetime/set_datetime` REST-Service setzen, sonst bleiben abhängige Template-Sensoren auf `unknown`.
+18. **Slugify-Annahme `ü → ue`**: Falsch — HA mappt Umlaute zu reinem ASCII (`ü → u`, `ö → o`, `ß → ss`). Vor REST-Aufrufen entity_id mit `GET /api/states` verifizieren.
