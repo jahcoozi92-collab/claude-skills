@@ -1997,3 +1997,67 @@ Erwartet: `drwx------` für Home, `drwx------` für `.ssh`, `-rw-------` für `a
 
 **Verwandte Memory-Dateien (Auto-Memory):**
 - `feedback_mcp_server_headers_lowercase.md` — Kurzform der Header-Casing-Lektion mit Why/How-to-apply
+
+### 2026-05-04 (Reflect, Teil 2) — Diagnose-Disziplin nach Header-Casing-Marathon
+
+**🔴 Self-Correction: "curl ✓ aber bundle-mcp ✗" = Client-Bug, NICHT Server-Bug**
+
+Heute drei Stunden in der Sackgasse "HA IP-Ban triggert MCP-401" verbracht, weil mein curl-Test mit `Authorization: Bearer $TOKEN` HTTP 200 zurückbrachte und bundle-mcp parallel 401 loggte. Falsche Schlussfolgerung: "Server unstable / IP-Ban transient". Korrekte Reaktion wäre gewesen: **wenn curl mit identischen Credentials erfolgreich ist und der Client failt, ist der Bug GARANTIERT im Client-Code**. Direkt in `~/.local/lib/node_modules/openclaw/dist/pi-bundle-mcp-runtime-*.js` schauen, Header-Build-Logik lesen, Live-Patch mit `console.error`. Diana's parallele Source-Analyse fand exakt das (Header-Spread mit case-sensitive Keys). Die "transient ban heilt sich"-Hypothese hätte den Bug nie gefunden, weil er deterministisch war.
+
+**Lehre:** Bei `curl 200 vs SDK 401`-Diskrepanz NIE auf "Server-Verhalten / Cooldown" tippen. Immer Client-Source dive. Der einzige Fall wo Client-Server-Asymmetrie wirklich am Server liegt: wenn der Server unterschiedlich auf User-Agent / Origin reagiert — selten, prüfbar mit `curl -A "<gleicher UA>"`.
+
+**🔴 Versions-Drift bei "irgendwas verschwunden" zuerst per `openclaw --version` prüfen**
+
+Heute Plugin-Liste ging von 4 → 3 Plugins zwischen Restarts. Erste Annahme: Funktionsausfall, Diagnose nötig. Tatsächlich: Diana hatte in der Zwischenzeit auf 2026.5.3-1 (prerelease) geupgraded. In dieser Version werden reine Provider-Plugins (anthropic, openai, google, xai, ollama, openrouter) nicht mehr in der `http server listening (X plugins: ...)`-Line gezählt — nur Channel/Tool-Plugins. **Anthropic war NIE in dieser Liste**, obwohl Default-Provider seit Wochen aktiv. Hätte das früher auffallen können — beim nächsten "X plugins"-Vergleich zuerst Versionsdelta checken.
+
+```bash
+openclaw --version    # Vor Bug-Diagnose IMMER zuerst
+```
+
+**🟡 User-Entscheidungs-Konsistenz in der gleichen Session**
+
+In einer Session bewusste Ablehnungen des Users mitloggen und nicht 2h später dieselbe Option erneut empfehlen. Heute trusted_networks vorgeschlagen, obwohl Diana 2h vorher schrieb *"threshold=25 statt trusted_networks für /24, weil konservativer"*. Das ist mental cheap zu vermeiden: vor Empfehlungen schnell durch Session-Highlights scrollen, ob die Option bereits qualifiziert abgelehnt wurde.
+
+**🟡 SSH-zu-NAS: IdentitiesOnly=yes ist NOTWENDIG**
+
+```bash
+ssh -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 Jahcoozi@192.168.22.90 '<befehl>'
+scp -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 <local> Jahcoozi@192.168.22.90:<remote>
+```
+
+Ohne `IdentitiesOnly=yes` testet SSH alle Keys (id_rsa zuerst), NAS akzeptiert nur ed25519 → Permission denied. Mit Flag: SSH nutzt NUR den explizit angegebenen Key. Komplementär zu Dianas eigener Notiz zu Synology-DSM-StrictModes (oben Z1984-1994) — beides muss stimmen damit Pubkey-Auth funktioniert.
+
+**🟡 Memory-Spiegelung NAS↔moltbot ist manuell, nicht automatisch**
+
+Claude-Code-Memory ist **instanz-lokal**, nicht cluster-weit. moltbot-Memory: `~/.claude/projects/-home-moltbotadmin/memory/`. NAS-Memory: `~/.claude/projects/-volume1-docker-home-assistant/memory/`. Bei sessions-übergreifenden Erkenntnissen die für beide Instanzen relevant sind: gezielt scp ganzer Dateien (Overwrite) + `tee -a` für Index-Zeilen (Append). Nicht direktes Sync — Diana und ich pflegen unterschiedliche Sichten auf das gleiche System.
+
+**🔵 OpenClaw-Plugin mutual-wipe: zwei Speicherorte beim Plugin-Verlust**
+
+Bei "Plugin nicht mehr in node_modules" beide Stellen prüfen:
+- `~/.openclaw/plugins/installs.json#installRecords.<name>` (Tracker — wird beim Plugin-Install gepflegt)
+- `~/.openclaw/npm/node_modules/@openclaw/<name>/` (Code — fehlt nach `npm install`-mutual-wipe)
+
+Wenn nur Tracker, nicht Code: stale entry → aus installs.json entfernen.
+Wenn Code da, Tracker leer: Loader sieht's nicht → Tracker-Eintrag rebuilden via `openclaw plugins install --force`.
+Wenn beides weg: kompletter Reinstall via `npm pack` + manueller `tar -xzf` (siehe Recovery-Pfad in `project_2026_5_2_plugin_migration.md`).
+
+**🔵 voice-call Stale-Cleanup an drei Speicherorten**
+
+Bei Plugin-Entfernung sind drei Stellen zu putzen, sonst meldet Doctor Stale-Warnings:
+1. `openclaw.json#plugins.allow` (Liste)
+2. `openclaw.json#plugins.entries.<name>` (Konfig)
+3. `~/.openclaw/plugins/installs.json#installRecords.<name>` (Tracker)
+Doctor-Output mischt zwei Kategorien: "Config warnings" (echte Probleme) vs Knowledge-Base "Doctor warnings" (optional aktivierbare Plugins) — gleicher Plugin-Name kann in beiden auftauchen mit unterschiedlicher Bedeutung.
+
+**🔵 WS-Closure-Codes — kein Fehler-Indikator**
+
+| Code | Bedeutung | Aktion |
+|---|---|---|
+| `1001 reason=n/a` | Browser navigiert weg / Tab-Reload | ignorieren |
+| `1012 reason=service restart` | Restart-induced | ignorieren |
+| `1013 reason=gateway starting` | Gateway-Init noch nicht fertig, Auto-Reconnect greift | ignorieren |
+
+**Verwandte Memory-Dateien (Auto-Memory):**
+- `feedback_bundle_mcp_silent_success.md` — bundle-mcp Logging-Verhalten (mit Diana's Korrektur: lazy+retries, nicht one-shot)
+- `feedback_ha_auth_debugging.md` — HA-Auth-Counter-Trap (NAS-Memory)
+- `project_2026_5_2_plugin_migration.md` — Recovery-Pfad LanceDB
