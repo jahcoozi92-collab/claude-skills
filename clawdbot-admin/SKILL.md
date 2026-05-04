@@ -1916,3 +1916,84 @@ Der offizielle Befehl ruft am Ende ein Clipboard-Write auf — bei Headless-Sess
 
 **Verwandte Memory-Dateien (Auto-Memory):**
 - `reference_control_ui_auth.md` — vollstaendige Symptom-Tabelle + CLI-Pfad
+
+### 2026-05-04 — MCP-Header-Casing + Diagnose-Methodik + .env-Trennung
+
+**🔴 KRITISCH: `mcp.servers.<name>.headers` keys IMMER lowercase**
+
+In `~/.openclaw/openclaw.json` unter `mcp.servers.<name>.headers` müssen alle Schlüssel **lowercase** geschrieben werden (`authorization`, `accept`, `content-type`), niemals Pascal-Case (`Authorization`).
+
+**Why:** Der MCP-SDK (`SSEClientTransport`) injiziert beim SSE-Connect automatisch einen `authorization`-Header (lowercase, SDK-Konvention). OpenClaws `bundle-mcp` merge't die Config-Headers via `{ ...sdkHeaders, ...configHeaders }` (Plain-Object-Spread). JavaScript-Object-Keys sind case-sensitive — `authorization` und `Authorization` bleiben als zwei separate Keys erhalten. Wenn undici daraus den HTTP-Request baut, konkateniert es die beiden Werte mit `, ` zu `Bearer <token>, Bearer <token>`. Das bricht RFC 6750 (Bearer-Auth). Server lehnt mit 401 ab. **Direkt-curl mit demselben Token bekommt 200**, weil curl nur einen Header schickt — daher der Bug stundenlang verstecken kann, wenn man den Vergleich nicht macht.
+
+**Source-Pointer (für Skill-Reload-Verifikation):**
+- `~/.local/lib/node_modules/openclaw/dist/pi-bundle-mcp-runtime-Cp2qTV3l.js`
+  - Z151-159: `resolveHttpMcpServerLaunchConfig` liest `raw.headers` ohne case-Normalisierung
+  - Z255-269: `buildSseEventSourceFetch` macht den Spread, setzt SDK-Header zuerst, Config-Header zuletzt
+  - Z296: `const headers = { ...resolved.headers }` — case-sensitive Spread
+
+**Wenn Update von OpenClaw kommt:** prüfen ob `buildSseEventSourceFetch` jetzt case-insensitive normalisiert. Falls ja → diese Lektion entfernen.
+
+---
+
+**🔴 KRITISCH: `~/.openclaw/.env` ≠ `~/.openclaw/gateway.systemd.env`**
+
+Zwei getrennte Files mit unterschiedlichem Zweck:
+
+| File | Wer liest | Wofür |
+|---|---|---|
+| `~/.openclaw/gateway.systemd.env` | systemd `EnvironmentFile=` | Process-Env beim Gateway-Start (alles was `process.env.X` braucht) |
+| `~/.openclaw/.env` | OpenClaw selbst | Konfig-Expansion (`${VAR}` in `openclaw.json`) |
+
+Wenn ein Skill oder MCP-Connector eine env-Variable im **Process-Env** lesen will (z.B. weil `env-overrides`-Hardening Skill-spezifische Overrides blockt), muss die Var in **`gateway.systemd.env`** stehen — `.env` allein reicht NICHT. Bei neu auftretenden "Skill xy: Token-Pickup-Block"-Logs IMMER beide Files prüfen.
+
+Konkret heute aufgetaucht: HA_TOKEN für home-assistant-Skill — `env-overrides` blockt Skill-Override, also muss HA_TOKEN direkt in `gateway.systemd.env` stehen.
+
+---
+
+**🔴 KORREKTUR der Hot-Reload-Memory-Behauptung**
+
+Memory-Eintrag (CLAUDE.md / MEMORY.md):
+> "bundle-mcp connect ist one-shot beim Start, kein Re-Try-Loop nach Initial-Fail"
+
+ist FALSCH. Realität: connect findet **lazy beim ersten Tool-Use** statt (nicht beim Boot), und es gibt Re-Tries (cadence ~4min/30min beobachtet). Was korrekt bleibt: für Schema-Änderungen (`mcp.servers.*.transport`, neue Server hinzufügen) ist Restart nötig — aber transient errors heilen sich von selbst, kein Restart-Pflicht bei "failed to start"-Logs.
+
+---
+
+**🟡 Diagnose-Pipeline für "MCP-Server liefert 401"**
+
+Wenn ein MCP-Server-Connect mit 401 failt, nicht direkt an HA-Härtung schrauben — der Bug sitzt fast immer im Client. Reihenfolge:
+
+1. **Server-Log → Quelle eingrenzen.** HA: `docker exec homeassistant grep "<source-ip>" /config/home-assistant.log`. Notieren: Source-IP, Endpoint-Pfad, User-Agent. Damit ist klar ob es OpenClaw, ein Skill, ein Cron oder externer Traffic ist.
+2. **Direkt-curl mit Token testen.** Wenn `curl -H "Authorization: Bearer $TOKEN" $URL` → 200, ist der Token gültig und der Bug liegt im Client. Wenn 401 → Token-Problem (revoked, expired, falsche Scope).
+3. **Source-Diving im dist-Bundle.** `grep -rln 'failed to start server' ~/.local/lib/node_modules/openclaw/dist/`. Im Treffer-File die Connect-Logik lesen, vor allem Header-/Auth-Verarbeitung.
+4. **Live-Patch mit `console.error`-Debug-Markern.** Edit-Tool im dist-File, gezielt eine Zeile mit Detail-Output über Header, Init-Object, expandierte Werte. Restart, Tool-Use triggern, Log lesen. Backup vorher (`cp file file.pre-debug-DATUM`).
+5. **Backup-Restore am Ende der Diagnose.** `cmp -s live backup` zur Verifikation. Bei zukünftigem `npm install -g openclaw@latest` würde der Patch eh überschrieben — dist-Patches sind nur fürs Debuggen, nicht für Permanent-Fixes.
+
+---
+
+**🟡 Falle: Korrelation ≠ Kausalität in Logs**
+
+Heute zwei Log-Zeilen die immer zusammen auftauchten: `[env-overrides] Blocked skill env overrides for home-assistant: HA_TOKEN` und `[bundle-mcp] failed to start server "home-assistant" ... 401`. Erste Hypothese: ein gemeinsamer Bug. Falsch. Tatsächlich:
+- Erste Zeile = Skill-REST-Pfad (klassischer home-assistant-Skill, nutzt env.HA_TOKEN)
+- Zweite Zeile = MCP-Pfad (bundle-mcp + SSEClientTransport, nutzt mcp.servers.headers.Authorization)
+
+Verschiedene Subsysteme, verschiedene Bugs, gleiche Trigger-Aktion (Agent will HA-Tool nutzen → beide Pfade werden initialisiert). Erst nach Erst-Fix (`HA_TOKEN` in `gateway.systemd.env`) zeigte sich, dass nur eine Hälfte gelöst war — die andere brauchte den separaten Header-Casing-Fix. **Lehre:** Bei "X kommt immer vor Y" zuerst prüfen, ob X und Y dieselbe Code-Region anfassen, bevor Kausalität annimmt. Ein simples `grep` im Source nach beiden Tokens hätte hier ~5 Minuten Arbeit gespart.
+
+---
+
+**🔵 Synology DSM SSH-Pubkey-Setup-Falle**
+
+`ssh-copy-id` legt den Key in `~/.ssh/authorized_keys`, aber Synology DSM erstellt das User-Home oft mit Group-Writable-Permissions. sshds `StrictModes yes` (Default) lehnt den Key dann **stillschweigend** ab — Client sieht nur "Permission denied (publickey,password)", kein Hinweis auf das Permission-Problem. Fix einmalig nach erstem Pubkey-Push:
+
+```bash
+ssh user@nas "cd; chmod g-w,o-w .; chmod 700 .ssh; chmod 600 .ssh/authorized_keys; ls -ld . .ssh .ssh/authorized_keys"
+```
+
+Erwartet: `drwx------` für Home, `drwx------` für `.ssh`, `-rw-------` für `authorized_keys`. Falls `+` ACL-Marker erscheint (Synology-eigene ACLs), reicht das auch — sshd akzeptiert `0700` ohne Group/Other-Bit.
+
+**Render-Wrap-Falle:** Bei langen SSH-Remote-Commands NIEMALS `&&` über mehrere Zeilen, lieber `;` Semikolon — Newlines im quoted-String werden 1:1 an Remote-Shell durchgereicht und brechen die Sequenz auf.
+
+---
+
+**Verwandte Memory-Dateien (Auto-Memory):**
+- `feedback_mcp_server_headers_lowercase.md` — Kurzform der Header-Casing-Lektion mit Why/How-to-apply
