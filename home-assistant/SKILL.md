@@ -306,8 +306,32 @@ state: >
 - `secrets.yaml`: chmod 600 (via `docker exec homeassistant chmod 600 /config/secrets.yaml`)
 - Webhook-IDs: UUID4 in secrets.yaml, nie Klartext
 - `.gitignore`: secrets.yaml, .storage/, *.db*, *.log*
-- `login_attempts_threshold: 5` + `ip_ban_enabled: true`
+- `ip_ban_enabled: true` + `login_attempts_threshold: <n>` — **Default 5 ist sehr scharf** für aktiv genutzte Setups (Bots, Mobile-Apps, Gateways triggern schnell). Empfehlung:
+  - **25** für gemischte Setups mit eigenen Clients (NAS-Standard seit 2026-05-04)
+  - **5** nur für reine Headless-Server, die keine externen Auth-Quellen haben
+  - alternativ `trusted_networks: [192.168.x.0/24]` für vertrautes LAN — schließt LAN-IPs vom Counter aus, riskanter weil pauschal
 - Shell commands: KEINE Template-Variablen aus User-Input (`{{ command }}` = Injection)
+
+### ip_bans.yaml — Entban-Workflow
+
+`config/ip_bans.yaml` wird **nur beim Container-Start** gelesen — Live-Edit ohne Restart bleibt wirkungslos. Korrekte Sequenz:
+
+```bash
+# 1. Backup
+cp config/ip_bans.yaml config/ip_bans.yaml.bak.$(date +%Y%m%d_%H%M%S)
+
+# 2. Eintrag entfernen ODER ganze Datei leeren (HA toleriert leere Datei)
+#    Edit-Tool bevorzugt; oder per Editor
+
+# 3. HA neustarten — Cache wird neu aufgebaut
+docker restart homeassistant
+
+# 4. Verify
+sleep 15 && curl -s -o /dev/null -w "%{http_code}\n" http://192.168.22.90:8123/
+cat config/ip_bans.yaml  # leer oder ohne Ziel-IP
+```
+
+Häufige Ursache für unerwarteten Ban: spekulatives Auth-Debugging (siehe Common Mistakes #19).
 
 ## Backup Rotation Pattern
 
@@ -506,3 +530,13 @@ Statische Verträge (Strom/Gas/Internet/Mobilfunk) als wiederverwendbares Packag
 16. **SSH zum NAS als Default-Edit-Weg**: Auf Yoga7 ist `/mnt/nas/docker/home-assistant/config/` via CIFS gemountet — direkt schreiben statt SSH-Roundtrip. SSH-Key ist auf NAS oft nicht eingerichtet, Password-Prompt blockt Automation.
 17. **`input_datetime` mit `initial:`-Feld konfigurieren**: Existiert nicht. Werte nach erstem Restart via `input_datetime/set_datetime` REST-Service setzen, sonst bleiben abhängige Template-Sensoren auf `unknown`.
 18. **Slugify-Annahme `ü → ue`**: Falsch — HA mappt Umlaute zu reinem ASCII (`ü → u`, `ö → o`, `ß → ss`). Vor REST-Aufrufen entity_id mit `GET /api/states` verifizieren.
+19. **Tote Auth-Varianten beim 401-Debug durchprobieren**: NIEMALS spekulativ `x-ha-access`-Header, `?api_password=`-Query oder andere Legacy-Auth-Methoden testen, wenn HA mit 401 antwortet. Diese Varianten sind seit modernen HA-Versionen entfernt — jeder Fehlversuch zählt gegen `login_attempts_threshold` und schreibt die Source-IP in `ip_bans.yaml`. Besonders gefährlich für Bot-/Gateway-IPs (z.B. moltbot 192.168.22.206), die dann von HA komplett abgeschnitten sind, bis ip_bans.yaml + HA-Restart Cleanup macht. **Richtig**: Ausschließlich `Authorization: Bearer <Long-Lived-Token>` testen. Vor weiteren Tests: `docker logs homeassistant | grep -i "login attempt"` lesen und ggf. `cat config/ip_bans.yaml` prüfen.
+20. **check_config-Output ohne Diff bewerten**: `check_config` zeigt oft vorbestehende, nicht-blockierende Fehler (z.B. `entity_category` für `command_line`-Sensoren) — die blockieren den Restart NICHT und sind keine Folge des aktuellen Edits. Nicht abbrechen ohne zu klären: war der Fehler vor meiner Änderung schon im Output? Wenn ja: weiter mit Restart, Fehler separat tracken. Wenn nein: rollback und neu prüfen.
+
+## Cross-Machine-Limitation (NAS-Instanz)
+
+NAS (`192.168.22.90`) kann andere Hosts im Setup **nicht direkt steuern**:
+- Clawbot VM (`192.168.22.206`, User `moltbotadmin`): kein SSH-Key auf NAS hinterlegt, Tailscale-CLI nicht installiert, Hostname `moltbot` lokal nicht aufgelöst
+- Yoga7, Windows-PC: kein SSH-Setup vom NAS aus
+
+**Konsequenz**: `systemctl --user restart …` oder ähnliche Befehle auf moltbot/Yoga7 muss der User selbst ausführen — oder die jeweilige Instanz-Skill-Session (`clawdbot-admin`, `yoga7-admin`, `windows-admin`) übernimmt es vor Ort. Vor Vorschlag von Cross-Machine-Aktionen: explizit kennzeichnen, dass NAS-Claude das nicht selbst durchführen kann.
