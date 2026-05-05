@@ -714,3 +714,67 @@ done
 - Habe NICHT geprüft ob die .deb der relevante Pfad für Cowork ist
 - Hätte ich `which claude-desktop` als allerersten Schritt gemacht, wäre sofort klar gewesen: User-Wrapper aus `~/.local/bin/` ist der Cowork-Pfad, .deb-Reinstall ändert daran nichts
 - Regel: Bei "X funktioniert nicht, bitte X neu installieren" — IMMER erst diagnostizieren ob X wirklich der richtige Hebel ist
+
+### 2026-05-05 — Lautstärke-Diagnose + Crash-Loop-Patterns
+
+**Lautstärke-Diagnose 5-Schritt-Reihenfolge (KRITISCH):**
+1. `sensors | grep -E "Tctl|temp1|edge"` — Höhe (>75°C = thermisch erhöht)
+2. `ps aux --sort=-%cpu | head -15` — Top-Verbraucher (>100% = ein Kern voll)
+3. **PID-Wechsel-Check**: gleicher Prozessname mit immer neuer PID alle ~25s = systemd Crash-Loop
+4. `journalctl --user -u <service> --since "10 min ago"` — Restart-Counter ist Schlüsselsignal
+5. `cat /proc/cpuinfo | grep MHz` + Governor (`performance` heizt unnötig)
+
+Session-Beispiel: Tctl 80,5°C + Load 3,18 + PID-Wechsel `openclaw-node` alle 25s → Logs zeigten **Restart-Counter 848** = 848× Crash über Stunden. Nach Service-Stop: 80,5°C → 60,4°C, Load 1,18.
+
+**`Restart=always` Anti-Pattern bei externen Dependencies (KRITISCH):**
+- `openclaw-node.service` hatte `Restart=always` + `RestartSec=10`. Bei 502 vom Gateway: jeder Restart-Versuch frisst 15s CPU bei 25s wall = 60% CPU dauerhaft, Memory peak 600+ MB pro Restart
+- Lehre: Services mit externen WebSocket/HTTP-Dependencies brauchen Schutz:
+  ```
+  Restart=on-failure
+  StartLimitInterval=600
+  StartLimitBurst=10
+  RestartSec=30
+  ```
+- Bei ~10 fehlgeschlagenen Versuchen in 10 Min stoppt systemd → User merkt Problem, statt dass die CPU 24/7 heizt
+
+**Origin vs Tunnel unterscheiden bei Cloudflare-502:**
+- 502 mit `server: cloudflare` und `cf-ray:` Header = **Cloudflare erreicht Origin nicht**, nicht Auth-Problem
+- Diagnose-Reihenfolge:
+  1. `curl https://<domain>/health` → 502 (Cloudflare-Edge antwortet)
+  2. SSH zur Origin-Maschine: `curl http://localhost:<port>/health` → 200 (Origin gesund)
+  3. → Problem liegt im Tunnel/Dashboard-Routing, nicht im Service
+- WebSocket-Test: `curl -H "Connection: Upgrade" -H "Upgrade: websocket" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" -H "Sec-WebSocket-Version: 13" http://localhost:<port>/` → erwartet `101 Switching Protocols`
+
+**Cloudflare-Tunnel-Doppel-Connector-Konflikt:**
+- **Symptom**: Sporadisches 502 obwohl Origin läuft — Cloudflare load-balanced zwischen Connectoren, einer ist aber kaputt/falsch konfiguriert
+- **Ursache**: Token-managed Tunnel auf 2+ Maschinen mit gleicher Tunnel-ID. yoga7 hatte alten config.yml-Connector ohne benötigte Routes, VM hatte vollständige Dashboard-Routes
+- **Diagnose**: `cloudflared tunnel list` (auf einer Maschine mit cert.pem, ohne sudo) zeigt Tunnel + alle aktiven `Nx<colo>` Connections
+- **Fix**: Auf Sekundär-Maschine `sudo systemctl disable --now cloudflared`. Token-managed Tunnel sollte nur EINE Maschine als Connector haben.
+- yoga7-Spezifika: 5 Tunnel-Credentials-Files in `~/.cloudflared/`, `config.yml.broken`/`.working`/`.bak` — Hinweis auf historisches Tunnel-Hopping. `cloudflared.service` mit "Invalid tunnel secret" Loop ist Zombie aus früherer Migration.
+
+**Token-Leak-Vektoren in systemd-Services (KRITISCH, ergänzt 2026-04-23 Password-Lektion):**
+| Stelle | Sichtbar via | Beispiel diese Session |
+|--------|-------------|------------------------|
+| `ExecStart=...--token <wert>` | `ps -ef`, `cat /proc/<pid>/cmdline`, `systemctl cat` | Cloudflare-Tunnel-Token (Base64-JWT, decodierbar) |
+| `Environment="X=<wert>"` | `systemctl cat`, override.conf-Datei | OPENCLAW_GATEWAY_TOKEN |
+| `EnvironmentFile=/path` | nur Datei selbst (chmod 600) | sicherer |
+
+- Audit-Check vor Release/Backup: `grep -rE 'token|password|secret|=ey[A-Za-z0-9_-]{20,}' /etc/systemd/system/ ~/.config/systemd/user/`
+- Sicherer: `LoadCredential=` oder `EnvironmentFile=` mit chmod 600 in `~/.config/<service>/env` (siehe Token-Speicher-Konvention oben)
+- Bei Leak: Token-Rotation in der Service-UI ist die einzige Lösung — Session-/Chat-Bereinigung reicht NICHT
+
+**Multi-Host-Diagnose autonom über SSH:**
+- Bei "X funktioniert nicht zuverlässig" / "Bring das ans Laufen": autonom via SSH zur Origin-Maschine ohne erneute Diana-Bestätigung
+- Pattern: `ssh moltbotadmin@192.168.22.206 'systemctl status X; curl localhost:Y; ps -ef | grep Z'`
+- Bündelt Diagnose-Schritte in EINEM SSH-Aufruf (kein 5× Connect-Overhead)
+- Nach Reparatur 5×-Stabilitäts-Probe: sporadische Tunnel-/Routing-Issues treten nicht jedesmal auf, ein einzelner 200-Probe verifiziert nicht
+  ```bash
+  for i in 1 2 3 4 5; do
+    echo "Probe $i: $(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 https://X/health)"
+  done
+  ```
+
+**Sleep blockiert in Bash-Tool:**
+- `sleep 25 && check` wird vom Runtime geblockt mit Hinweis auf Monitor/until-loop
+- Workaround: Direkt prüfen (Service läuft schon einige Sekunden), oder `run_in_background: true` für lange Wartezeiten
+- Nicht: shorter sleeps chained — auch geblockt
