@@ -44,16 +44,12 @@ Diese Skill gilt **ausschliesslich** fuer:
 ### Service-Topologie (gelockt)
 
 ```
-Internet → Cloudflare Tunnel (cloudflared Container)
+Internet → Cloudflare Tunnel (cloudflared + cloudflared-archenoah, BEIDE notwendig)
   ├── chat.forensikzentrum.com       → Open WebUI (:8080)
   ├── agents.forensikzentrum.com     → Open WebUI (:8080, Alias)
   ├── n8n.forensikzentrum.com        → n8n (:5678)
-  ├── playground.forensikzentrum.com → LiveKit Playground (:8090)
-  ├── token.forensikzentrum.com      → LiveKit Token (:8088)
-  ├── livekit-ws.forensikzentrum.com → LiveKit WS (:7880)
   ├── ssh.forensikzentrum.com        → SSH (:22)
   ├── searxng.forensikzentrum.com    → SearXNG (:8081)
-  ├── songcraft.forensikzentrum.com  → SongCrafter (:3080/:8002)
   ├── crawl.forensikzentrum.com      → Crawl4AI (:18800)
   ├── freqtrade.forensikzentrum.com  → Freqtrade (:8085)
   ├── medifox-admin.forensikzentrum.com → MediFox Admin (:8086)
@@ -69,7 +65,7 @@ Internet → Cloudflare Tunnel (cloudflared Container)
   ├── workflow-auditor.forensikzentrum.com → Auditor UI (:3456)
   ├── workflow-auditor-api.forensikzentrum.com → Auditor API (:3457)
   ├── openclaw.forensikzentrum.com   → OpenClaw (:18789)
-  └── (25 Routes, Stand 2026-03-25, 6 tote entfernt)
+  └── (21 Routes, Stand 2026-05-05, 4 LiveKit/Songcrafter-Routes entfernt)
 
 Lokal (kein Tunnel):
   magic-video-backend (:3001) → NestJS API
@@ -77,13 +73,19 @@ Lokal (kein Tunnel):
     └── magic-video-redis (:6380) → Redis 7
 ```
 
+### Cloudflared Dual-Instance (KRITISCH — beide notwendig)
+- `cloudflared` und `cloudflared-archenoah` laufen parallel und müssen BEIDE bleiben
+- Kein Optimierungspotenzial — vermutlich getrennte Tunnels für unterschiedliche Cloudflare-Accounts/Zonen
+- Diana hat das am 2026-05-05 explizit bestätigt — niemals als Redundanz hinterfragen oder als Cleanup-Kandidat vorschlagen
+
 ### Docker-Netzwerk-Isolation (nicht aendern)
 | Netzwerk | Services |
 |----------|----------|
 | `openwebui-network` | Open WebUI, Ollama, SearXNG, OpenAPI-Server |
 | `n8n_default` | n8n, verbundene Automationen |
-| `livekit-net` | LiveKit Server, Agent, Playground |
 | `default` (magic-video) | magic-video-db, magic-video-redis |
+| `speechreader-backend_speechreader-network` | Speechreader + faster-whisper (Speaches) |
+| `home-assistant_default` | HA + ha-wyoming-whisper |
 
 ### Daten-Pfade (kritisch)
 | Pfad | Inhalt |
@@ -769,3 +771,79 @@ grep -nE '<script|googleapis|gstatic|fonts\.google|cdn\.|cdnjs|jsdelivr|unpkg|ma
 - Erste Implementierung übersah die Vorgabe „fachliche Antworten und Kontaktdaten möglichst getrennt behandeln"
 - Diana fand das beim selbstgeschriebenen Prüfauftrag durch eine systematische Checkliste
 - **Konsequenz:** Bei mehrteiligen Specs (Datenschutz-Befragungen, QM-Templates etc.) immer eigene Validierungsrunde mit der Spec-Liste machen, *bevor* der User prüfen muss
+
+### 2026-05-05 — Container-Cleanup Lessons (Bind-Mount-Falle, Network-Prune-Recreate)
+
+**Bind-Mount vs Docker-Volume Check (KRITISCH vor Volume-Löschung)**
+
+Open-WebUI und Ollama nutzen BIND-MOUNTS, nicht die gleichnamigen Docker-Volumes. Die Volumes `open-webui`, `open-webui_chroma_data`, `open-webui_postgres_data`, `open-webui_redis_data`, `ollama_models` existieren als Karteileichen — alle 0 Bytes — während die echten Daten unter `/volume1/docker/open-webui/` und `/volume1/docker/ollama/data/` liegen.
+
+**Verifikations-Pattern vor jedem Volume-Prune:**
+```bash
+# 1) Welche Mounts hat der laufende Container?
+docker inspect <container> --format '{{range .Mounts}}{{.Type}}: {{.Source}} -> {{.Destination}} (Name: {{.Name}})
+{{end}}'
+
+# 2) Wieviel Daten liegen im Volume? (sudo nötig auf NAS)
+sudo du -sh /volume1/@docker/volumes/<volume-name>/_data
+```
+- Wenn Container `bind:` zeigt → das gleichnamige Volume ist sicher löschbar
+- Wenn `_data` 0 Bytes zeigt → Volume ist eine leere Karteileiche
+- **Niemals** `docker volume prune -a` ohne diese Checks bei kritischen Services (Open-WebUI, Ollama, Nextcloud, Vaultwarden)
+
+**Network-Prune triggert Compose-Container-Recreate**
+
+`docker network prune` entfernt `<project>_default`-Netze auch wenn Compose-Container darauf referenzieren. Folge: Beim nächsten Lifecycle-Trigger (oder sofort bei `unless-stopped`) recreated Docker den Container.
+
+In dieser Session: `caddy-ha-proxy` wurde durch Network-Prune des `caddy-ha-proxy_default` recreated. Container nutzt zwar `host`-Network und lief sauber weiter, aber HA war ~30s nicht erreichbar.
+
+**Pattern:** Vor Network-Prune prüfen welche Compose-Projekte aktive Netze haben:
+```bash
+docker network ls --format '{{.Name}}' | while read net; do
+  containers=$(docker network inspect "$net" --format '{{range .Containers}}{{.Name}} {{end}}')
+  [ -n "$containers" ] && echo "$net → $containers"
+done
+```
+
+**Cleanup-Bilanz dieser Session (~109 GB freigegeben)**
+- Images: 85,45 GB (60 Stück, inkl. einem `<none>` mit 26,7 GB)
+- Volumes: 17,11 GB (16 Stück, alle leer — Reste alter Stacks)
+- Build Cache: 6,97 GB
+- Networks: 10 verwaiste entfernt
+- Container: 56 → 45 (11 entfernt: Songcrafter-Stack, LiveKit-Stack, rag-landing, pflege-demo-ui, kimi-free-api)
+
+Korrigiert frühere Annahme aus 2026-04-16 ("Volume-Prune meist nur 4 GB"): Bei massivem Stack-Removal lohnt sich Volume-Prune sehr wohl, weil leere Karteileichen-Volumes mit gelöscht werden.
+
+**Stack-Identifikation vor Removal**
+
+Compose-Projekt-Mapping prüfen, bevor `docker compose down` ausgeführt wird:
+```bash
+docker inspect <container> --format 'ComposeProject: {{index .Config.Labels "com.docker.compose.project"}}
+WorkDir: {{index .Config.Labels "com.docker.compose.project.working_dir"}}
+ConfigFile: {{index .Config.Labels "com.docker.compose.project.config_files"}}'
+```
+- Manche Container gehören zu nicht-offensichtlichen Compose-Projekten (z.B. `cassandra-agent` gehörte zu LiveKit-`stack`-Compose, nicht zu eigenem Projekt)
+- Standalone-Container (kein ComposeProject-Label) brauchen `docker stop && docker rm`, kein `compose down`
+
+**Faster-Whisper vs HA-Wyoming-Whisper — beide sind notwendig**
+
+Zwei Whisper-Container, die einander NICHT ersetzen können:
+
+| Container | Implementation | Konsument | Network |
+|---|---|---|---|
+| `faster-whisper` | Speaches (`ghcr.io/speaches-ai/speaches`), `faster-whisper-large-v3` | Speechreader / Open WebUI (OpenAI-kompatible API) | `speechreader-backend_speechreader-network` |
+| `ha-wyoming-whisper` | Rhasspy Wyoming-Protokoll (`rhasspy/wyoming-whisper`) | Home Assistant Voice Assistant | `home-assistant_default` |
+
+Speaches ist genauer (large-v3 vs Wyoming-Default tiny/base), nutzt aber inkompatible API. Bei Cleanup-Audits niemals als „doppelt" markieren.
+
+**Image-Prune im Background bei großen Mengen**
+
+`docker image prune -a -f` braucht bei >50 GB durchaus 60-90 Sekunden. Bei Background-Ausführung Progress via Output-Datei tracken statt mit `sleep` zu pollen:
+```bash
+docker image prune -a -f &  # oder via Bash-Tool run_in_background:true
+# Output landet in /tmp/claude-*/tasks/<id>.output
+```
+
+**Cloudflare-Routes manuell pflegen (UI-Eingriff)**
+
+Mit Token-basiertem cloudflared (kein lokales `config.yml`) sind Routen nur über das Zero-Trust-Dashboard löschbar. Nach Container-Removal IMMER prüfen ob Route verwaist ist und Diana darauf hinweisen — Cleanup ist nicht automatisierbar.
