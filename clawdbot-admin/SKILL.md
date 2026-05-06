@@ -2061,3 +2061,70 @@ Doctor-Output mischt zwei Kategorien: "Config warnings" (echte Probleme) vs Know
 - `feedback_bundle_mcp_silent_success.md` — bundle-mcp Logging-Verhalten (mit Diana's Korrektur: lazy+retries, nicht one-shot)
 - `feedback_ha_auth_debugging.md` — HA-Auth-Counter-Trap (NAS-Memory)
 - `project_2026_5_2_plugin_migration.md` — Recovery-Pfad LanceDB
+
+---
+
+### 2026-05-06 — OpenClaw 5.5 Update, DSGVO-Hardline, Schema-First-Verifikation
+
+**🔴 Schema-Realität-First (NIEMALS-Regel)**
+
+Vor Behauptungen über OpenClaw-Routing oder Config-Pfade ZUERST in die Type-Definitions schauen:
+```bash
+~/.local/lib/node_modules/openclaw/dist/plugin-sdk/src/config/types.*.d.ts
+```
+
+OpenClaw-`AgentBindingMatch` kennt **nur** `channel`/`accountId`/`peer`/`guildId`/`teamId`/`roles` — KEIN keyword-/content-basiertes Auto-Routing. Wer eine Pflege-Hard-Wall via "wenn User schreibt 'Wundmanagement' → pflege-Agent" bauen will, baut etwas, das OpenClaw nicht kann. **Selbstkorrektur in dieser Session:** ich hatte Diana ein Pattern B (Keyword-Routing) vorgeschlagen — existiert nicht im Schema. Saubere Lösung war stattdessen Pattern D: `agents.defaults.{model,pdfModel,imageModel}.fallbacks` global auf Anthropic-only reduzieren.
+
+Gleicher Lehrwert für Token-Telemetrie: jsonl-Logs in `/tmp/openclaw/openclaw-*.log` enthalten **keine** Token-Counts. Token/Cost liegen im bundled `usage`-Plugin (in `plugins.allow` standardmäßig nicht enthalten — `Add "usage" to plugins.allow if you want that bundled plugin CLI surface`). Wer ohne `usage`-Plugin Cost-Watchdogs baut, parsed leeren Stein.
+
+**🔴 Update-Recovery-Pfad ist seit 5.5 deutlich kürzer**
+
+Bei `plugin not found: <name>`-Loop nach `npm install -g openclaw@<version>`:
+```bash
+systemctl --user reset-failed openclaw-gateway.service   # rate-limit zurücksetzen
+openclaw doctor --fix                                    # Plugin-Peer-Links autonom reparieren
+```
+
+Doctor stellt seit 5.4 (`Fixes #77155`) konfigurierte external Plugins selbst nach, und seit 5.5 (`reassert managed npm plugin openclaw peer links after shared-root npm installs`) repariert er auch zerschossene Peer-Links automatisch. Die manuelle Tarball-Extraktion aus der 2026-05-02-LanceDB-Recovery (`npm pack` + `tar -xzf` ins `~/.openclaw/npm/node_modules/...`) ist NICHT mehr Pflicht für reine Update-Hangs.
+
+Verifikation: Log muss `memory-lancedb: initialized (db: ..., model: text-embedding-3-small)` zeigen, nicht nur `registered (lazy init)`.
+
+**🟡 Pflege-Hardline via globale Fallback-Reduktion**
+
+Drei Failover-Listen müssen mitgeändert werden, sonst leakt Pflege-Inhalt über Sub-Pfade:
+- `agents.defaults.model.fallbacks` — Chat-Pfad
+- `agents.defaults.pdfModel.fallbacks` — PDF-Verarbeitung (relevant! Pflege-Berichte als PDF gehen sonst zu OpenAI)
+- `agents.defaults.imageModel.fallbacks` — Bild-Verarbeitung
+
+Reduzierte Liste (DSGVO-Hardline 2026-05-06):
+```jsonc
+"fallbacks": [
+  "anthropic/claude-haiku-4-5",
+  "anthropic/claude-opus-4-6"
+]
+```
+
+Trade-off bewusst akzeptiert: Wenn Anthropic vollständig down ist (alle drei Modelle gleichzeitig — historisch <0.1% der Zeit), ist der Bot stumm statt heimlich auf USA-Server zu fallen. Diana hat das explizit als richtig eingestuft. Backup vor Edit: `~/.openclaw/openclaw.json.pre-pflege-hardwall-2026-05-06`.
+
+Plus: dedizierter `pflege`-Agent als zweite Linie (Defense-in-Depth) mit:
+- `model: { primary: "anthropic/claude-sonnet-4-6", fallbacks: ["anthropic/claude-haiku-4-5", "anthropic/claude-opus-4-6"] }`
+- restriktive Tool-Allowlist (nur `memory_recall, memory_store, message, canvas` — KEIN `browser`, `tts`, `agents_list`)
+- aufrufbar via `/@pflege` für extra-strikte Konversationen
+
+**🟡 Doctor-`changedPaths`-Zähler überspielt**
+
+`doctor --fix` meldet z. B. `changedPaths=292` aber der echte Diff ist oft <100 Zeilen — der Counter zählt jeden geänderten JSON-Sub-Key einzeln (jedes `entries.<plugin>.enabled: false` zählt einzeln). Bei "Doctor hat X Änderungen gemacht" immer mit
+```bash
+diff <(jq -S . pre.json) <(jq -S . post.json)
+```
+verifizieren, sonst Panik wegen scheinbar massiver Config-Umschreibung. Diesmal: 292 reported → 89 echte Diff-Zeilen, alle additiv und unkritisch (Catalog-Plugin-Disablings + Versionsstempel + neuer `bundledDiscovery: "compat"` Default).
+
+**🟡 Heartbeat auf Anthropic vereinheitlicht**
+
+`agents.defaults.heartbeat.model: "openai/gpt-4.1-mini"` → `"anthropic/claude-haiku-4-5"`. Begründung: Heartbeat ist System-internal, der Provider ist egal — aber One-Provider-Setup heißt weniger Auth-Profile, weniger Cooldown-Logiken im Fallback, eine kognitive Map weniger ("welcher Provider geht wo hin"). Hot-Reload-Pfad: ja (`agents.defaults.heartbeat.*` reloaded zusammen mit anderen `agents.defaults`-Keys).
+
+**🔵 Antwort-Format-Pattern für Diana**
+
+Bei Architekturfragen funktioniert "Pattern A/B/C mit Pro/Contra/Empfehlung + meine Default-Empfehlung" besser als offen-explorative Fragen. Diana wählt mit "wie du empfiehlst" zügig die Default-Linie. Bei kreativen Aufgaben (z. B. SongCrafter, n8n-Workflow-Design) bleibt offene Exploration sinnvoll — das Pattern gilt nur bei System-Admin/Architektur-Entscheidungen.
+
+Erweiterte Anleitung-Form: "für 12-Jährige" mit Tabellen + nummerierten Schritten + konkreten Befehl-Beispielen kam ohne Pushback durch (Anleitung "OpenClaw nutzen" 2026-05-06).
