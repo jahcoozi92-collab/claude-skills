@@ -2511,3 +2511,48 @@ Beim Bau eines 9-stufigen LLM-Prompt-Refinement-Workflows (`H6WzGh1SQCsqaVEs`) m
 - Lösung 1: https://openrouter.ai/settings/credits aufladen.
 - Lösung 2: `max_tokens_*` im Stage 0 Normalizer reduzieren bis Credits reichen (Notbetrieb).
 - Pipeline darf KEIN automatisches Retry machen → würde nur Token-Verschwendung sein bei dauerhaftem 402. Cost-Guard-Pattern: harter Fail + User-Action.
+
+---
+
+### 2026-05-06 - Multi-VALUES SQL + Workflow-Deploy + Anti-Halluzinations-Hardening
+
+**mcp__supabase__execute_sql Multi-VALUES Limits:**
+- Tested OK: ein einziger INSERT mit ~50KB SQL-Body und 9 VALUES-Tuples geht durch.
+- Bei größerem Inhalt (>60 KB oder 10+ Tuples mit langem Content): in Batches à 4–5 Tuples splitten — je Tuple max ~10–15KB Content.
+- Pattern für Multi-INSERT (Postgres): `INSERT ... VALUES ($$body1$$, '{}'::jsonb), ($$body2$$, '{}'::jsonb), ... RETURNING id, metadata->>'X';`
+- **Dollar-Quoting (`$$...$$`)** statt `'...'` nutzen, um Apostrophe + Newlines im Content nicht escapen zu müssen. Bei `$$` im Content: alternativen Tag wie `$mfox$...$mfox$` wählen.
+
+**RAG-Workflow-Deploy-Pattern (bestätigt für n8n v2.19.x):**
+```bash
+# 1. Workflow ziehen
+curl -s -H "X-N8N-API-KEY: $N8N_API_KEY" \
+  "http://192.168.22.90:5678/api/v1/workflows/$WID" -o /tmp/wf.json
+# 2. Im Python-Skript editieren: nodes[].parameters.options.systemMessage anpassen
+# 3. PUT-payload bauen — settings nur auf erlaubte Felder filtern!
+allowed = {"executionOrder", "timezone", "callerPolicy"}
+settings = {k: v for k, v in (wf.get("settings") or {}).items() if k in allowed}
+put = {"name": wf["name"], "nodes": wf["nodes"], "connections": wf["connections"], "settings": settings}
+# 4. Deploy: deactivate → PUT → activate → docker restart (Webhook-Cache leeren)
+curl -X POST "$API/workflows/$WID/deactivate"
+curl -X PUT --data-binary @/tmp/wf.updated.json "$API/workflows/$WID"
+curl -X POST "$API/workflows/$WID/activate"
+docker restart n8n-n8n-1 && sleep 18  # ~18s bis API+Webhook wieder antworten
+```
+PUT muss `name` enthalten, sonst HTTP 400. Settings ohne whitelist → 400 "Bad Request: extra fields".
+
+**Detail-Listen-Verbot in System-Prompts (LLM Anti-Halluzinations-Pattern):**
+
+LLMs halluzinieren bei FAQ-/Wiki-Treffern plausible Detail-Listen, die nicht in den Quellen stehen. Konkret beobachtet bei OpenRouter/Claude Sonnet 4.6 in einem Pflegesoftware-RAG:
+- Frage: "Wie drucke ich den Dienstplan?"
+- Quelle (FAQ-Chunk): "Drucker-Symbol oder Strg+P, Zoomstufe mit +/-, Zeilenanzahl auf 2 für Qualifikationen"
+- LLM-Output: "Verfügbare Druckvorlagen: Monatsplan kompakt, Schichtplan, Planbuch (ALLE ERFUNDEN). Export-Formate: PDF mit Kennwort-Verschlüsselung, Excel, CSV (TEIL ERFUNDEN)"
+
+**Lösung — zwei-stufiges Hardening:**
+1. **Globaler System-Prompt-Block** "DETAIL-LISTEN-VERBOT": Faustregel "Steht dieser Begriff wörtlich in den Quellen? Wenn nein → weglassen." Konkrete Negativ-Beispiele.
+2. **Per-Chunk-Anti-Hinweis** im FAQ-Content selbst: "WICHTIG — keine Detail-Halluzination: Welche konkreten X verfügbar sind, im Programm-Dialog prüfen oder Support kontaktieren." Wirkt im Kontext-Window stärker als der globale Prompt.
+
+Effekt: Verifier-Score sinkt minimal (0.91 → 0.89), aber Wortzahl halbiert (294 → 165), keine erfundenen Listen mehr.
+
+**System-Prompt-Whitelist als Anti-Halluzinations-Anker:**
+
+Bei Domänen mit klarer Menüstruktur (z.B. Software mit 8 Hauptmodulen) eine **Korrekte-Pfade-Whitelist** im System-Prompt pflegen. Pro Modul die kanonischen Pfade auflisten ("Verwaltung (Tab 3) → Bewohner: Verwaltung → Bewohner"). LLM kann dann nur aus Whitelist + abgerufenen Dokumenten zitieren — Erfindung von Pfaden wird strukturell unwahrscheinlicher. Bei jeder neuen indexierten Funktion: Whitelist gleichzeitig erweitern (siehe Layoutverwaltung-Eintrag, Pflegejournal-Eintrag, Auswertungen-Eintrag).

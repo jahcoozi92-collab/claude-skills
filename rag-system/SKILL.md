@@ -2333,3 +2333,113 @@ konzeptstandard 1.35 > faq 1.30 > confluence_wiki 1.25 > update_info_10x 1.22 > 
 
 **Plan-Mode + Pre-Mortem für architektonische Aufgaben:**
 Bei mehrstufigen Pipeline-Designs zuerst Pre-Mortem-Muster anwenden (Was geht schief?), dann Plan in 6–7 Phasen strukturieren, dann phasenweise umsetzen mit Test nach jeder Phase. Funktionierte hier sehr gut — die identifizierten Failure-Szenarien (zu strikter Abstain, Score täuscht, UI-Badge übersehen, Performance, Aktualität) flossen direkt in die Implementierung ein.
+
+---
+
+### 2026-05-06 - Wissensbasis-Vollständigkeitsrunde + Anti-Halluzination
+
+**PDF-Scraping-Pipeline für Confluence-basierte Wikis:**
+
+Für `wissen.medifoxdan.de` (und andere Confluence-basierte Wissensdatenbanken) liefert die REST API alle Anhänge zuverlässig:
+```bash
+curl -sL "https://wissen.medifoxdan.de/rest/api/content/{pageId}/child/attachment?limit=200" \
+  | jq -r '.results[] | "\(.title)\t\(._links.download)"'
+```
+- **pageId 60784729** = MD Stationär 10.x Update-PDFs (auch wenn das HTML der Übersicht-Seite veraltet erscheint, liefert die API die aktuellen Anhänge)
+- **pageId 3375911** = MediFox stationär 8.x Update-PDFs
+
+Pipeline:
+1. REST API call → Liste aller PDFs mit Filename + modificationDate
+2. Filter gegen bereits indexierte Versionen (`SELECT DISTINCT metadata->>'version' FROM rag_chunks`)
+3. `curl -sL <url> -o file.pdf` + `pdftotext -layout file.pdf file.txt`
+4. **Sektions-Splitting bei Major-Releases** (TOC-Header als Anker, jede Sektion = eigener Chunk)
+5. Multi-VALUES-INSERT in `rag_chunks` mit strukturierten metadata
+6. `curl -X POST .../functions/v1/embed-rag-chunks -d '{"ids":[...]}'` für Bulk-Embedding (text-embedding-3-large, 3072d, halfvec automatisch gespiegelt via Trigger)
+
+Wichtig: `mcp__supabase__execute_sql` verträgt Multi-VALUES-Inserts bis ~50KB problemlos. Bei größerem Inhalt in Batches à 4–5 Chunks splitten.
+
+**hybrid_search_v3 Hygiene-Filter:**
+
+Zusätzlich zu Boost-Faktoren MUSS die Funktion zwei neue Filter haben, um Müll-Chunks (Sync-Artefakte, Dateipfade, Timestamps) auszuschließen:
+```sql
+WHERE ...
+  AND COALESCE(d.metadata->>'source_type','') NOT IN ('legacy_metadata_stub')
+  AND COALESCE(d.metadata->>'archived','false') <> 'true'
+```
+Hintergrund: Nextcloud-Sync und Default-Loader hinterlassen oft kurze Stub-Chunks (Dateipfade `001_X.md`, ISO-Timestamps `2026-04-06T...Z`, URLs, "md"-Marker). Diese haben Embeddings und tauchen in Treffern auf, obwohl sie keinen Inhalt haben. Lösung: per Pattern markieren, dann filtern — **nicht löschen** (reversibel).
+
+Detection-Patterns (Postgres-RegEx):
+```sql
+content ~ '^[a-zA-Z0-9_/%.-]+$'              -- pure Pfade
+OR content ~ '^\d{4}-\d{2}-\d{2}T'           -- ISO-Timestamps
+OR content LIKE 'https://%' AND LENGTH(content) <= 200
+OR content LIKE 'RAG_Masterclass/%'
+OR LENGTH(content) <= 5
+```
+
+**Boost-Tabelle vollständig (Stand 2026-05-06):**
+| source_type | Boost | Anmerkung |
+|---|---|---|
+| konzeptstandard | 1.35 | hausintern verbindlich |
+| faq | 1.30 | knappe direkte Antworten |
+| confluence_wiki | 1.25 | offizielle Wikiseiten |
+| medifox_anleitung | 1.25 | Hersteller-Anleitungen |
+| update_info_10x | 1.22 | aktuelle Update-PDFs (10.x) |
+| update_info | 1.20 | ältere Update-PDFs (8.x) — vorher 1.0! |
+| cached_wiki_page | 1.20 | gecachte Wiki-Inhalte |
+| qm_handbuch_md | 1.20 | hausinternes QM |
+| anleitung_pdf | 1.20 | sonstige PDFs |
+| wiki_article | 1.18 | community/blog |
+| structured_click_path | 1.15 | strukturierte Klickpfade |
+| expertenstandard | 1.15 | DNQP-Standards |
+| system_reference | 1.10 | UI-Layout/Navigation — vorher 1.0! |
+| legacy_metadata_stub | 0.0 | gefiltert, nicht in Suche |
+
+**DETAIL-LISTEN-VERBOT (System-Prompt v5.5) — kritisches Anti-Halluzinations-Pattern:**
+
+LLMs neigen bei FAQ-/Wiki-Treffern dazu, plausibel klingende Detail-Listen zu erfinden (Druckvorlagen-Namen, Export-Format-Listen, Versionsnummern). Bei Pflegesoftware/Buchhaltung ist das gefährlich.
+
+System-Prompt-Block:
+> **VERBOTEN — typische Halluzinations-Muster:** "Verfügbare Druckvorlagen: Monatsplan, Schichtplan, Planbuch…" wenn die Quelle nur "Druckvorlage wählen" sagt. "Export-Formate: PDF mit Kennwort-Verschlüsselung, Excel, CSV" wenn die Quelle nur "PDF-Export" erwähnt.
+> **Faustregel vor jedem Bullet-Point:** "Steht dieser Begriff (z.B. 'Planbuch') wörtlich/sinngemäß in den Quellen? Wenn nein → weglassen."
+
+Zusätzlich: **per-Chunk-Anti-Hinweis** in FAQ-Inhalten ("WICHTIG — keine Detail-Halluzination: Welche konkreten X verfügbar sind, im Programm-Dialog prüfen oder MediFox-Support kontaktieren"). Das wirkt im Kontext-Window stärker als nur die globale System-Prompt-Regel.
+
+Score-Effekt: Bei Test "Wie drucke ich den Dienstplan?" reduziert sich der Score minimal (0.91 → 0.89), aber inhaltliche Genauigkeit steigt deutlich (Wortzahl 294 → 165, keine erfundenen Vorlagen-Listen mehr).
+
+**FAQ-Spiegel-Pattern bei Begriffs-Mismatch:**
+
+Wenn ein Update-PDF einen neuen Feature beschreibt, aber der Originaltext die User-Suchbegriffe nicht prominent enthält (z.B. "Excel-Import Dienstarten" steht im PDF nur in einer Zeile), dann liefert die Vector-Suche oft den älteren Klickpfad als Top-Treffer. **Lösung:** FAQ-Mini-Chunk anlegen mit `source_type='faq'` (Boost 1.30) und expliziter Wiederholung der Suchbegriffe + Verweis auf den langen Wiki-Chunk. Schlägt jeden anderen Treffer im RRF-Ranking.
+
+**answer_traces als primärer Optimierungs-KPI:**
+
+Die Tabelle `answer_traces` (gefüllt durch Log_Answer_Trace + Supabase_Insert_Trace) ist die einzige verlässliche Quelle für datenbasierte Optimierung. Vor jeder Ausbau-/Tuning-Runde:
+```sql
+SELECT 
+  CASE WHEN created_at < '<cutoff>' THEN 'vorher' ELSE 'nachher' END AS phase,
+  COUNT(*) anfragen,
+  ROUND(AVG(grounding_score)::numeric,3) avg_score,
+  COUNT(*) FILTER (WHERE grounding_score >= 0.8) high,
+  ROUND((100.0 * COUNT(*) FILTER (WHERE grounding_score >= 0.8) / COUNT(*))::numeric,1) pct_high
+FROM answer_traces
+WHERE created_at >= '<start>'
+  AND session_id NOT LIKE 'smoketest-%' AND session_id NOT LIKE 'test-%'
+  AND session_id NOT LIKE 'opt-test-%' AND session_id NOT LIKE 'upd-test-%'
+  AND session_id NOT LIKE 'hallu-test-%' AND session_id NOT LIKE 'new-feat-%'
+GROUP BY phase ORDER BY phase;
+```
+Test-Sessions konsequent mit Präfix benennen (`smoketest-`, `opt-test-`, `upd-test-`, `hallu-test-`, `new-feat-`, `final-test-`), damit sie aus Produktiv-Statistik gefiltert werden.
+
+**Click-Path-Hygiene — leere `steps` archivieren:**
+
+`search_click_paths` filtert nur nach `trust_level >= 2`. Click-Paths mit leeren Schritten (`jsonb_array_length(steps)=0`) sind Treffer, die keine Anleitung liefern. Lösung: `UPDATE click_paths SET trust_level=1, moderation_status='archived', rejected_reason='...' WHERE jsonb_array_length(steps)=0`. Nicht löschen — andere Klickpfade können semantisch dieselbe Funktion abdecken.
+
+**Live-Wirkung dieser Optimierungsrunde (verifiziert):**
+- avg_grounding_score: **0.211 → 0.738** (+250%)
+- high-Quote (≥0.8): **21% → 64%**
+- 14 neue Update-Chunks (10.21.2, 10.26.22, 10.27.0 als 9 Sektionen, 8.16.5/6/8, 8.17.6/8, 8.18.1, 8.19.20, 8.19.30)
+- 3 neue Feature-Chunks (Ausfallmanagement, Ereignismanager, voize)
+- 5 FAQ-Chunks (Dienstplan, Schichtberichte, Vitalwerte, Layoutverwaltung, MD Orbit)
+- 18 leere Klickpfade unsichtbar gemacht
+- 234 orphan source_types klassifiziert (0 Rest)
+- 150 Müll-Chunks aus Suche gefiltert

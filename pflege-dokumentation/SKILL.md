@@ -361,3 +361,55 @@ Phase 3: Word-Dokument erstellen → Download
 | Workflow-Backups | NextCloud |
 | Skills-Repository | ~/.claude/skills/ |
 | **MD Stationär Projektordner** | `\\SERVER2012R2\Dokumente\MD Stationär\` (= `Y:\MD Stationär\`) |
+
+---
+
+### 2026-05-06 - MD Stationär 10.27 Major Release + Architektur-Erkenntnisse
+
+**Layoutverwaltung ≠ Maskeneditor:**
+- Layoutverwaltung ist **Druckvorlage-Bearbeitung im Designer (List & Label)** — NICHT Eingabemasken-Anpassung.
+- Pfad: `Administration → Layoutverwaltung` → aktives Layout (Aktiv-Haken) markieren → Rechtsklick → **Vorlage bearbeiten** → Designer öffnet sich.
+- Variablen: `Rechnung.LGrundlageAbkzg`, `Rechnung.Aufnahmeart`, `Rechnung.LGrundlageAbkzg + " " + Rechnung.Aufnahmeart` etc.
+- **Programmneustart Pflicht** nach Speichern (über X schließen, nicht nur abmelden) — sonst greift die alte Vorlage.
+- EPC-QR-Codes sind ab Version 10.23.2 in Rechnungslayouts möglich.
+
+**Bewohnerzentrierte Architektur (kritische Erkenntnis):**
+- MD Stationär ist bei Vitalwerten/Dokumentation **bewohnerzentriert**.
+- Es gibt **KEINEN dokumentierten Standardweg**, der „alle Gewichte/Vitalwerte aller Bewohner eines Wohnbereichs für einen Monat als Liste" ausgibt.
+- **Listengenerator** hat Stammdaten-Quellen (Bewohner, Mitarbeiter, Kostenträger…) — Vitalwerte-Messungen sind NICHT als eigene Quelle dokumentiert.
+- Pragmatische Wege: Pflegestatistik (Aggregate), Pflegemappe → Vitalwerte → Verlauf → Drucken (pro Bewohner einzeln), Excel-Export pro Bewohner + manuell zusammenführen, oder MediFox-Support für kundenspezifische Reportvorlage.
+- **Antwort-Verhalten im RAG:** ehrlich diese Lücke benennen, nicht spekulieren — Halluzinationen ("Vitalwerte ist eine Listengenerator-Quelle") wären gefährlich.
+
+**Pflegejournal = Übergabebuch (Synonym):**
+- Beide Begriffe meinen dasselbe Werkzeug. In aktuellen Versionen oft als "Übergabebuch" bezeichnet.
+- Pfad: `Dokumentation → Dokumentation → Pflegejournal` (alternativ: `Pflege/Betreuung → Pflegejournal`).
+- **Filter:** Wohnbereich + Schicht-Zeitraum (Frühdienst 06:00–14:00 / Spätdienst 14:00–22:00 / Nachtdienst 22:00–06:00) + Kategorie + Priorität.
+- Bündelt automatisch: Tagesereignis, Pflegebericht, Arztkontakt, Therapie, Bewegung, Sturz, Schmerzdoku, Wunddoku, FEM — aber **nur wenn Verknüpfungseinstellungen aktiviert** sind unter `Administration → Grundeinstellungen → Dokumentation → Pflegejournal`.
+- Typische Lücke beim User: erwartete Einträge fehlen → fast immer ist die Kategorie in den Verknüpfungseinstellungen deaktiviert.
+- **Übergabe-Ansicht** in der Pflegemappe (`Pflegemappe → Verlauf → Übergabe-Ansicht`) ist die bewohnerzentrierte Walk-Around-Variante; auf MD CarePad mobil verfügbar.
+
+**Neue Module ab Version 10.24+:**
+
+| Modul | Pfad | Zweck |
+|---|---|---|
+| **Ausfallmanagement** | Personaleinsatzpl. → Dienstplan → **Rechtsklick** auf Dienst | Kurzfristigen Ausfall mit Ersatzvorschlag (Ranking nach Stundenkonto: meiste Minusstunden zuerst) automatisiert wiederbesetzen. Original-Dienst auf "Krank" → Ersatz erhält automatisch Standard-Dienst. |
+| **Ereignismanager** | Einstellungen der Doku-Mappe → Ereignismanager | Vordefinierte Workflows (Sturz, Krankenhausaufenthalt) — Aktionen: Abwesenheit erfassen, Medikation anlegen, Vitalwerte dokumentieren, Bericht erstellen. Voraussetzung: ab Version 10.24. |
+| **voize KI-Spracheingabe** | App-Spracheingabe-Taste oder Befehl "Dokumentiere" | Drittanbieter-Schnittstelle. KI versteht freie Sprache, ordnet Information dem passenden Doku-Feld zu, korrigiert Grammatik/Rechtschreibung automatisch. Aktivierung über voize-Anbieter oder MediFox-Berater. |
+
+**MD Stationär 10.27 Major Release Highlights (Stand 2026-04-02):**
+- **KI-Besetzungsprofile aus Tag-Vorlage**: Besetzungsprofil anlegen → KI-Symbol oben rechts → Dialog "Besetzungsprofil intelligent erstellen" → Tag wählen → alle "Reguläre Dienste" werden übernommen mit Mindestqualifikation.
+- **Excel-Import für Dienstarten**: xlsx-Datei (Abkürzung, Bezeichnung, Reihenfolge, Diensttyp, Dienstzeit) — Aktivierung über Kundenservice. Ergänzt CSV-Import aus 10.26.22.
+- **c/o-Adressformat in Rechnungen**: Bewohnername als Empfänger, Betreuer als c/o. Aktivierung: Verwaltung / Bewohner → Kontakte → Zuordnungseigenschaften → "Adressformat Bewohner c/o Betreuer".
+- **Neuer DTA-Dienst (parallel)**: Dakota.le ist nicht terminalserverfähig — neuer Dienst ermöglicht parallelen DTA-Versand mehrerer Einrichtungen über Warteschlange.
+- **Neue QPR-Auswertungen**: "Klienten mit besonderer Pflegesituation" (Wachkoma, Beatmung, Dekubitus, Blasenkatheter, PEG, Fixierung, Kontraktur, vollständige Immobilität, Tracheostoma, MRE), "Erhebungsreport" (Stichprobenbasis mit Subgruppen A/B/C nach BI-Modulen 1/2), "Klienten mit Stürzen".
+- **Doku-CarePad MDM-Zertifikate**: selbstsignierte Zertifikate via OS-Trust oder MDM-Parameter `TrustedCertificateThumbprints` (SHA-1 Hex, komma-separiert).
+- **Neue Terminierung „Jahresplan"**: bei Maßnahmen/Medikationen — beliebig viele begrenzte Zeiträume parallel anlegbar (z.B. nur 10.03.–15.03. und 10.04.–15.04. im Tagesabschnitt "Später Nachmittag").
+- **MD Learning E-Learning-Status**: Fragezeichen oben rechts → "E-Learning-Status" — Status der smartAware-Server-Übertragung. Recht: "Allgemein → E-Learning-Status → Maske öffnen".
+
+**Antwort-Pattern für „X gibt es nicht im Standard":**
+
+Wenn ein User-Wunsch im Standard nicht abbildbar ist (Beispiel: Wohnbereichs-Vitalwertliste), MUSS die RAG-Antwort:
+1. **Ehrlich vorweg sagen, dass es keinen Standardweg gibt** ("MD Stationär ist bewohnerzentriert").
+2. Pragmatische Teilwege als Workaround anbieten (Einzeldruck, Pflegestatistik-Aggregate, Excel-Export + manuell mergen).
+3. **MediFox-Support als Endstation** für kundenspezifische Reportvorlagen empfehlen.
+4. NICHT spekulieren oder Listengenerator-Funktionen erfinden, die nicht belegt sind.

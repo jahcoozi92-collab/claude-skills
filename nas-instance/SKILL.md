@@ -942,3 +942,37 @@ Lehre: NICHT versuchen die Hooks zu umgehen. Bei legitimer Notwendigkeit dem Use
 - Admin-Account `nextcloud` hat als E-Mail `diana.goebel@proton.me` hinterlegt → NC erlaubt Login per E-Mail → wer Diana's Proton-Passwort kennt, ist Admin. Bei Audits dieser Instanz IMMER prüfen.
 - Personalstruktur-Memory (15 User in 6 Bereichs-Gruppen) liegt in `/volume1/docker/nextcloud/memory/archenoah_personalstruktur.md` (projekt-lokal), nicht in diesem Skill.
 - Reminder-Default: 2 Tage vorher, Cron 07-22 begrenzt, sendInvitations=yes (Standard, sonst PUT 400).
+
+---
+
+### 2026-05-06 - n8n-Update-Strategie + Channel-Check
+
+**n8n `:latest` vs `:stable` vs `:next`:**
+
+Vor jedem `bash ops/n8n/update_n8n.sh` IMMER prüfen, auf welche Version `:latest` zeigt — nicht blind die "neueste laut Hub" pinnen:
+```bash
+LATEST=$(curl -s "https://hub.docker.com/v2/repositories/n8nio/n8n/tags/latest" | jq -r '.images[0].digest')
+STABLE=$(curl -s "https://hub.docker.com/v2/repositories/n8nio/n8n/tags/stable" | jq -r '.images[0].digest')
+echo "latest=$LATEST stable=$STABLE  match=$([[ $LATEST == $STABLE ]] && echo yes || echo no)"
+```
+- **Identisch:** Stable ist current — `:latest` ist der richtige Tag, `pull_policy: always` macht den Rest.
+- **Verschieden:** `:next` ist auf eine Pre-Release umgehängt → NICHT pinnen, auf nächsten Stable warten.
+
+Aktuell (Stand 2026-05-06 abend): stable = `2.19.4` (digest `69bc5e62…`). Der `2.20.x`-Branch ist Pre-Release.
+
+**Update-Skript funktioniert tadellos:**
+- `bash ops/n8n/update_n8n.sh` macht: stop -t 120 → backup_n8n.sh (tar.zst, ~6 GB) → pull → up -d → status + logs.
+- Downtime ~60–90 Sekunden + 18 Sekunden bis Editor + API + Webhooks wieder antworten.
+- Nach Update zwingend: `docker exec n8n-n8n-1 n8n --version` zur Verifikation; alle aktiven Workflows zählen via API; einen RAG-Chat-Smoke-Test (`/webhook/rag-chat-api` POST mit `{chatInput, sessionId}`).
+
+**Confluence REST API für PDF-Scraping (von wissen.medifoxdan.de):**
+
+Die HTML-Übersichtsseiten zeigen oft nur veraltete Versionen. Die Confluence REST API liefert ALLE Anhänge zuverlässig:
+```bash
+curl -sL "https://wissen.medifoxdan.de/rest/api/content/{pageId}/child/attachment?limit=200" \
+  | jq -r '.results[] | "\(.title)\t\(._links.download)"'
+```
+- pageId 60784729 = MD Stationär 10.x Updates
+- pageId 3375911 = MediFox stationär 8.x Updates
+
+Pipeline für RAG-Sync neuer Updates: API call → diff gegen `SELECT DISTINCT metadata->>'version' FROM rag_chunks` → curl + pdftotext + Multi-VALUES-INSERT in Supabase + embed-rag-chunks Edge Function. ~5 PDFs in 10 Minuten.
