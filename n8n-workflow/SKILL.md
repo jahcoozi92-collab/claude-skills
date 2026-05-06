@@ -2556,3 +2556,195 @@ Effekt: Verifier-Score sinkt minimal (0.91 → 0.89), aber Wortzahl halbiert (29
 **System-Prompt-Whitelist als Anti-Halluzinations-Anker:**
 
 Bei Domänen mit klarer Menüstruktur (z.B. Software mit 8 Hauptmodulen) eine **Korrekte-Pfade-Whitelist** im System-Prompt pflegen. Pro Modul die kanonischen Pfade auflisten ("Verwaltung (Tab 3) → Bewohner: Verwaltung → Bewohner"). LLM kann dann nur aus Whitelist + abgerufenen Dokumenten zitieren — Erfindung von Pfaden wird strukturell unwahrscheinlicher. Bei jeder neuen indexierten Funktion: Whitelist gleichzeitig erweitern (siehe Layoutverwaltung-Eintrag, Pflegejournal-Eintrag, Auswertungen-Eintrag).
+
+---
+
+### 2026-05-07 — Spotify-API-Realitäten + PUT-Update-Pattern + Multi-Input-Bug
+
+Lange Session zum Bau eines Cinematic-Voice-Briefing-Pipelines (n8n Evening-Briefing → ElevenLabs TTS + ffmpeg-Merge mit Music → HA Cast). Zentrale neue Patterns + Stolperfallen:
+
+#### 🔴 KRITISCH: Spotify Client-Credentials liefert KEINE preview_urls mehr (2024+)
+
+**Symptom:** GET `api.spotify.com/v1/search` mit Bearer-Token aus Client-Credentials-Flow → alle 10 Tracks haben `preview_url: null`. Search funktioniert für Metadata (Track-Name, Artists, Album), aber **streamable Audio ist nicht möglich**.
+
+**Hintergrund:** Spotify hat 2024 die Preview-URLs für Apps mit Client-Credentials (Server-to-Server) weitgehend entfernt. Nur noch Authorization Code Flow (User-Login mit `streaming` scope) liefert Audio-URLs — aber DRM-Schutz verhindert direkten MP3-Download trotzdem.
+
+**Konsequenz für Audio-Pipelines:** Spotify allein NICHT als Audio-Source nutzbar in Workflows die MP3-Files brauchen (z.B. ffmpeg-Merge). Stattdessen:
+- **Deezer Search-API** (öffentlich, keine Auth, 30s-Previews verfügbar): `https://api.deezer.com/search?q=cinematic+epic+orchestra`
+- **iTunes Search-API** (öffentlich, 30s-Previews): `https://itunes.apple.com/search?term=...&media=music`
+- Spotify für Track-Title-Anzeige nutzen, Deezer/iTunes für preview_url. Beide parallel suchen, Track-Match nach Name.
+
+#### 🔴 KRITISCH: Spotify-Client-Credentials via httpBasicAuth, NICHT spotifyOAuth2Api
+
+**Symptom:** User klickt in n8n-UI auf "Add Credential" für einen Spotify-betitelten Node → n8n schlägt automatisch `Spotify OAuth2 API` vor → User klickt "Connect" → Browser öffnet `accounts.spotify.com` → `redirect_uri: Not matching configuration` 400-Error.
+
+**Ursache:** OAuth2 erfordert eine in der Spotify-Developer-App registrierte Redirect-URI (z.B. `http://192.168.22.90:5678/rest/oauth2-credential/callback`). Ohne diese Konfiguration bricht der OAuth-Flow ab.
+
+**Lösung — für Server-to-Server-Search (kein User-Login nötig):**
+```python
+# Credential anlegen via API:
+{
+    "name": "Spotify Client Credentials (Jarvis)",
+    "type": "httpBasicAuth",
+    "data": {"user": SPOTIFY_CLIENT_ID, "password": SPOTIFY_CLIENT_SECRET}
+}
+# Token-Holer-Node:
+- url: https://accounts.spotify.com/api/token
+  method: POST
+  authentication: genericCredentialType, httpBasicAuth
+  body: "grant_type=client_credentials" (rawContentType application/x-www-form-urlencoded)
+# Search-Node:
+- url: https://api.spotify.com/v1/search
+  KEINE credentials!
+  headers: { Authorization: =Bearer {{ $('Spotify: Token holen').first().json.access_token }} }
+```
+
+OAuth2 nur einrichten wenn User-spezifische Daten gebraucht werden (private Playlists etc.) — dann auch redirect_uri in dev.spotify.com hinterlegen.
+
+#### 🔴 KRITISCH: Spotify Search `Invalid limit` bei URL-Encoding mit %20
+
+**Symptom:** `GET https://api.spotify.com/v1/search?q=cinematic%20epic%20orchestra&type=track&limit=20&market=DE` → 400 `Invalid limit`.
+
+**Ursache:** Eine n8n-eigene Eigenheit beim parsen langer URLs — der `limit`-Parameter wird in den nächsten/vorigen Param hineingequetscht.
+
+**Lösung:** `queryParameters` Array statt URL-Encoding:
+```json
+{
+  "method": "GET",
+  "url": "https://api.spotify.com/v1/search",
+  "sendQuery": true,
+  "queryParameters": {
+    "parameters": [
+      { "name": "q", "value": "cinematic epic orchestra" },
+      { "name": "type", "value": "track" },
+      { "name": "limit", "value": "10" },
+      { "name": "market", "value": "DE" }
+    ]
+  }
+}
+```
+
+#### 🔴 KRITISCH: Workflows IMMER per PUT updaten, NICHT delete+POST
+
+**User-Präferenz:** Kontinuität — Workflow-IDs, Webhook-IDs, Cron-Triggers, Executions-History sollen stabil bleiben. Bei DELETE+POST entstehen ständig neue IDs, alte URLs brechen, History geht verloren.
+
+**Pattern für Updates:**
+```python
+# 1. Existing finden (per name-Match)
+existing = api("GET", "/workflows?limit=100")
+target_id = next(wf["id"] for wf in existing["data"] if wf["name"] == WF_NAME)
+
+# 2. Deactivate → PUT (nur erlaubte Felder!) → Activate
+api("POST", f"/workflows/{target_id}/deactivate", {})
+put_body = {
+    "name": wf["name"],
+    "nodes": wf["nodes"],
+    "connections": wf["connections"],
+    "settings": {"executionOrder": "v1"},  # Andere settings-Felder werden 400!
+}
+api("PUT", f"/workflows/{target_id}", put_body)
+api("POST", f"/workflows/{target_id}/activate", {})
+```
+
+DELETE+POST nur bei wirklich neuen Workflows.
+
+#### 🟡 WICHTIG: Webhook-Konflikt 400 bei Recreate mit gleichem path
+
+**Symptom:** Nach DELETE eines aktiven Workflows + POST eines neuen mit gleichem `path` → `POST /workflows/{id}/activate` → 400 `There is a conflict with one of the webhooks`.
+
+**Ursache:** n8n cached die alte Webhook-Registrierung im Memory auch nach DELETE. Der neue Workflow kann den path nicht beanspruchen.
+
+**Workaround-Optionen:**
+1. **Path/webhookId ändern** auf eindeutigen Namen (`jarvis-briefing` → `jarvis-briefing-v2`)
+2. `docker restart n8n-n8n-1` → Webhook-Cache wird geleert, alte Registrierungen verschwinden
+3. **Bevorzugt:** PUT-Update-Pattern (siehe oben) — kein Konflikt weil Workflow-ID stabil bleibt
+
+#### 🟡 WICHTIG: Multi-Input-Code-Nodes mit `$('NodeName').all()` unzuverlässig
+
+**Problem:** Code-Node hat 2+ Input-Connections (z.B. zwei parallele HTTP-Branches). `$('NodeName').all()` für Cross-Branch-Referenzen liefert manchmal leere Items, obwohl die Branches erfolgreich liefen — vermutlich ein Race-Condition-Issue bei parallelen Sub-Executions.
+
+**Konsequenz:** Sequentielle Verkettung statt paralleler Branches:
+```
+❌ FALSCH (parallel):
+  Init ─┬─► HTTP A ─┐
+         └─► HTTP B ─┴─► Code-Node ($('A').all() + $('B').all() → flaky!)
+
+✅ RICHTIG (sequenziell):
+  Init ─► HTTP A ─► HTTP B ─► Code-Node ($('A').first() + $json → reliable)
+```
+
+Bei langen Latenzen (z.B. LLM + RSS) kann das spürbar Zeit kosten — aber Stabilität schlägt Speed.
+
+#### 🟡 WICHTIG: Schedule-Triggers default-disabled bauen
+
+**User-Präferenz** (siehe `feedback_no_routines_until_proven.md`):
+- Beim Bauen neuer Workflows mit Schedule/Cron: den Schedule-Node **NICHT in den Workflow** packen, bis manueller End-to-End-Test erfolgreich durchgelaufen ist und User explizit "jetzt aktivieren" sagt
+- `disabled: true` auf einem Schedule-Node funktioniert NICHT zuverlässig — n8n's PUT-API filtert diese Property bei manchen typeVersions weg
+- Stattdessen: Schedule-Node komplett raus aus dem Workflow, Webhook-Trigger als manueller Trigger ist genug für Tests
+- User sagt explizit "Aktivier den Cron" → Schedule-Node hinzufügen + PUT + Workflow ist live
+
+**Begründung:** Eine Routine die nachts oder im Hintergrund feuert ohne dass die Pipeline 100% funktioniert, produziert unerwünschte TTS-Ansagen, falsche Daten, oder Audio im Wohnraum während Diana schläft/arbeitet.
+
+#### 🟡 WICHTIG: n8n Webhook akzeptiert nur EINE Methode (GET ODER POST)
+
+**Symptom:** Browser → URL `http://...:5678/webhook/...` → `404 This webhook is not registered for GET requests. Did you mean to make a POST request?`
+
+**Lösung:** Webhook-Node `httpMethod` als String setzen:
+- `"httpMethod": "POST"` → für Programm-Aufrufe (curl, n8n-extern)
+- `"httpMethod": "GET"` → für Browser-Tests (URL einfach im Browser aufrufen)
+
+Multi-Method (Array) ist nicht standardmäßig unterstützt. Wenn beide gebraucht werden: 2 Webhook-Trigger-Nodes mit gleichem path aber verschiedenen Methoden, beide → gleicher Init-Node.
+
+#### 🔵 BEVORZUGT: HA `rest_command` als Fire-and-Forget für lange n8n-Workflows
+
+**Pattern:** HA-Dashboard-Button löst n8n-Workflow aus, der 60-90s im Hintergrund läuft. HA soll nicht 90s blockieren.
+
+```yaml
+rest_command:
+  jarvis_briefing_now:
+    url: http://192.168.22.90:5678/webhook/jarvis-briefing-spotify
+    method: GET
+    timeout: 5  # ← bewusst kurz: HA gibt nach 5s "fehlgeschlagen" zurück
+                # n8n läuft im Hintergrund weiter und macht den Job
+```
+
+User-Erlebnis: Klick → HA-UI zeigt nach 5s kurz Fehler-Symbol (kosmetisch) → 60-90s später kommt das Ergebnis ans Ziel (Cast/Echo/Notification). Akzeptabel solange das tatsächliche Ergebnis ankommt.
+
+#### 🔵 BEVORZUGT: HA-shell_command für ffmpeg-Audio-Merge
+
+HA-Container hat `ffmpeg 6.1.2` standardmäßig dabei (libmp3lame, libx264 etc.). `shell_command` kann Multi-Step-Audio-Pipelines ausführen ohne separaten Container:
+```yaml
+shell_command:
+  jarvis_render_briefing: >
+    bash -lc 'set -e;
+    MUSIC_URL="${1:-/config/www/sounds/loop.mp3}";
+    VOICE=$(ls -t /config/tts/*tts.elevenlabs_text_zu_sprache.mp3 | head -1);
+    if [[ "$MUSIC_URL" == http* ]]; then
+      curl -sL "$MUSIC_URL" -o /config/www/sounds/_music_temp.mp3;
+      MUSIC_FILE=/config/www/sounds/_music_temp.mp3;
+    else
+      MUSIC_FILE="$MUSIC_URL";
+    fi;
+    DUR=$(ffprobe -v quiet -show_entries format=duration -of csv=p=0 "$VOICE");
+    ffmpeg -y -stream_loop 10 -i "$MUSIC_FILE" -i "$VOICE"
+      -filter_complex "[1:a]adelay=1500|1500,apad=pad_dur=3[voice];
+                       [0:a]volume=0.35[music];
+                       [voice][music]amix=inputs=2:duration=longest[out]"
+      -map "[out]" -ac 2 -ar 44100 -b:a 192k -t $((${DUR%.*}+5))
+      /config/www/sounds/jarvis_briefing_combined.mp3' _ "{{ music_url | default('') }}"
+```
+
+Position-Argument-Übergabe via `bash -lc 'script' _ "{{ var }}"` (das `_` ist `$0`, danach kommen `$1`, `$2`...).
+
+#### 🔵 BEVORZUGT: ElevenLabs TTS-Cache nutzen statt direkter API-Calls
+
+HA cached ElevenLabs-Voice-MP3s deterministisch in `/config/tts/{hash}_{lang}_{options}_tts.elevenlabs_text_zu_sprache.mp3`. Pattern für eigene Render-Pipelines:
+
+1. `tts.speak` mit `cache: true` und `media_player_entity_id: <stumm-geschaltete-Cast>` → Voice wird gerendert + gecached
+2. Cast vorher mit `volume_set: 0` muten damit User nichts hört
+3. Nach Render-Wartezeit (`(message.length * 80) + 8000` ms): `media_stop` auf Cast
+4. `ls -t /config/tts/*tts.elevenlabs_text_zu_sprache.mp3 | head -1` → frischeste Voice-Datei
+5. ffmpeg-merge mit Music-Loop → Combined-MP3
+6. Cast spielt Combined-MP3 mit korrektem Volume
+
+So bekommst du ElevenLabs-Voice ohne API-Key in n8n zu hinterlegen — HA macht den Auth-Teil.

@@ -666,3 +666,155 @@ NAS (`192.168.22.90`) kann andere Hosts im Setup **nicht direkt steuern**:
 - Yoga7, Windows-PC: kein SSH-Setup vom NAS aus
 
 **Konsequenz**: `systemctl --user restart …` oder ähnliche Befehle auf moltbot/Yoga7 muss der User selbst ausführen — oder die jeweilige Instanz-Skill-Session (`clawdbot-admin`, `yoga7-admin`, `windows-admin`) übernimmt es vor Ort. Vor Vorschlag von Cross-Machine-Aktionen: explizit kennzeichnen, dass NAS-Claude das nicht selbst durchführen kann.
+
+---
+
+## Audio-Pipelines (TTS + Music-Merge) — 2026-05-07
+
+### HA-Container hat ffmpeg 6.1.2 standardmäßig dabei
+
+`homeassistant/core` Image enthält ffmpeg mit allen Codecs (libmp3lame, libx264, libwebp, libsoxr etc.). Audio-Pipelines (Voice+Music-Merge, Loudness-Normalization) gehen direkt im HA-Container via `shell_command`. Kein separater Worker-Container nötig.
+
+```yaml
+shell_command:
+  jarvis_test_ffmpeg: 'bash -lc "ffmpeg -version > /config/www/sounds/_ffmpeg_check.txt 2>&1"'
+```
+
+### Cast-Receiver kann nur EIN Audio-Stream gleichzeitig
+
+**Hard-Limit von Google Cast** (Philips OLED, Chromecast, Nest Hub):
+- `play_media(loop.mp3)` startet Audio-Stream A
+- `tts.speak(...)` ersetzt Stream A komplett durch Stream B
+- → Music-Underlay UNTER TTS via Cast-Service-Calls **nicht möglich**
+
+**Workaround:** Pre-rendered combined MP3 mit ffmpeg-amix (Voice + Music in EINEM Stream):
+```bash
+ffmpeg -y -i voice.mp3 -i music.mp3 \
+  -filter_complex "[0:a]adelay=1500|1500,apad=pad_dur=3[voice];
+                   [1:a]volume=0.35[music];
+                   [voice][music]amix=inputs=2:duration=longest[out]" \
+  -map "[out]" -ac 2 -ar 44100 -b:a 192k combined.mp3
+```
+
+### Cast-Receiver setzt Volume bei jedem `play_media` auf 0.65
+
+**pychromecast-Default**: jeder `media_player.play_media`-Call löst intern `Receiver: setting volume to 0.65` aus, **unabhängig vom vorherigen Cast-Volume**. Logged als `[pychromecast.controllers] Receiver:setting volume to 0.65`.
+
+**Konsequenz:** TV-Hardware-Lautstärke 0.10 → Cast springt auf 0.65 → effektive Lautstärke springt von leise auf laut. Bei TTS-Ansagen sehr störend.
+
+**Workaround in Skripten:**
+```yaml
+- action: media_player.play_media
+  target: { entity_id: media_player.tv_cast }
+  data: { media_content_id: "...", media_content_type: "music" }
+- delay: "00:00:00.4"   # Cast-Override hat Zeit zu greifen
+- action: media_player.volume_set
+  target: { entity_id: media_player.tv_cast }
+  data: { volume_level: 0.30 }
+```
+
+### ElevenLabs TTS-Cache nutzen für externe Audio-Pipelines
+
+HA cached ElevenLabs-Voice-MP3s deterministisch in `/config/tts/{hash}_{lang}_{options}_tts.elevenlabs_text_zu_sprache.mp3`. Pattern um die Voice für ffmpeg/externes Audio-Processing zu bekommen:
+
+```yaml
+script:
+  jarvis_render_voice:
+    sequence:
+      # 1. Cast stumm schalten (User hört Render-Voice nicht)
+      - action: media_player.volume_set
+        target: { entity_id: media_player.tv_cast }
+        data: { volume_level: 0 }
+      # 2. tts.speak mit cache=true → MP3 in /config/tts/
+      - action: tts.speak
+        target: { entity_id: tts.elevenlabs_text_zu_sprache }
+        data:
+          media_player_entity_id: media_player.tv_cast
+          cache: true
+          message: "{{ message }}"
+          options: { voice: "..." }
+      # 3. Render-Wait (länger als Voice-Wiedergabe wegen Cast-Stumm-Modus)
+      - delay:
+          milliseconds: "{{ (message | length * 80) + 8000 }}"
+      # 4. Cast stoppen
+      - action: media_player.media_stop
+        target: { entity_id: media_player.tv_cast }
+      # 5. shell_command findet `ls -t /config/tts/*elevenlabs*.mp3 | head -1`
+      - action: shell_command.jarvis_render_combined
+```
+
+So bekommt man ElevenLabs-Voice ohne API-Key in n8n hinterlegen zu müssen — HA macht den Auth-Teil.
+
+### Async Service-Call via `script.turn_on` + `variables`
+
+**Problem:** `/api/services/script/{script_name}` ist **synchron** — wartet auf Script-Ende. Bei langen Skripten (Cinematic-Rendering 60-90s) blockiert der HTTP-Caller die ganze Zeit.
+
+**Lösung — async via `script.turn_on`:**
+```yaml
+# Async (returns sofort, Script läuft Hintergrund):
+POST /api/services/script/turn_on
+{ "entity_id": "script.jarvis_briefing_speak", "variables": { "message": "..." } }
+```
+
+`script.turn_on` startet das Script im Hintergrund und returned sofort 200. `variables` werden als Script-`fields` durchgereicht.
+
+### `home_assistant`-Conversation versteht oft generelle Fragen nicht
+
+HA's Default-Conversation-Engine `conversation.home_assistant` ist Intent-basiert — nur Smart-Home-Befehle aus gelisteten Templates. Generelle Fragen ("wie spät ist es", "welche Lichter sind an") antwortet sie oft mit "Tut mir leid" oder leerer `speech.plain.speech`.
+
+**Fallback-Pattern in Workflows:**
+```js
+const respType = data.response.response_type || '';
+const speech = data.response.speech.plain.speech;
+if (respType === 'error' || /tut mir leid|sorry|verstehe nicht/i.test(speech)) {
+  // → Fallback an Ollama / OpenRouter / GPT
+}
+```
+
+Plus: HA's Conversation-Engine sieht nur **expose'd Entities** (siehe `homeassistant.expose_entity` WebSocket-Pattern). Wenn Lichtschalter nicht für `conversation` exposed: HA's Default-Engine kann nicht steuern.
+
+### Spotify-Single-Stream-Limit (auf Echos + Cast)
+
+Spotify-Account streamt **nur ein Gerät gleichzeitig** (technische Spotify-Restriction). Multi-Room-Musik mit "Spotify auf Echo + parallel auf Cast" nicht möglich.
+
+**Konsequenzen:**
+- Echo Show: Spotify-Underlay + Echo-natives TTS-Ducking → cinematisch ✓
+- TV-Cast: **nicht** Spotify-Stream + tts.speak parallel → braucht ffmpeg-pre-merge
+- Mehrere Echos gleichzeitig: nur via "Multi-Room Audio" in Alexa-App (HA orchestriert das nicht)
+
+### Voice-Pipeline `voice_assistant_run_start`-Event
+
+HA feuert ein Event wenn Wake-Word (`Hey Jarvis`, `Hey Nabu`) erkannt wurde. Nutzbar für Cinematic-Underlay-Automations:
+```yaml
+automation:
+  - id: jarvis_wake_underlay
+    triggers:
+      - trigger: event
+        event_type: voice_assistant_run_start
+    actions:
+      - action: media_player.play_media
+        target: { entity_id: media_player.tv_cast }
+        data:
+          media_content_id: "http://192.168.22.90:8123/local/sounds/jarvis_activate.mp3"
+          media_content_type: "music"
+```
+
+### Spotify-Cold-Start auf Echo Show ist 3-7 Sekunden
+
+`media_player.select_source` + `media_player.play_media` für Spotify auf Echo Show braucht **3-7s** bis Audio tatsächlich kommt. Build-up-delays von 1-2s sind zu kurz, der TTS-Trigger danach killt den Stream bevor User Music hört.
+
+**Empfohlene Sequenz für cinematic Build-up:**
+```yaml
+- action: media_player.select_source
+  target: { entity_id: media_player.spotify_account }
+  data: { source: "Dianas Echo Show 8 2nd Gen" }
+- delay: "00:00:01"
+- action: media_player.volume_set
+  target: { entity_id: media_player.dianas_echo_show_8_2nd_gen }
+  data: { volume_level: 0.25 }
+- action: media_player.play_media
+  target: { entity_id: media_player.spotify_account }
+  data: { media_content_id: "spotify:playlist:...", media_content_type: "music" }
+- delay: "00:00:06"   # ← Spotify hat jetzt Zeit anzulaufen
+# Erst jetzt TTS-Ansage triggern
+```
