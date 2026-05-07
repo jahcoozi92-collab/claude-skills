@@ -2803,3 +2803,78 @@ sqlite3 data/database.sqlite "SELECT id, name, active FROM workflow_entity WHERE
 sqlite3 data/database.sqlite "SELECT workflowId, count(*) FROM workflow_history WHERE nodes LIKE '%<credId>%' GROUP BY workflowId;"
 ```
 Wenn der Credential in einem aktiven Workflow referenziert wird → erst Workflow auf neue Credential umstellen, DANN löschen. Sonst bricht der Workflow.
+
+---
+
+### 2026-05-07 — n8n 2.19.5 API-Quirks (Public REST)
+
+**`GET /api/v1/workflows/{id}` liefert 404 (seit 2.19.5):**
+
+```bash
+# FALSCH — gibt seit 2.19.5 "Cannot GET /api/v1/workflows/{id}":
+curl "$BASE/api/v1/workflows/SJ47UX9mv8wh1Wwy" -H "X-N8N-API-KEY: ..."
+
+# RICHTIG — Liste filtern:
+curl "$BASE/api/v1/workflows?limit=200" -H "X-N8N-API-KEY: ..." \
+  | python3 -c "import json,sys; print(json.dumps([w for w in json.load(sys.stdin)['data'] if w['id']=='SJ47UX9mv8wh1Wwy'][0]))"
+```
+
+PUT/POST/DELETE auf einzelnen Workflow funktionieren unverändert; nur GET-by-ID ist betroffen.
+
+**Credentials lassen sich NICHT updaten — nur neu anlegen:**
+
+n8n Public API hat KEINE `PATCH /credentials/{id}`. `GET /credentials/{id}` liefert sogar 403 (Read auf Klartext-Werte ist gesperrt). Update-Workflow:
+
+```bash
+# 1) Neue Credential anlegen
+curl -X POST "$BASE/credentials" -d '{
+  "name": "OpenAi v2",
+  "type": "openAiApi",
+  "data": {"apiKey": "sk-...", "header": false}
+}'
+# → returns {"id": "<NEW_ID>"}
+
+# 2) Workflow holen, alle Nodes umstellen
+python3 -c "
+for n in wf['nodes']:
+    if n.get('credentials', {}).get('openAiApi', {}).get('id') == OLD_ID:
+        n['credentials']['openAiApi']['id'] = NEW_ID
+        n['credentials']['openAiApi']['name'] = NEW_NAME
+"
+
+# 3) deactivate → PUT → activate
+
+# 4) Alte Credential erst NACH erfolgreichem Live-Test löschen (Rollback-Option)
+```
+
+**Schema-Quirk `openAiApi`:** `header=false` setzen, `headerName`/`headerValue` dürfen NICHT als Property existieren — auch nicht als leerer String, sonst „request.body.data is of prohibited type" / „requires property headerName":
+
+```python
+# RICHTIG
+{"apiKey": "sk-...", "header": False}
+
+# FALSCH (auch leerer String triggert allOf-Validation)
+{"apiKey": "sk-...", "header": False, "headerName": "", "headerValue": ""}
+```
+
+**Webhook: `path` ≠ `webhookId`:**
+
+In Workflow-JSON haben Webhook-Nodes:
+- `webhookId`: interner Identifier (z.B. `rag-chat-api-unified`)
+- `parameters.path`: HTTP-Pfad (z.B. `rag-chat-api`)
+
+Die externe URL ist `/webhook/<path>`, NICHT `/webhook/<webhookId>`. Bei der Suche nach der korrekten URL immer `parameters.path` aus dem Node lesen, nie `webhookId`.
+
+**`$execution.startedAt` ist in Code-Nodes nicht zugreifbar:**
+
+Workaround für Latency-Tracking: einen Set-Node am Anfang mit Assignment
+
+```json
+{"name": "_started_at", "type": "number", "value": "={{ Date.now() }}"}
+```
+
+Code-Node am Ende liest `$('Format Chat Input').first().json._started_at` und berechnet `Date.now() - _started_at`.
+
+**Webhook-Cache nach Update:**
+
+Nach n8n-Update (z.B. 2.19.4 → 2.19.5) sind aktive Webhooks oft nicht registriert (404 trotz `active=true`). Lösung: deactivate/activate-Zyklus über die API ODER `docker restart n8n-n8n-1`. Erstes ist schneller und ohne Downtime für andere Workflows.
