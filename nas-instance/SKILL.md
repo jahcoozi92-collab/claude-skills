@@ -976,3 +976,45 @@ curl -sL "https://wissen.medifoxdan.de/rest/api/content/{pageId}/child/attachmen
 - pageId 3375911 = MediFox stationär 8.x Updates
 
 Pipeline für RAG-Sync neuer Updates: API call → diff gegen `SELECT DISTINCT metadata->>'version' FROM rag_chunks` → curl + pdftotext + Multi-VALUES-INSERT in Supabase + embed-rag-chunks Edge Function. ~5 PDFs in 10 Minuten.
+
+### 2026-05-07 — n8n-Container-Pfade & Diagnose-Workflow
+
+**n8n-spezifische Pfade auf der NAS (kritisch für direkte DB-Eingriffe):**
+
+- Container-Name: `n8n-n8n-1` (image: `docker.n8n.io/n8nio/n8n:latest`)
+- SQLite-DB: `/volume1/docker/n8n/data/database.sqlite` (~2.8 GB)
+- Datenordner (im Container `/home/node/.n8n`): `/volume1/docker/n8n/data/`
+- Encryption-Key-Quellen — beide müssen matchen:
+  - `/volume1/docker/n8n/.env` → `N8N_ENCRYPTION_KEY=…`
+  - `/volume1/docker/n8n/data/config` → JSON `{"encryptionKey":"…"}`
+- `sqlite3` ist am Host verfügbar (`/usr/bin/sqlite3`), aber **NICHT** im n8n-Container (Hardened Alpine ohne apk). Daher DB-Queries IMMER vom Host aus, nicht via `docker exec`.
+
+**Standard-Diagnose-Workflow für n8n-Probleme:**
+
+```bash
+# 1. Container-Status
+docker ps --filter "name=^n8n-n8n-1$" --format "{{.Status}}"
+
+# 2. Logs nach Fehler-Pattern filtern (mit Kontext)
+docker logs n8n-n8n-1 --tail 1000 2>&1 | grep -B2 -A8 "<error-pattern>"
+
+# 3. Healthcheck (nicht /api/v1, sondern /healthz)
+curl -s -o /dev/null -w "%{http_code}\n" http://192.168.22.90:5678/healthz
+
+# 4. Aktive Executions zählen
+sqlite3 /volume1/docker/n8n/data/database.sqlite \
+  "SELECT count(*) FROM execution_entity WHERE status='running';"
+
+# 5. Container-Restart (laufende Executions werden abgebrochen)
+docker restart n8n-n8n-1 && sleep 18  # ~12-15s bis "Editor is now accessible"
+```
+
+**Encryption-Key-Verifikation (vor Decrypt-Debugging immer zuerst):**
+
+```bash
+ENV_KEY=$(grep "^N8N_ENCRYPTION_KEY=" /volume1/docker/n8n/.env | cut -d= -f2-)
+CONFIG_KEY=$(docker exec n8n-n8n-1 cat /home/node/.n8n/config | jq -r '.encryptionKey')
+[ "$ENV_KEY" = "$CONFIG_KEY" ] && echo "MATCH" || echo "MISMATCH (echte Wurzelursache)"
+```
+
+Wenn MATCH → einzelne korrupte Credentials suchen (siehe `n8n-workflow` Skill, Decrypt-Test-Pattern). Wenn MISMATCH → Restore-Problem aus Backup.
