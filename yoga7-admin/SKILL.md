@@ -778,3 +778,57 @@ Session-Beispiel: Tctl 80,5°C + Load 3,18 + PID-Wechsel `openclaw-node` alle 25
 - `sleep 25 && check` wird vom Runtime geblockt mit Hinweis auf Monitor/until-loop
 - Workaround: Direkt prüfen (Service läuft schon einige Sekunden), oder `run_in_background: true` für lange Wartezeiten
 - Nicht: shorter sleeps chained — auch geblockt
+
+### 2026-05-07 — MCP filesystem-nas Diagnose + sudo-/Script-Pattern
+
+**`!`-Prefix hat KEIN TTY (KRITISCH, ergänzt 2026-04-23):**
+- Selbst kurze sudo-Befehle scheitern im Claude-Code-Prompt mit `!`-Prefix:
+  `sudo: Zum Lesen des Passworts ist ein Terminal erforderlich`
+- Ursache: kein TTY → kein Passwort-Prompt möglich (unabhängig von Befehlslänge)
+- **Regel:** Bei `sudo` + Passwort-Pflicht IMMER "in einem separaten Terminal-Fenster auf Yoga7 ausführen" anweisen, NICHT per `!`-Prefix
+- Nur passwortlose / non-interaktive Befehle (`ls`, `cat`, `git`) eignen sich für `!`
+
+**Markdown-Codeblock-Wrap zerstückelt Befehle beim Copy-Paste:**
+- Lange Single-Line-Befehle in ```bash-Blöcken werden visuell umbrochen → Terminal-Paste fügt Newlines mit ein → Quoting bricht
+- Beobachtet bei `sudo bash -c 'grep ... || echo "..." >> /etc/auto.nas'`: aufgeteilt in 3 Zeilen, "Too few arguments", korrupte Datei
+- **Robustes Pattern:**
+  1. Script via Write-Tool in `/tmp/<name>.sh` ablegen (kein Quoting-Drama)
+  2. User ruft kurz auf: `sudo bash /tmp/<name>.sh`
+  3. Script macht: Backup → Cleanup-falls-nötig → Aktion → Verify mit Output
+- Nach fehlgeschlagenem Versuch: IMMER zuerst `cat <zieldatei>` prüfen, ob Müll zurückblieb
+
+**MCP-Server-Diagnose-Workflow (Yoga7):**
+- Logs: `~/.config/Claude/logs/mcp-server-<name>.log` — enthält Args, ENOENT, Crash-Reason
+- Config inspizieren OHNE Secrets-Leak:
+  `jq '.mcpServers["<name>"]' ~/.config/Claude/claude_desktop_config.json`
+  (zeigt nur einen Server-Block, andere API-Keys bleiben unsichtbar)
+- Config-Update via jq + Move:
+  ```bash
+  jq '.mcpServers["X"].args = [...]' ~/.config/Claude/claude_desktop_config.json > /tmp/cfg.new \
+    && jq -e . /tmp/cfg.new >/dev/null && mv /tmp/cfg.new ~/.config/Claude/claude_desktop_config.json
+  ```
+- Backup-Reflex: `cp ~/.config/Claude/claude_desktop_config.json{,.bak-$(date +%Y%m%d-%H%M%S)}` vor Änderung
+- Aktivierung: User muss Claude Desktop neu starten (Config wird beim Start gelesen)
+
+**systemd `.mount` Units bei Bindestrich-Pfaden — Naming-Bug:**
+- Pfad `/home/yoga7/nas-mounts/docker` → Unit-Name müsste `home-yoga7-nas\x2dmounts-docker.mount` heißen (Bindestrich = Pfad-Trenner, daher escapen)
+- Falsch escapet → systemd refused: `Where= setting doesn't match unit name. Refusing.`
+- Auf Yoga7 betroffen: `home-yoga7-nas-mounts-{docker,personal_folder,Volume,web}.mount` — alle enabled, alle inactive durch diesen Bug
+- **Workaround:** autofs (`/etc/auto.nas`) nutzen — unempfindlich gegen Pfad-Naming, mit `--ghost` erscheinen Mountpoints als leere Dirs, Mount on-demand bei Zugriff (idle-timeout 300s)
+
+**NAS-Mount-Wahrheit auf Yoga7 (persistent über Reboot):**
+| Share | Pfad | Mechanismus |
+|-------|------|-------------|
+| `docker` | `/mnt/nas/docker` | systemd `nas-docker-mount.service` (CIFS) |
+| `Volume` | `/mnt/autofs/nas` | autofs `/etc/auto.nas` (CIFS, --ghost) |
+| `personal_folder` | `/mnt/autofs/nas-personal` | autofs (CIFS, --ghost) |
+| `web` | NICHT verfügbar | Auf NAS nicht als SMB-Share freigegeben (nur sshfs `/volume1/web`) |
+- `/home/yoga7/nas-mounts/*` Pfade NICHT verlässlich (defekte systemd-Units)
+- Symlink: `/mnt/nas-personal` → `/mnt/autofs/nas-personal`
+- Credentials: `/etc/samba/nas-credentials` (root-only)
+
+**autofs erweitern (Pattern):**
+- Eintrag in `/etc/auto.nas` anhängen, dann `systemctl reload autofs`
+- Format: `<lokaler_name> -fstype=cifs,credentials=/etc/samba/nas-credentials,uid=1000,gid=1000,iocharset=utf8,vers=3.0 ://<server>/<share>`
+- Verify: `ls /mnt/autofs/` (Ghost-Verzeichnisse) → `stat /mnt/autofs/<name>` (triggert Mount) → `mount -t cifs` (zeigt aktive Mounts)
+- CIFS-Mount-Fehlschlag: `dmesg | grep -i cifs` zeigt return code (rc=-2 → Share existiert nicht; rc=-13 → Auth-Fehler)
