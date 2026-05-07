@@ -2443,3 +2443,86 @@ Test-Sessions konsequent mit Präfix benennen (`smoketest-`, `opt-test-`, `upd-t
 - 18 leere Klickpfade unsichtbar gemacht
 - 234 orphan source_types klassifiziert (0 Rest)
 - 150 Müll-Chunks aus Suche gefiltert
+
+---
+
+### 2026-05-07 — Korrektur-Patterns + Anti-Leakage + Logging-Pipeline
+
+**Korrektur eines indexierten rag_chunks:**
+
+```sql
+UPDATE rag_chunks
+SET content = $$# … korrigierter Inhalt …$$,
+    metadata = jsonb_set(
+      jsonb_set(metadata, '{corrected_at}', '"2026-05-07T00:00:00Z"'),
+      '{correction_note}', '"…"'
+    ),
+    embedding = NULL,
+    embedding_half = NULL
+WHERE id = 3903;
+```
+
+Danach Re-Embedding via Edge Function:
+
+```bash
+curl -X POST "$SUPABASE_URL/functions/v1/embed-rag-chunks" \
+  -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+  -d '{"chunk_ids":[3903,3907]}'
+```
+
+Gibt `{"successful":N,"failed":0}` zurück. Edge Function ist idempotent — Wiederholung schadet nicht.
+
+**Negativ-Befund explizit indexieren (KRITISCH):**
+
+Nicht nur falsche Aussage entfernen — das *Nicht-Vorhandensein* explizit in den Korrektur-Chunk schreiben. Sonst rekonstruiert das LLM die alte Aussage aus benachbarten Chunks oder Allgemeinwissen.
+
+**Falsch:**
+> ~~„Controlling → Bewohnerkennzahlen zeigt Aggregate"~~ (gelöscht)
+
+**Richtig:**
+> „**Klarstellung:** Frühere Annahme „Controlling → Bewohnerkennzahlen zeigt Gewichts-Aggregate" ist FALSCH (Live-Verifikation 2026-05-07). Tatsächlich angezeigt: Pflegegradverteilung, Pflegegradmix, Altersstruktur, Abwesenheit. KEINE Vitalwert-Auswertungen auf dieser Ebene."
+
+Damit wird der falsche Pfad explizit als nicht-existent markiert und das LLM bekommt den Negativ-Befund als Fact.
+
+**Tool-Use-Leakage im System-Prompt verbieten:**
+
+Beobachtetes Anti-Pattern: LLM redet im Antworttext über internen Retrieval-Status:
+- *„Der dritte Chunk (chunk_index 1) wurde noch nicht abgerufen…"*
+- *„Ich habe bereits ausreichend Inhalte über die bisherigen Abfragen…"*
+
+Im System-Prompt VERBOTEN-Block ergänzen:
+
+> **NIEMALS Meta-Sprache zur internen Recherche.** Verbotene Begriffe im Antworttext: `chunk`, `chunk_index`, `wurde abgerufen`, `wurde geladen`, `bisher nicht abgerufen`, `Tool-Call`, `Recherche-Ergebnis`, `Suchergebnis`, `weitere Abfrage`. Auch keine Sätze wie „ich habe bereits ausreichend Inhalte" oder „über die bisherigen Abfragen". Der Nutzer darf nicht wissen, ob du intern gesucht hast — antworte so, als wäre das Wissen direkt verfügbar. Einzig erlaubte Selbstreferenz: die etablierte Abstain-Floskel „Dazu habe ich keine Information in der Wissensbasis".
+
+**Logging-Pipeline vollständig (answer_traces):**
+
+| Feld | Quelle |
+|---|---|
+| `latency_ms` | `Date.now() - $('Format Chat Input').first().json._started_at` (Set-Node davor schreibt `_started_at: ={{ Date.now() }}`) |
+| `tokens_used` | Approximation `Math.round((query.length + answer.length) / 4)` — LangChain-Agent gibt keine echte Token-Zahl zurück |
+| `intent_type` | Regex-Heuristik mit korrekter **Reihenfolge**: troubleshooting → factual → navigation → meta → factual (default) |
+
+**Intent-Heuristik (Order matters):**
+
+```javascript
+function classifyIntent(q) {
+  const s = q.toLowerCase();
+  // troubleshooting first (Fehlerwörter)
+  if (/(fehler|problem|geht nicht|funktioniert nicht|störung|crash|stürzt|hängt|warum erscheint)/i.test(s)) return 'troubleshooting';
+  // factual VOR navigation: "Wie funktioniert..." ist factual, NICHT navigation
+  if (/^was (ist|sind|bedeutet)|^erkläre|^wie funktioniert|^wie geht|^wie läuft|unterschied zwischen/i.test(s)) return 'factual';
+  // dann navigation (Wo/Klickpfad/Wie erstelle/Wie drucke)
+  if (/^wo finde|^wie navigiere|klickpfad|menüpfad|^wie erstelle|^wie drucke|^wie konfiguriere/i.test(s)) return 'navigation';
+  if (/(was kannst du|was weißt du|kannst du|verfügbare themen)/i.test(s)) return 'meta';
+  return 'factual';
+}
+```
+
+**Live-Verifikation > LLM-Recherche:**
+
+Bei UI-Behauptungen IMMER Nutzer-Screenshot/Live-Verifikation einholen, BEVOR man indexiert. Beispiel: Aussage „Controlling → Bewohnerkennzahlen zeigt Gewichtsverlust-Aggregate" stand mehrfach in confluence_wiki + cached_wiki_page-Treffern, war aber durch Live-Screenshot widerlegt.
+
+Pattern für Anti-Halluzinations-Schutz:
+1. Vor Indexierung neuer UI-Pfade: kurzer Live-Check oder Hinweis „nicht durch Live-Verifikation belegt"
+2. Bei Korrektur: alte Quelle nicht löschen, sondern überschreiben mit explizitem Negativ-Befund
+3. Wiederkehrende Fehler im answer_traces → Audit + Korrektur in Korpus, nicht nur im System-Prompt
