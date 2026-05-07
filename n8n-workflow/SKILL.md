@@ -2748,3 +2748,58 @@ HA cached ElevenLabs-Voice-MP3s deterministisch in `/config/tts/{hash}_{lang}_{o
 6. Cast spielt Combined-MP3 mit korrektem Volume
 
 So bekommst du ElevenLabs-Voice ohne API-Key in n8n zu hinterlegen — HA macht den Auth-Teil.
+
+---
+
+### 2026-05-07 — Credential-Debugging-Patterns
+
+**Diagnose-Reihenfolge bei Credential-Fehlern (KRITISCH — vor Hypothesen):**
+
+Bei jedem Credential- oder Connection-Fehler ZUERST die Logs untersuchen, BEVOR irgendeine Hypothese aufgestellt wird:
+```bash
+docker logs n8n-n8n-1 --tail 1000 2>&1 | grep -B2 -A8 "<errortext>"
+```
+
+**Folgefehler vs. Wurzelursache:** n8n kaskadiert Fehler. Der sichtbare UI-Fehler ist oft NICHT die Ursache. Beispiel: `config.headers.setContentType is not a function` ist ein **Folgefehler** von `Credentials could not be decrypted` (`bad decrypt`) — der echte Auslöser steht im Stack-Trace darüber. Wer ohne Logs hypothesiert, landet bei "Axios update nötig" statt bei "ein einzelner korrupter Credential blockiert die credential-list-route".
+
+**OAuth-Callback-URL-Pattern (gilt für ALLE OAuth2-Credentials):**
+
+n8n baut die Callback-URL aus `N8N_PROTOCOL` + `N8N_HOST` zwingend in dieser Form:
+```
+https://<N8N_HOST>/rest/oauth2-credential/callback
+```
+- KEIN Trailing-Slash
+- Genau dieser Pfad muss als „Authorized Redirect URI" im OAuth-Provider-Dashboard hinterlegt sein (Spotify Developer Dashboard, Google Cloud Console, etc.)
+- Bei Fehler `redirect_uri: Not matching configuration` ist das ohne Ausnahme die Ursache
+- Für Diana's NAS: `https://n8n.forensikzentrum.com/rest/oauth2-credential/callback`
+
+**`setContentType is not a function` ist Test-Button-only-Bug (n8n 2.19.x):**
+
+- Betrifft NUR den UI-„Test"-Button bei OpenAI-Credentials, NICHT echte Workflow-Executions
+- Verifizierbar: `sqlite3 data/database.sqlite "SELECT status FROM execution_entity WHERE workflowId='<id>' ORDER BY startedAt DESC LIMIT 5;"` — laufende OpenAI-Workflows haben weiterhin `success`
+- Ursache im Code: `OpenAiApi.credentials.js` setzt unconditional `requestOptions.headers['OpenAI-Organization'] = credentials.organizationId` — auch bei leerem String. Axios 1.16's `dispatchRequest` ruft dann `headers.setContentType(...)` auf einem plain object auf → Crash
+- **Workaround:** Test-Button-Rot ignorieren, „Save" trotzdem klicken, in echtem Workflow funktional testen
+- **Was NICHT hilft:** Container-Restart, neue API-Keys, Custom-Header-Toggle umstellen
+
+**Credential-Decrypt-Test (read-only Standalone-Script):**
+
+Bei `bad decrypt` / `different encryptionKey was used`-Errors: Statt globalen Key-Mismatch zu vermuten, jede Credential einzeln testen. Format: CryptoJS AES = OpenSSL `Salted__`-Header (8 Byte Salt) + AES-256-CBC, Key-Derivation EVP_BytesToKey mit MD5 (Passphrase = `N8N_ENCRYPTION_KEY`).
+
+```python
+# /tmp/check_credentials.py — testet jeden Credential einzeln
+import sqlite3, base64, hashlib
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+def evp_bytes_to_key(passphrase, salt, key_len=32, iv_len=16):
+    dt, out = b"", b""
+    while len(out) < key_len + iv_len:
+        dt = hashlib.md5(dt + passphrase + salt).digest(); out += dt
+    return out[:key_len], out[key_len:key_len+iv_len]
+# Read .env-Key, iterate credentials_entity, decrypt → print OK/BAD
+```
+
+**Vor Löschung eines korrupten Credentials IMMER prüfen:**
+```bash
+sqlite3 data/database.sqlite "SELECT id, name, active FROM workflow_entity WHERE nodes LIKE '%<credId>%';"
+sqlite3 data/database.sqlite "SELECT workflowId, count(*) FROM workflow_history WHERE nodes LIKE '%<credId>%' GROUP BY workflowId;"
+```
+Wenn der Credential in einem aktiven Workflow referenziert wird → erst Workflow auf neue Credential umstellen, DANN löschen. Sonst bricht der Workflow.
