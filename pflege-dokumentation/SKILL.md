@@ -413,3 +413,63 @@ Wenn ein User-Wunsch im Standard nicht abbildbar ist (Beispiel: Wohnbereichs-Vit
 2. Pragmatische Teilwege als Workaround anbieten (Einzeldruck, Pflegestatistik-Aggregate, Excel-Export + manuell mergen).
 3. **MediFox-Support als Endstation** für kundenspezifische Reportvorlagen empfehlen.
 4. NICHT spekulieren oder Listengenerator-Funktionen erfinden, die nicht belegt sind.
+
+---
+
+### 2026-05-07 — Auswertungs-Kategorien Gewichtsverlust + Support-Wunsch-Format
+
+**Auswertungs-Kategorien (Warnhinweis-Konfiguration):**
+
+Pfad: **Dokumentation → Dokumentation → Einstellungen (Zahnrad-Symbol) → Auswertungen → Kategorien**
+
+Standard sind u.a. **zwei Kategorien zum unbeabsichtigten Gewichtsverlust**. Pro Kategorie konfigurierbar:
+- **Warnhinweis** ja/nein (sichtbar in Bewohnerübersicht/Pflegemonitor/Pflegemappe)
+- **Darstellungsform** des Hinweises
+- **Automatische Übernahme in die Übergabe** (→ Pflegejournal/Übergabebuch der nächsten Schicht)
+
+**Wichtige Grenze (Stand 2026-05, MEDIFOX DAN Support Ticket SDS-311750):** Eine Kopplung „Warnhinweis → erzwungener Berichtseintrag der Pflegefachkraft mit Begründung" ist im Standard NICHT konfigurierbar. Wenn Pflicht-Doku rechtlich gefordert ist, muss sie organisatorisch über SOP + QM-Auswertung der Übergaben abgesichert werden.
+
+**MEDIFOX DAN Produkt-Wunsch-Format (verbindlich seit Ticket SDS-311750):**
+
+Wenn ein Standardfeature fehlt und ein Wunsch beim Support eingereicht wird, MUSS er in dieser Reihenfolge beantwortet werden:
+
+1. **Der Kunde wünscht sich** … (kurze Zielbeschreibung, eine Sache)
+2. **Er benötigt diese Funktion um** … (fachlicher Bedarf, gerne mit Gesetzes-/Norm-Bezug)
+3. **Bisher löst der Kunde das Problem indem er** … (aktueller Workaround)
+4. **Priorität beim Kunden** (genau einer von: niedrig / mittel / hoch)
+5. **Screenshots** der betreffenden Programmbereiche
+
+Erst mit allen vier Antworten + Screenshots wird das Ticket fachlich geprüft. Empfehlung: als Vorlage in der Einrichtung speichern, um künftige Wünsche schneller einzureichen.
+
+**Controlling → Bewohnerkennzahlen — was es WIRKLICH zeigt (verifiziert 2026-05-07):**
+
+| Tatsächlich angezeigt | NICHT enthalten |
+|---|---|
+| Bewohner je Einstufung (Pflegegrad-Verteilung) | Gewichtsverlust-Aggregate |
+| Pflegegradmix (Ø PG) | Wundstatistik |
+| Bewohner in Abwesenheit | Sturzstatistik |
+| Altersstruktur | Vitalwerte-Auswertungen |
+
+**Häufige Fehlannahme:** „Bewohnerkennzahlen zeigt Trends zu Gewichtsverlust/Wunden je Wohnbereich" — **falsch**. Solche Auswertungen liegen unter `Controlling → Qualitätsindikatoren` (DAS-Ergebnisindikatoren, halbjährlich) oder gar nicht im Standard.
+
+**Layoutverwaltung — strikte Abgrenzung:**
+
+`Administration → Layoutverwaltung` ist AUSSCHLIESSLICH für Abrechnungs-Druckvorlagen (Rechnung / Rechnungskorrektur / Storno). Pflegelisten, Vitalwerte-Auswertungen oder andere Pflege-Reports sind hier NICHT bearbeitbar.
+
+Wenn ein Nutzer die Layoutverwaltung für eine Pflegeliste nutzen will → klare Absage + Verweis auf:
+1. `Organisation → Listengenerator` (mit Einschränkung: Vitalwerte sind keine dokumentierte Quelle)
+2. MEDIFOX-Support für kundenspezifische Reportvorlage über Modul *Management Informationssystem*
+
+**Erfassung → Ergebnisindikatoren als integrierter Vitalwerte-Auswertungsweg:**
+
+Halbjährliche DAS-Erhebung zu Stichtagen **3. Mai** und **3. November**. Körpergewicht und -größe werden automatisch aus dem Dokumentationsblatt „Vitalwerte" übernommen.
+
+**Wichtig (wörtlich aus Arbeitshilfe Ergebnisindikatoren):** „Die Bewertung, ob ein Bewohner Gewicht verloren hat oder nicht, wird in der Erhebung nicht ermittelt (gemäß Anlage 3 der MuG nicht vorgesehen)." Begründungen für Gewichtsverlust können unter Punkt 8.3 manuell hinterlegt werden.
+
+→ **Konsequenz für RAG-Antworten:** Ergebnisindikatoren sind die EINZIGE integrierte Auswertung, die alle Bewohner-Gewichte zusammenführt — aber sie sind **nicht für die Wohnbereichs-Monatsliste gedacht**, sondern für die externe Qualitätsprüfung.
+
+**MEDIFOX-Patch-Publikations-Pattern:**
+
+Auf der Wissensdatenbank-Übersicht (pageId 60784729) wird **nur die jeweils zuletzt freigegebene Patch-Version pro Major als eigenes PDF** publiziert. Zwischenversionen wie 10.27.21, 10.27.22 erscheinen NICHT als separate Dateien — ihre Inhalte werden in das nächste finale PDF (z.B. 10.27.23) integriert.
+
+→ Bei „fehlenden" Patch-Versionen im RAG-Korpus zuerst prüfen, ob sie überhaupt als eigenes PDF existieren. Lücken bei .21/.22 sind oft keine Indexierungslücken, sondern Publikations-Eigenheit.
