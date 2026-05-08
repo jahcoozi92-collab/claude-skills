@@ -1369,6 +1369,32 @@ Wenn nur Ebene 1 geaendert wird, laufen Cron-Jobs und Fallbacks weiter mit den a
 - Loeschen → Verzeichnis legt sich sofort neu an, Telegram-Dedup-State (Edit-Tracking, TTL) geht verloren
 - Migration-Schuld vom Sub-Agent-Umbau 2026-04-10 (main → sonnet/opus/pflege/pflege-eu): Plugin-SDK wurde gebaut als es nur "main" gab, globaler Store-Default nicht mitgezogen
 
+**chat.send / commands.list Validator wirft LAUT bei unbekannter agentId (zweite "main"-Spur):**
+- Validator vergleicht eingehende `agentId` explizit gegen `agents.list[].id` → unbekannt = `INVALID_REQUEST` mit `errorMessage="Agent X no longer exists in configuration"` bzw. `"unknown agent id 'X'"`
+- Anders als `resolveStorePath` (silent fallback auf "main") schlaegt der Validator hart fehl — kein graceful degradation
+- Stammt aus derselben 2026-04-10-Migration: Clients mit persistierter Agent-Auswahl (z.B. Control-UI localStorage) treffen auf neue agents.list[] und scheitern
+- Beobachtet 2026-05-08: Control-UI sendete weiterhin `agentId="main"` → Loop aus failed `chat.send`/`commands.list`
+
+**`agents.default` ist KEIN gueltiger Schema-Key (Schema-Falle 2026-05-08):**
+- Schema kennt unter `.agents` nur `defaults` und `list` — `agents.default` (singular, top-level) wird mit `Unrecognized key: "default"` rejected → Gateway-Crash-Loop bis Restart-Limit
+- Tueckisch: `jq '.agents.default'` returnt `null` fuer fehlende Felder UND fuer Felder mit `null`-Wert — das fuehrt zu falscher Annahme "Feld existiert mit null und kann gesetzt werden"
+- Pruefe Schema-Existenz IMMER mit `jq '.agents | keys'` (zeigt tatsaechlich vorhandene Keys), nicht mit `jq '.agents.<key>'`
+- Es gibt keinen schema-konformen Default-Agent-Mechanismus auf Top-Level — Routing erfolgt ueber `routing` (channel→agent Mapping) oder client-seitig
+- Fix bei Stale-Clients (Control-UI sendet alte agentId): Client-State leeren, NICHT Config umbauen
+
+**Diagnose-Pattern fuer agent-bezogene Fehler:**
+- Schritt 1: `journalctl --user -u openclaw-gateway.service --since "2 hours ago" | grep -iE "agent.*(not found|no longer|exist|missing|unknown)"`
+- Schritt 2: Connection-ID aus Error-Log extrahieren (`conn=ac413377…362d`) → `journalctl ... | grep "conn=<full-id>"` → `connected`-Line zeigt Client (`openclaw-control-ui webchat`, `telegram`, `discord`, …)
+- Schritt 3: `jq '.agents | {keys: keys, ids: [.list[].id]}' ~/.openclaw/openclaw.json` fuer Soll-Zustand — **`keys` statt einzelner Felder!** (jq returnt `null` fuer fehlende UND null-Felder, irrefuehrend)
+- Schritt 4: Wenn Client = Control-UI → Browser-localStorage clearen ODER UI-Agent-Selector auf gueltigen Agent umschalten — **NICHT Config umbauen** (Schema kennt keinen Default-Mechanismus auf agents-Top-Level)
+- Wichtig: Die Error-Message kommt vom Validator, nicht vom Client — der Client weiss nicht, dass sein State stale ist
+
+**Control-UI persistiert Agent-Auswahl im Browser-localStorage:**
+- Beobachtet 2026-05-08: Control-UI hatte "main" gespeichert (Pre-2026-04-10 State), sendete weiterhin `chat.send` mit `agentId="main"`
+- Vermuteter Storage-Key: `openclaw-selected-agent` o.ae. (siehe Pattern aus tweakcn-Theme-Import: `Wx`-Konstante / `openclaw-custom-theme` in MEMORY.md)
+- Workaround: DevTools → Application → Local Storage → relevanten Key loeschen → Reload
+- Sauberer Fix waere UI-seitiges Re-Validieren der gespeicherten Agent-ID gegen `models.list`/`agents.list` beim Connect
+
 **Sub-Agent-Umbauten: Symlinks pruefen:**
 - Beim Umbau `main` → `sonnet/opus/pflege/pflege-eu` blieb `agents/sonnet/agent` als Symlink → `agents/main/agent`
 - Nach manueller Archivierung von `agents/main/` (`_archive_main-searcher_*.tar.gz`) zeigte der Symlink ins Leere
