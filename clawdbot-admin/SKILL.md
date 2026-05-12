@@ -2154,3 +2154,64 @@ verifizieren, sonst Panik wegen scheinbar massiver Config-Umschreibung. Diesmal:
 Bei Architekturfragen funktioniert "Pattern A/B/C mit Pro/Contra/Empfehlung + meine Default-Empfehlung" besser als offen-explorative Fragen. Diana wählt mit "wie du empfiehlst" zügig die Default-Linie. Bei kreativen Aufgaben (z. B. SongCrafter, n8n-Workflow-Design) bleibt offene Exploration sinnvoll — das Pattern gilt nur bei System-Admin/Architektur-Entscheidungen.
 
 Erweiterte Anleitung-Form: "für 12-Jährige" mit Tabellen + nummerierten Schritten + konkreten Befehl-Beispielen kam ohne Pushback durch (Anleitung "OpenClaw nutzen" 2026-05-06).
+
+---
+
+### 2026-05-12 - Browser MCP existing-session + Chrome 148-Default-Dir-Block + Anthropic-Cooldown
+
+**🔴 Chrome 148+ blockt Remote-Debugging silent auf Default-User-Data-Dir**
+
+Chrome (ab ~v121, verschärft in 148) blockt `--remote-debugging-port` **stillschweigend** wenn der user-data-dir der Linux-Default `~/.config/google-chrome` ist — auch wenn das Flag explizit gesetzt wird. Chrome schreibt dann **keine** `DevToolsActivePort`-Datei, kein "DevTools listening on…"-Log, einfach silent fail. Begründung: Anti-Cookie-Theft-Härtung.
+
+**Workaround**: User-Data-Dir umbenennen (atomic rename, keine Datenverluste, alle Logins/Cookies/Bookmarks bleiben):
+```bash
+pkill -f google-chrome             # Chrome komplett beenden
+mv ~/.config/google-chrome ~/.config/google-chrome-main
+```
+
+Plus Desktop-File-Override unter `~/.local/share/applications/google-chrome.desktop` mit allen drei Exec-Zeilen patchen:
+```ini
+Exec=/usr/bin/google-chrome-stable --user-data-dir=/home/moltbotadmin/.config/google-chrome-main --remote-debugging-port=0 %U
+```
+
+`--remote-debugging-port=0` = Chrome wählt dynamisch freien Port und schreibt ihn in `DevToolsActivePort`. Sicherer als hartkodiert 9222 (kein Konflikt bei Doppel-Start, kein bekannter Scan-Port).
+
+**🔴 existing-session Browser-Profil in openclaw.json**
+
+Neues Pattern für Chrome-Anbindung an OpenClaw — **Extension ist deprecated** (siehe `doctor-config-flow-Cqgy0iUL.js:222`: `Removed browser.relayBindHost (legacy Chrome extension relay setting)`). Stattdessen über `chrome-devtools-mcp` als MCP-Subprozess:
+
+```json
+"browser": {
+  "attachOnly": false,
+  "defaultProfile": "diana",
+  "profiles": {
+    "diana": {
+      "driver": "existing-session",
+      "userDataDir": "/home/moltbotadmin/.config/google-chrome-main",
+      "color": "#a8327f"
+    }
+  }
+}
+```
+
+OpenClaw spawnt automatisch `npx -y chrome-devtools-mcp@latest --autoConnect --userDataDir <pfad>` als Hintergrund-Subprozess. Lazy connect: erst beim ersten `browser.*`-Tool-Aufruf. `autoConnect` wartet polling auf `DevToolsActivePort`. **Schema-Constraint**: `userDataDir` nur mit `driver: existing-session` erlaubt. Drei Driver-Typen: `openclaw` (managed, OpenClaw startet Chrome selbst), `clawd` (legacy), `existing-session` (BYOB).
+
+**🟡 DevToolsActivePort als Stale-Marker-Falle**
+
+Chrome überschreibt die Datei nur beim Neustart, löscht sie aber **nicht** beim sauberen Beenden. Wenn Chrome stirbt und ein MCP-Adapter cached den darin stehenden Port, gibt's `ECONNREFUSED` bis Chrome neu startet und neuen Port schreibt. **Diagnose**: `ls -la ~/.config/google-chrome-main/DevToolsActivePort` zeigt Modifikationszeit — bei alter mtime ohne laufenden Chrome ist's stale.
+
+**🟡 Token-Naming-Drift: OPENCLAW_GATEWAY_TOKEN vs CLAWDBOT_GATEWAY_TOKEN**
+
+`~/.openclaw/.env` enthält noch `CLAWDBOT_GATEWAY_TOKEN` (Pre-Rebrand-Name). Aktueller Bundle-Code (`configure-CElp5FZ0.js:638`) erwartet `OPENCLAW_GATEWAY_TOKEN`. Funktioniert wahrscheinlich noch über Compat-Alias, sollte aber bei Gelegenheit umbenannt werden.
+
+**🟡 Anthropic-Cooldown bei DSGVO-Hardline**
+
+Wenn Sonnet 4.6 von Anthropic in "overloaded"-State geht, kommt der globale Fallback nur auf andere **Anthropic**-Modelle (Haiku 4.5, Opus 4.6 — siehe `pflege-hardwall-2026-05-06`). Sind ALLE Anthropic-Profile in Cooldown (selten aber bei langen Sessions vorgekommen), gibt's **kein** Fallback auf US-Provider — alle Agent-Calls scheitern mit `FailoverError: All models failed`. **Mitigation**: warten (typisch 1-5 Min), ODER User manuell handeln lassen statt Agent-Aufruf zu retry'en. **Beobachtbar**: Log-Zeile `auth profile failure state updated: ... reason=overloaded window=cooldown`.
+
+**🔵 Embedded-Fallback-Agent übernimmt bei Gateway-Restart**
+
+Wenn der Gateway während eines `openclaw agent`-Calls einen Service-Restart macht (Code 1012 close), schaltet OpenClaw auf den **embedded** Agent-Modus um (eigener Subprocess statt WS zum Gateway). Erkennbar an Log-Zeile `EMBEDDED FALLBACK: Gateway agent failed; running embedded agent: GatewayTransportError: gateway closed (1012): service restart`. Job läuft trotzdem durch. Mitternacht-Auto-Update oder andere Background-Tasks können das triggern — nicht akut beunruhigend.
+
+**🔵 Phantom-Services-Pattern**
+
+`openclaw-relay.service` und `openclaw-tunnel.service` auf yoga7 (autossh-Tunnels) waren beobachtbar systemd-`active (running)` aber **funktional tot** weil auf der NAS-Seite kein Service auf 18792 lauscht. Pattern: **`status=active` ist semantik-frei** — sagt nur "Prozess läuft", nicht "tut was Sinnvolles". Bei "Verbindung kommt nicht zustande"-Symptomen immer end-to-end testen (z.B. `curl --max-time 5 http://127.0.0.1:18792/json/version` durch den Tunnel), nicht nur den Service-Status.
