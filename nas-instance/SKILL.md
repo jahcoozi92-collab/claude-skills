@@ -1018,3 +1018,165 @@ CONFIG_KEY=$(docker exec n8n-n8n-1 cat /home/node/.n8n/config | jq -r '.encrypti
 ```
 
 Wenn MATCH → einzelne korrupte Credentials suchen (siehe `n8n-workflow` Skill, Decrypt-Test-Pattern). Wenn MISMATCH → Restore-Problem aus Backup.
+
+---
+
+### 2026-05-12 — LiveKit Voice-Agent (Jarvis) + Yoga7-Bridge
+
+**Container -> Host-Routing (KRITISCH, gilt für ALLE Container, die HA/lokale Services aufrufen):**
+- Cloudflare-Hostnames wie `homeassistant.forensikzentrum.com` sind aus Containern UNZUVERLÄSSIG (Tunnel-Routing, externes DNS, möglicher CF-Loop)
+- Lösung: `extra_hosts: ["host.docker.internal:host-gateway"]` + Env `HASS_URL=http://host.docker.internal:8123`
+- Pattern auch für jeden anderen Service, der den NAS-Host selbst aufrufen muss
+
+**Mosquitto-ACL: dedizierter User pro Service (KRITISCH):**
+- Shared `healthcheck`-User hat NUR `topic read $SYS/#` -> kann KEINE Discovery-Topics publishen -> "not authorised"
+- Pro Service eigener User + ACL-Block in `/volume1/docker/mosquitto/config/acl`:
+  - `user yoga7`
+  - `topic readwrite homeassistant/#`
+  - `topic readwrite yoga7/#`
+- Passwort hashen via `mosquitto_passwd -b` im Container
+- Reload ohne Restart: `kill -HUP` PID 1 im Container
+- NIEMALS Services den shared `healthcheck`-User verwenden lassen
+
+**MQTT-Bridge Client-ID-Konflikt:**
+- Zwei Instanzen mit gleicher `client_id` kicken sich endlos: "Client disconnected: session taken over"
+- Fix: alle alten killen, dann GENAU EINE Instanz, idealerweise via systemd-user
+- Diagnose: `mosquitto_sub -t 'homeassistant/#' -v | head -20` -> Discovery-Topics sichtbar = Bridge läuft
+
+**LiveKit-Server WebRTC-Binding (Docker mit vielen Bridges):**
+- Default bindet UDP auf ALLE Interfaces inkl. Docker-Bridges -> Clients bekommen falsche ICE-Kandidaten
+- Fix in `livekit.yaml` rtc-Block:
+  - `use_external_ip: false`
+  - `node_ip: 192.168.22.90`
+  - `port_range_start/end: 50000/50020`
+  - `interfaces.includes: ["bridge0"]`
+- Container braucht `network_mode: host` (NICHT bridge), WebRTC-Port-Forwards passen sonst nicht
+
+**Cloudflare-Tunnel kann KEIN UDP-WebRTC-Audio:**
+- Tunnel routet NUR HTTPS/WSS (Signalisierung), KEINE UDP-Media-Pakete
+- `voice.forensikzentrum.com` + `livekit-ws.forensikzentrum.com` reichen für Web-UI/Signal, NICHT für Sprache
+- Audio funktioniert nur: (a) im selben LAN ODER (b) Port-Forward 50000-50020/UDP am Router
+
+**Cloudflare Zero Trust: Hostname-Routen != Veröffentlichte Anwendungen:**
+- "Veröffentlichte Anwendungen" (Public Hostname Routes) = Tunnel-Routing für Public-Domain -> interne URL
+- "Hostname-Routen" / Private Network Routes = WARP-Client-Only (intern)
+- Für `*.forensikzentrum.com` IMMER "Veröffentlichte Anwendungen" + DNS-CNAME zu `<tunnel-id>.cfargotunnel.com`
+- 1033-Error = falscher Routen-Typ ODER Tunnel-Token-Modus ignoriert `config.yml` (Routes nur via Dashboard konfigurierbar)
+
+**Gemini API direkt statt Vertex AI:**
+- Vertex AI Gemini Live benötigt aktives Billing-Konto am Service-Account-Projekt (Error 1008 bei fehlendem Billing)
+- Workaround: direkter Gemini API Key (von aistudio.google.com) und `vertexai=False`
+- Model für Live-Audio: `gemini-2.5-flash-native-audio-latest`
+- Voice "Leda" (weiblich) + `enable_affective_dialog=True` für menschlichere Stimme
+
+**Gemini Embeddings: korrektes Modell:**
+- `text-embedding-004` existiert NICHT für embedContent-API -> 404
+- Korrekt: `gemini-embedding-001` (768-dim, `task_type="SEMANTIC_SIMILARITY"`)
+
+**Volume-Mount-Hot-Reload-Pattern:**
+- Python-Code als `:ro`-Volume statt im Image: `./agent-override/agent.py:/app/agent.py:ro`
+- Edit + `docker restart <container>` reicht, kein Rebuild
+- Auch für `main.py` + `static/` von FastAPI-Services in der Entwicklung sinnvoll
+
+**PWA-Manifest darf KEINE data:-URL sein:**
+- Inline-Manifest via `data:application/manifest+json,...` -> "Failed to construct URL" beim PWA-Install
+- `start_url` kann nicht relativ zur data:-URL aufgelöst werden
+- Fix: echte Datei servieren (`/static/manifest.webmanifest`) mit absolutem `start_url`
+
+**Alpine.js & SVG-Gotchas:**
+- `<template x-for="n in 5">` -> "n is not defined" (Number nicht iterable). Fix: `x-for="n in [1,2,3,4,5]"`
+- `<rect :x="foo?.x">` -> "Unexpected end" bei null. SVG-Attribute IMMER mit Default: `:x="foo?.x ?? 0"`
+
+**Plus500/Retail-Auto-Trading blockiert (Diana-Entscheidung 2026-05-12):**
+- Plus500 hat KEINE Retail-API; Browser-Automation gegen AGB -> Account-Sperre
+- Für echtes Auto-Trading: API-Broker (Capital.com, IG Markets, OANDA) ODER halb-auto via TradingView-Alerts -> n8n -> Broker
+- Bei zukünftigen Trading-Anfragen direkt auf API-Broker hinweisen, NICHT Plus500/eToro
+
+**Yoga 7 IST LINUX (kein Windows!):**
+- Bridge-Pattern: `yoga7-ha-bridge` (Python paho-mqtt + psutil) - Linux-Analog zu HASS.Agent für Windows
+- 26 HA-Entities via MQTT-Discovery (`homeassistant/<component>/yoga7/<obj>/config`)
+- HA wandelt `name: "Yoga 7"` -> entity-id `yoga_7_*` (Underscore beachten!)
+- Custom-Tools in `/volume1/docker/livekit/agent-override/custom_tools.py` mit `YOGA = "yoga_7"` Prefix-Konstante
+
+**Watchdog-Pattern (jarvis-watchdog):**
+- Container im voice-net polled `docker ps` via gemounteten docker.sock
+- Alert-Channel: HTTP POST -> `script.jarvis_say_smart` (HA) -> TTS auf Echo-Devices
+- Cooldown 60min pro Container (`COOLDOWN_MIN`), Stop-Heuristik via Exit-Code != 0
+- Default-Watchset: `voice-livekit, voice-frontend, voice-redis, homeassistant, cloudflared, jarvis-config`
+
+### 2026-05-14 — Gedenkseite Memorial-Frontend (Mondphasen + Editorial-Redesign)
+
+**Gedenkseite-Asset-Layout (deployed):**
+```
+/var/www/html/Klaus-Dieter-Goebel/
+├── index.html      (32 KB nach CSS/JS-Auslagerung)
+├── styles.css      (138 KB, Basis-Design)
+├── editorial.css   (~10 KB, Modernisierungs-Layer)
+├── app.js          (146 KB, Logik + Renderer)
+├── sw.js           (Network-First mit Cache)
+└── data/           (candles.json, entries.json, stats.json)
+```
+Editorial-Layer wird NACH styles.css geladen → Override per Cascade, einfacher Rollback durch Entfernen der zweiten `<link>`-Zeile.
+
+**Memorial-Design-Constraints (Diana-Korrekturen):**
+- **Feiertage NIEMALS den Geburtstags-`sparkles`-Effekt teilen** (🎂🎁🎈 + 80 Konfetti = unwürdig für Christi Himmelfahrt, Pfingsten etc.). Eigener `gentle`-Effekt: nur `✦ ✧ · ⋅`, 15 Sterne bei 50% Opacity, langsame 12–20s Animation.
+- **Memorial-Card BLEIBT rahmenlos.** Keine Borders, keine `border-radius`, keine Gold-Hairlines am Card-Rand. Gold nur als Akzent in Glyphen (✦/✝), nie als Strukturlinie.
+- **`backdrop-filter` NIE über animierten Hintergründen** wie cosmic-canvas/parallax-stars — verschmiert die Sterne und zerstört genau den visuellen Charakter. Auf Memorial-Sites: transparent bleiben.
+
+**CSS-Performance-Pattern (Anti-Flicker):**
+- **`text-shadow` NIE animieren** — GPU-unbeschleunigt, verursacht Repaint-Kaskade auf benachbarte Texte (war Ursache des Header-Flackerns auf der Gedenkseite). Stattdessen `opacity` auf den Glyph animieren.
+- Header-Texte mit `transform: translateZ(0)` + `isolation: isolate` + `backface-visibility: hidden` in eigene Compositing-Layer heben → Background-Animationen triggern keine Text-Repaints mehr.
+- **FPS-Throttling auf 30 FPS** in Canvas-Renderern für Hintergrund-Effekte spart 50% CPU/GPU ohne sichtbaren Qualitätsverlust:
+  ```js
+  const elapsed = timestamp - this.lastFrameTime;
+  if (elapsed < this.frameInterval) {
+    this.animationId = requestAnimationFrame((t) => this.animate(t));
+    return;
+  }
+  this.lastFrameTime = timestamp - (elapsed % this.frameInterval);
+  ```
+
+**Docker-Container für Schreibzugriff auf gemountete Volumes:**
+Auf `/volume1/docker/*` gehören Dateien typischerweise `root`. Wenn der laufende User (z.B. `Jahcoozi`) keine Schreibrechte auf eine Datei hat, ist der Container selbst das sauberste Werkzeug — er hat das Volume bereits read-write gemountet und läuft als root:
+```bash
+docker exec gedenkseite bash -c "sed -n '90,5280p' index.html > styles.css"
+docker cp /tmp/patch.pl gedenkseite:/tmp/p.pl
+docker exec gedenkseite perl /tmp/p.pl
+```
+Vorteil gegenüber `chown` auf dem Host: keine Permission-Änderung des Originals nötig, Volume-Berechtigungen bleiben konsistent. Funktioniert für alle Container mit gemountetem Volume: gedenkseite, open-webui, n8n etc.
+
+**Perl-Anchor-Patch für große Dateien:**
+Statt kompletten Block matchen (whitespace-fragil) → Start- und End-Anchor finden, dazwischen ersetzen:
+```perl
+open(my $fh,'<',$path); binmode($fh);  # KEIN :encoding(utf-8) → byte-genau
+local $/; my $txt = <$fh>; close($fh);
+my $s = index($txt, "    // Marker-Start");
+my $e = index($txt, "    // Marker-End");
+my $result = substr($txt,0,$s) . $new_block . substr($txt,$e);
+```
+`binmode` ohne encoding = byte-genauer UTF-8-Vergleich; verhindert Unicode-Dekodierungs-Mismatch zwischen HEREDOC-Bytes und gelesener Datei.
+
+**Cache-Buster-Pattern für statische Sites mit Service Worker:**
+Bei jeder Asset-Änderung synchron bumpen — index.html UND sw.js müssen IMMER zusammen:
+```bash
+VER=$(date +%Y%m%d-%H%M)
+docker exec <container> bash -c "
+  sed -i 's|styles.css?v=[^\"]*|styles.css?v=$VER|g;
+          s|app.js?v=[^\"]*|app.js?v=$VER|g' /path/index.html &&
+  sed -i \"s/cachename-v[0-9-]*'/cachename-v$VER'/\" /path/sw.js"
+```
+Sonst sehen SW-Clients alte Versionen bis TTL-Ablauf. Default-Workflow für alle NAS-gehosteten statischen Sites mit SW.
+
+**Astronomische Mondphasen-Berechnung (validiert gegen NASA):**
+- J2000-Referenzneumond: `Date.UTC(2000, 0, 6, 18, 14, 0)` — astronomisch verifiziert.
+- Sinusförmige Beleuchtung: `k = (1 − cos(φ)) / 2` (NICHT linear interpolieren).
+- **Viertel-Schwellen 42–58 % statt 45–55 %**, weil reale Beleuchtung am exakten Quartal aufgrund der elliptischen Mondbahn 43–48 % beträgt (nicht 50 %). Sonst werden NASA-Quartale fälschlich als „Sichel" klassifiziert.
+- CSS Custom Properties (`--moon-shadow-pos`, `--moon-shadow-dir`) statt dynamic `<style>`-Element mit `!important` → kein Re-Parse, sauberer.
+- Validierung: Alle Mai-2026 NASA-Phasen (Vollmond 01.05. 17:23 UTC, Letztes Viertel, Neumond 16.05. 20:01 UTC, Erstes Viertel, Vollmond 31.05.) wurden präzise getroffen.
+
+**Editoriale Typografie-Triade (Memorial-würdig):**
+- Display: **Fraunces** Variable (`opsz` 9–144, `SOFT` 0–100) — moderner Serif mit feiner Anmutung.
+- Body: **Spectral** italic 300 — Magazin-Lesetypografie für Pull-Quotes.
+- UI: **Inter** 500 — für Kapitälchen-Labels mit 0.32em Tracking.
+- Old-Style + Tabular Nums (`font-variant-numeric: oldstyle-nums tabular-nums`) für Datumsangaben — wirkt wie gedruckter Nachruf.
+- `text-wrap: balance` für ausgewogene Pull-Quotes.
