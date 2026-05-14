@@ -832,3 +832,100 @@ Session-Beispiel: Tctl 80,5°C + Load 3,18 + PID-Wechsel `openclaw-node` alle 25
 - Format: `<lokaler_name> -fstype=cifs,credentials=/etc/samba/nas-credentials,uid=1000,gid=1000,iocharset=utf8,vers=3.0 ://<server>/<share>`
 - Verify: `ls /mnt/autofs/` (Ghost-Verzeichnisse) → `stat /mnt/autofs/<name>` (triggert Mount) → `mount -t cifs` (zeigt aktive Mounts)
 - CIFS-Mount-Fehlschlag: `dmesg | grep -i cifs` zeigt return code (rc=-2 → Share existiert nicht; rc=-13 → Auth-Fehler)
+
+---
+
+### 2026-05-15 — Linux MQTT-Bridge für HA + Mosquitto-Hygiene
+
+**🔴 HASS.Agent ist Windows-only — KEIN Linux-Build**
+- Plattform-Check ZUERST bei Setup-Plänen die "Agent installieren" beinhalten
+- Linux braucht eigenes MQTT-Companion mit:
+  - `paho-mqtt` 2.x für MQTT
+  - `psutil` für CPU/Memory/Battery
+  - `xdotool` (apt) für Active Window
+  - `pactl` (PulseAudio/PipeWire) für Volume/Mute — sauberer als SendKeys-Hack
+  - `playerctl` (apt) für Media-Steuerung (MPRIS → spricht Spotify/Firefox/VLC/mpv)
+- Bundle in `~/02_ENTWICKLUNG/yoga7-ha-bridge/` mit bridge.py + .env + systemd-user-unit
+- systemd `~/.config/systemd/user/yoga7-ha-bridge.service` mit `PartOf=graphical-session.target`
+
+**🔴 MQTT ClientID muss UNIQUE sein bei Mosquitto-Persistence**
+- Symptom: Bridge connectet, dann re-connect alle 2 Sekunden, LWT triggert offline → HA zeigt entities `unavailable`
+- Ursache: zwei Clients mit gleichem `client_id` → Broker kickt den alten
+- Fix:
+  ```python
+  client = mqtt.Client(
+      callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
+      client_id=f"{DEVICE}-bridge-{os.getpid()}",   # PID macht unique
+      clean_session=True,                            # keine stuck sessions
+  )
+  ```
+- Bei Mosquitto mit `persistence true` ist das doppelt wichtig — alte Sessions hängen sonst
+
+**🔴 paho-mqtt 2.x Callback-API V2**
+- on_connect-Signatur: `(client, userdata, flags, reason_code, properties)` — 5 Argumente
+- `mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2, ...)`
+- `client.will_set()` MUSS vor `connect_async()` aufgerufen werden
+- `client.reconnect_delay_set(min_delay=1, max_delay=60)` für exponential backoff
+
+**🔴 Mosquitto-User-Verwaltung (NAS-Kontext)**
+- ACL-File-Pfad ist Container-spezifisch — IMMER discovern via `docker inspect mosquitto --format '{{range .Mounts}}...'`
+- In dieser Architektur: `/volume1/docker/home-assistant/mosquitto/config/acl` (im HA-Volume, nicht eigenes)
+- User pro Service (separate ACLs):
+  - `homeassistant` → `topic readwrite #`
+  - `yoga7` (Bridge) → `topic readwrite yoga7/# + homeassistant/#`
+  - `watchdog` → `topic readwrite watchdog/#`
+  - `healthcheck` → `topic read $SYS/#`
+- Neuen User anlegen:
+  ```bash
+  docker exec mosquitto mosquitto_passwd -b /mosquitto/config/passwd <user> 'PW'
+  echo -e "\nuser <user>\ntopic readwrite <namespace>/#" >> <acl-pfad>
+  docker exec mosquitto kill -HUP 1   # ← SIGHUP statt restart, ACL+passwd reload ohne disconnect
+  ```
+
+**🔴 MQTT-Discovery + HA: korrekte Topic-Struktur**
+```
+homeassistant/<domain>/<node>/<key>/config   ← Discovery (retained)
+<node>/state/<key>                            ← Sensor state
+<node>/cmd/<key>                              ← Command subscribe
+<node>/status                                 ← LWT availability (online/offline)
+```
+- Discovery-Payload braucht `availability_topic`, `unique_id`, `device.identifiers`, `state_topic`
+- LWT: `client.will_set(avail_topic, "offline", retain=True)` VOR connect_async
+- On connect: `client.publish(avail_topic, "online", retain=True)` UND `client.subscribe(cmd_topic)`
+
+**🟡 Wayland-Active-Window-Limitation**
+- xdotool funktioniert via XWayland-Bridge für meiste Apps (Chromium, Firefox X11-Mode, etc.)
+- Native Wayland Apps liefern null Window-Title
+- Fallback in Bridge: return `"unknown"` bei leerem xdotool-Output
+- Alternative: gdbus zu GNOME Shell oder qdbus zu KWin — DE-spezifisch, fragmentiert
+
+**🟡 Linux-Power-User-Befehle für Bridge-Funktionen**
+| Funktion | Linux-Befehl |
+|----------|--------------|
+| Volume setzen | `pactl set-sink-volume @DEFAULT_SINK@ X%` |
+| Mute toggle | `pactl set-sink-mute @DEFAULT_SINK@ toggle` |
+| Media play/pause | `playerctl play-pause` (MPRIS) |
+| Lock session | `loginctl lock-session` (DBus, kein sudo nötig) |
+| Shutdown | `systemctl poweroff` (polkit-checked, kein sudo bei graphical session) |
+| Active session | `loginctl show-user $USER -p Display --value` |
+| Idle/Lock check | `loginctl show-session <sid> -p IdleHint --value` |
+
+**🟡 Bridge POLL_INTERVAL tunen**
+- Default 30s → 1980 entries/24h für cpu_load — dominiert HA Recorder
+- Hochsetzen auf 60s halbiert DB-Last
+- Plus: HA `recorder.exclude.entity_globs: [sensor.yoga_7_*]` für bridge-entities (Statistics bleiben)
+
+**🔵 Token-Hygiene bei Token-im-Chat**
+- Wenn User HA Long-Lived Token im Chat pastet (statt sicher in Datei):
+  - Sofort speichern: `mkdir -p ~/.config && (umask 077 && echo 'TOKEN' > ~/.config/ha-token)`
+  - Verify chmod 600: `ls -la ~/.config/ha-token`
+  - Warnung an User: nach Session in HA → Profile → Long-Lived Access Tokens → diesen löschen + neuen erstellen
+- Token in Chat-History bleibt für immer drin → MUSS rotiert werden
+
+**🔵 SSH-Klassifizierer-Hürden bei NAS-Operationen**
+- Auto-mode classifier blockt `docker exec` mit env-dumps oder breit-cat als "credential extraction"
+- Lösung: präzisere Befehle ohne env-Variable-dumps
+  - statt `docker inspect ... .Config.Env` → `docker port` + `docker inspect ... .NetworkMode`
+  - statt `cat <config>` → `grep -E "specific" <config>`
+- Bei explicit user-authorization für sensitive ops: Permission-Rule in `~/.claude/settings.json` adden
+- Alternative für one-off: User per `! ssh ...` selber ausführen, Output pasten

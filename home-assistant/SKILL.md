@@ -818,3 +818,152 @@ automation:
 - delay: "00:00:06"   # ← Spotify hat jetzt Zeit anzulaufen
 # Erst jetzt TTS-Ansage triggern
 ```
+
+---
+
+### 2026-05-15 — HA-Komplettrefactor: Theme-Falle, YAML-Cache, Multi-Wellen-Cleanup
+
+**🔴 KRITISCH: `default_theme:` NIEMALS auf Theme in Subdir setzen**
+- `themes: !include_dir_merge_named themes/` lädt NUR Top-Level YAMLs, keine Subdirs
+- "Frosted Glass" liegt typischerweise in `themes/Frosted Glass/*.yaml` (Subdir)
+- Wenn `default_theme: "Frosted Glass"` aber Theme nicht ladbar → HA crashed PARTIAL:
+  Container ist "healthy" aber lädt nur 5 Backup-Entities, ALLE anderen Integrationen werden geblockt
+- **Sicherer Weg:** Per-User-Theme via WS-API `frontend/set_user_data`:
+  ```python
+  await ws.send_json({
+    "type": "frontend/set_user_data",
+    "key": "selectedTheme",
+    "value": {"dark": True, "theme": "dark_openclaw"}
+  })
+  ```
+- Wenn Default-Theme global gewollt: Subdir-Files INS Top-Level kopieren (alle Frosted Glass Lite/Dark/Light Varianten) — und ha core check verifizieren
+
+**🔴 "Successful config (partial)" = FEHLERMELDUNG, nicht Erfolg**
+- `ha core check` Output endet mit "Successful config (partial)" wenn EIN Block defekt war
+- Bedeutet: HA hat sich aus dem fehlerhaften Block "gerettet", aber dieser läuft NICHT
+- Action: sofort `revert + git diff` letzten Edits, nicht weitermachen mit Refactor
+
+**🔴 YAML-Mode Lovelace + Browser-Cache = Frust-Hauptquelle**
+- HA serves neue Dashboard-Config sofort (verify via `lovelace/config` WS-Call)
+- Browser cached aggressiv → User sieht alte Version trotz Server-Update
+- **User-Action nach jedem Dashboard-Edit kommunizieren:**
+  1. `Ctrl+Shift+R` (Hard-Refresh)
+  2. DevTools → Application → "Clear site data" → F5
+  3. Inkognito-Tab fresh
+- WICHTIG: nicht annehmen "User sieht es" — explizit nach Browser-Refresh fragen
+
+**🔴 Status-Check FIRST, bevor Integrations einrichten**
+```bash
+curl -s -H "Authorization: Bearer $HA_TOKEN" \
+  "$HA_URL/api/config/config_entries/entry" | \
+  jq -r '.[] | "\(.domain) | \(.title) | \(.state)"' | sort
+```
+- Spart Stunden: Matter, Philips TV, Home Connect, alexa_media etc. waren in dieser Session bereits eingerichtet
+- Plot-Twist-Wahrscheinlichkeit ist hoch bei gewachsenen Setups
+
+**🔴 Cross-Stack docker-compose `depends_on` funktioniert NICHT**
+- HA und Postgres-ha in getrennten compose-Stacks → kein gegenseitiger depends_on
+- Boot-Order-Race nach NAS-Reboot: HA started, Postgres noch nicht ready, HA exited Code 0
+- Docker respektiert Exit 0 als "intentional" und restart nicht (auch mit `restart: unless-stopped`)
+- **Fix in HA-compose:**
+  ```yaml
+  healthcheck:
+    test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8123/manifest.json', timeout=10)\""]
+    interval: 60s
+    timeout: 15s
+    retries: 5
+    start_period: 180s   # ← gibt Postgres Zeit zum Hochfahren
+  ```
+
+**🔴 Package-Konsolidierung mit Python yaml + HA-Tag-Constructor**
+- PyYAML's `safe_load` kennt HA-spezifische Tags nicht (`!secret`, `!include`)
+- Custom multi-constructor preserveiert Tags:
+  ```python
+  class HATag(str):
+      def __new__(cls, tag, value):
+          s = str.__new__(cls, value); s._tag = tag; return s
+
+  def _tl(loader, suf, n):
+      if isinstance(n, yaml.ScalarNode):
+          return HATag('!'+suf, loader.construct_scalar(n))
+      elif isinstance(n, yaml.SequenceNode):
+          return loader.construct_sequence(n)
+      else:
+          return loader.construct_mapping(n)
+
+  def _td(d, data):
+      return d.represent_scalar(data._tag, str(data))
+
+  yaml.SafeLoader.add_multi_constructor('!', _tl)
+  yaml.SafeDumper.add_representer(HATag, _td)
+  ```
+- Für Package-Mergen: Top-Level-Keys disjunkt prüfen (`input_*`, `script`, `automation`, `template`, `rest`)
+- Conflict-Detection BEFORE merge: bei Duplicate-Keys warnen
+
+**🟡 WS-API > REST für HA-Config-Operations**
+| Operation | WS-Command |
+|-----------|-----------|
+| Theme per-user | `frontend/set_user_data` |
+| Dashboard inspect | `lovelace/config` mit `url_path` |
+| Energy prefs | `energy/get_prefs`, `energy/save_prefs` |
+| Core config | `config/core/update` (currency, units) |
+| Frontend reload | `frontend/reload_themes` |
+| Device/Entity Registry | `config/device_registry/list`, `config/entity_registry/list` |
+- REST nur für simple state-reads + service-calls
+- WS via aiohttp im HA-Container: `docker exec homeassistant python ...`
+
+**🟡 3-Wellen-Refactor-Pattern für HA-Cleanup**
+- **Welle A (Quick Wins, risikolos):** Storage-Müll archivieren, Legacy-DB raus, alte .bak-Files
+- **Welle B (Konsolidierung):** Package-Mergen, Dashboard-Split, modulare Files
+- **Welle C (Modernisierung):** Theme, Hero-Cards, Boot-Order, Watchdog, neue Integrationen
+- IMMER vor Welle A: vollständiges HA-Backup (UI: Einstellungen → System → Sicherungen)
+- Pro Schritt: ha core check → reload/restart → verify entity counts → next
+
+**🟡 Archive-statt-delete für Refactors**
+- Zentraler Bucket: `_audit_archive_YYYY-MM-DD/` im /config-Verzeichnis
+- Subdirs nach Kategorie: `storage_bak/`, `legacy_db/`, `weather_packages_replaced/`, etc.
+- Rollback einfach via `mv $ARCH/<file> $CFG/packages/` + HA restart
+- User-Vertrauen: "nichts ist weg, alles reversibel"
+
+**🟡 Recorder-Exclude für High-Frequency-Sensors**
+- Bridge-/Sonden-Sensoren mit ≥30s poll → dominieren states-Table
+- Top-Talker-Query:
+  ```sql
+  SELECT sm.entity_id, COUNT(*) AS cnt
+  FROM states s JOIN states_meta sm USING (metadata_id)
+  WHERE s.last_updated_ts > extract(epoch from now() - interval '24 hours')
+  GROUP BY sm.entity_id ORDER BY cnt DESC LIMIT 15;
+  ```
+- Exclude via `recorder.exclude.entity_globs`: `sensor.yoga_7_*`
+- Statistics bleiben (Trends für Dashboards OK)
+- POLL_INTERVAL der Bridge entsprechend hochsetzen (30 → 60s halbiert Last)
+
+**🟡 3-Channel-Watchdog-Pattern (MQTT + HA + ntfy)**
+- Monitoring-Tools NIE auf monitored-System angewiesen (HA-down → kein Alert)
+- Channels in Priorisierung:
+  1. **MQTT** (Mosquitto direkt) — primary, retained `watchdog/alert/<key>`
+  2. **HA** (jarvis_say) — secondary, nice-to-have wenn HA up
+  3. **ntfy.sh** (push to phone) — fallback, externes Push, kostenlos
+- Watchdog publisht heartbeat retained: `watchdog/heartbeat` + `watchdog/status=online`
+- User installiert ntfy-App + subscribed Topic → bekommt Pushes direkt aufs Phone
+
+**🔵 Energy currency ≠ Core currency**
+- `config/core/update` mit `{"currency": "EUR"}` setzt Core-Default
+- `energy/save_prefs` Schema lehnt top-level `currency` key ab
+- Energy-UI nutzt Core-Currency wenn keine eigene gesetzt — HA-Restart kann nötig sein
+
+**🔵 Ollama Port-Conflict Pattern**
+- Container crashed/exited → docker-proxy bleibt orphaned als zombie
+- Symptom: `docker compose up` → "port is already allocated"
+- Diagnose: `ss -tlnp | grep <port>` zeigt PID — kein Container, nur docker-proxy
+- Fix-Optionen:
+  1. `kill <pid>` für orphan docker-proxy
+  2. Port im compose wechseln (z.B. 11436 → 11437) + alte Integration löschen + neue mit neuer URL
+- Konsequenz: HA-Integration muss neu eingerichtet werden (DELETE config_entry + neuer flow)
+
+**🔵 Dashboard-Hero-Pattern für Übersicht**
+- Erste Section im Dashboard mit `column_span: 4` (volle Breite)
+- Mushroom-Template-Card mit dynamischer Greeting (now().hour basiert)
+- 4 Quick-Stat-Cards in horizontal-stack: Lichter an, Heizungen aktiv, Fenster offen, aktueller Verbrauch
+- Klickbar (tap_action: navigate) → Räume / Wetter / Energie
+- Card-mod-Gradient für moderne Optik (rgba + backdrop-filter: blur)
