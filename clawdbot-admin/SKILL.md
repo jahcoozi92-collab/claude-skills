@@ -259,7 +259,7 @@ Ein Gateway auf ugreen-gateway (192.168.22.206), erreichbar ueber Cloudflare Tun
 
 | Komponente | Host | Details |
 |------------|------|---------|
-| **Gateway** | 192.168.22.206:18789 | npm v2026.4.9, systemd user-service |
+| **Gateway** | 192.168.22.206:18789 | npm v2026.5.12, systemd user-service (Auto-Update täglich 04:00) |
 | **Cloudflare Tunnel** | NAS (192.168.22.90) | Remote-managed, Container `cloudflared` |
 | **SSH-Forward** | NAS → ugreen | systemd `ssh-openclaw-forward.service` (18790→18789) |
 
@@ -319,10 +319,12 @@ systemctl --user restart openclaw-gateway.service   # Gateway neustarten
 
 Nodes sind Remote-Maschinen, die sich beim Gateway registrieren und Exec-Befehle entgegennehmen.
 
-| Node | Host | Service | Verbindung |
-|------|------|---------|------------|
-| NAS-DXP4800 | 192.168.22.90 | `systemd /etc/systemd/system/openclaw-node.service` | wss://openclaw.forensikzentrum.com |
-| yoga7-kali | 192.168.22.86 | `systemd --user openclaw-node.service` | wss://openclaw.forensikzentrum.com |
+| Node | Host | Host-OS | Service | Verbindung |
+|------|------|---------|---------|------------|
+| NAS-DXP4800 | 192.168.22.90 (SSH: Jahcoozi) | UGREEN OS | `systemd /etc/systemd/system/openclaw-node.service` | wss://openclaw.forensikzentrum.com |
+| yoga7-kali | 192.168.22.86 (SSH: yoga7, Key) | **Native Debian/Ubuntu** mit GNOME, libvirt, snapd | `systemd --user openclaw-node.service` (mit Drop-In `override.conf`) | wss://openclaw.forensikzentrum.com |
+
+> **Korrektur 2026-05-15:** "yoga7-kali" ist nur ein **Pairing-Display-Label**, NICHT das Host-OS. Der Host laeuft Native Debian/Ubuntu (volle Desktop-Umgebung), keine WSL Kali. Frueheres Skill-Material hatte das falsch.
 
 **Pairing-Flow:**
 1. Node startet: `openclaw node run --host openclaw.forensikzentrum.com --port 443 --tls`
@@ -333,10 +335,74 @@ Nodes sind Remote-Maschinen, die sich beim Gateway registrieren und Exec-Befehle
 
 **Node-Befehle testen:**
 ```bash
-openclaw nodes list                    # Alle Nodes + Status
+openclaw nodes list                    # Alle Nodes + Status (Last Connect = authoritative!)
 openclaw nodes invoke --node NAS-DXP4800 --command system.which --params '{"bins":["docker","git"]}'
 ```
 `system.run` (Shell-Exec) ist NUR fuer den Agent via exec-Tool verfuegbar, nicht direkt via CLI.
+
+#### Remote Node Update — host-spezifische Sequenz (Stand 2026-05-15)
+
+**Generic `npm install -g openclaw@latest` reicht NICHT** — jeder Host hat anderen Service-Pfad und anderen Default-npm-Prefix. Update muss zu dem Prefix gehen, den die Service-Unit tatsaechlich laedt.
+
+**Verifikations-Quelle:** `openclaw nodes list` von moltbot — Spalte "Last Connect" zeigt den real akzeptierten Handshake. Log-Grep nach `protocol mismatch` zeigt nur Versuche, nicht Erfolg!
+
+**NAS (NVM-Default-Pfad, system-Service mit sudo):**
+```bash
+ssh -t Jahcoozi@192.168.22.90 'source ~/.nvm/nvm.sh && npm install -g openclaw@latest && sudo systemctl reset-failed openclaw-node.service && sudo systemctl restart openclaw-node.service'
+```
+- `-t` ist Pflicht fuer interaktives sudo-Passwort
+- NVM-Source weil non-interactive Shell sonst kein `node`/`npm` findet
+
+**yoga7 (`~/.npm-global`-Prefix, user-Service):**
+```bash
+ssh yoga7@192.168.22.86 'bash -lc "npm install -g --prefix ~/.npm-global openclaw@latest && systemctl --user reset-failed openclaw-node.service && systemctl --user restart openclaw-node.service"'
+```
+- `--prefix ~/.npm-global` ist KRITISCH — ohne diesen Flag installiert npm in `~/.local/bin/openclaw` (was die Login-Shell sieht), aber die Service-Unit hat `ExecStart=/usr/bin/node /home/yoga7/.npm-global/lib/node_modules/openclaw/dist/entry.js …` hardcoded auf den anderen Prefix → Update wirkungslos.
+
+**🔴 yoga7 hat zwei npm-Prefixes parallel!**
+
+Gleiche Konsolidierungs-Falle wie moltbot vor 2026-04-28, nur nie aufgeraeumt:
+- `~/.local/bin/openclaw` — was die Login-Shell sieht (`which openclaw`)
+- `~/.npm-global/lib/node_modules/openclaw/...` — was der Service tatsaechlich startet
+
+Diagnose vor jedem Update: `ssh yoga7@... 'cat ~/.config/systemd/user/openclaw-node.service | grep ExecStart'` zeigt den real verwendeten Pfad. Dauerhafter Fix waere Service-Unit auf `~/.local`-Pfad umbiegen + npm-Prefix konsolidieren (analog zu moltbot 2026-04-28).
+
+#### Schema-Migration auf Nodes nach Major-Updates
+
+Nach Major-Versionen (z.B. 2026.4.x → 2026.5.x) bricht der Node-Start mit Schema-Validierungs-Fehlern, weil legacy Config-Keys nicht mehr akzeptiert werden. Beispiel 2026-05-15: `channels.telegram.streaming` String→Objekt.
+
+**Wichtig:** Node-Hosts brauchen Channels gar nicht — aber das Schema validiert die ganze `openclaw.json`, daher crashen sie auch an Channel-Keys. Service geht in Restart-Loop und nach `StartLimitBurst` in `failed`-State.
+
+**Fix-Sequenz pro Host:**
+
+NAS:
+```bash
+ssh -t Jahcoozi@192.168.22.90 'bash -lc "cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.pre-migration-$(date +%F) && source ~/.nvm/nvm.sh && openclaw doctor --fix && sudo systemctl reset-failed openclaw-node.service && sudo systemctl restart openclaw-node.service"'
+```
+
+yoga7:
+```bash
+ssh yoga7@192.168.22.86 'bash -lc "cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.pre-migration-$(date +%F) && PATH=~/.npm-global/bin:\$PATH openclaw doctor --fix && systemctl --user reset-failed openclaw-node.service && systemctl --user restart openclaw-node.service"'
+```
+
+- Backup vor `doctor --fix` ist Pflicht (auch wenn doctor selbst eines macht)
+- `doctor --fix` Init dauert ~60-90s — SSH-Timeout >= 180s setzen
+- `reset-failed` VOR `restart` — sonst silent no-op wenn Service ueber StartLimitBurst gegangen ist (siehe naechste Warnung)
+- Verifikation auf moltbot: `openclaw nodes list` → "Last Connect: just now"
+
+> **Detail-Memo:** [reference_remote_nodes.md](~/.claude/projects/-home-moltbotadmin/memory/reference_remote_nodes.md) — vollstaendige host-spezifische Sequenzen + SSH-Setup + Backups-Pfade.
+
+#### 🔴 systemd `reset-failed` ist Pflicht vor `restart` nach Crash-Loops
+
+Wenn ein Service durch wiederholte Schema-Crashes ueber `StartLimitBurst` (Default 5 in 10s) gegangen ist, landet er in `failed`-State. Folgende `systemctl restart` Befehle werden dann **silent no-op** — Exit-Code 0, aber NICHTS PASSIERT. Du liest den Erfolg an `exit 0` ab und bemerkst Stunden spaeter, dass der Service tot ist.
+
+**Pattern fuer alle systemd-Restarts nach Crash-Loops:**
+```bash
+systemctl --user reset-failed <service>   # rate-limit/failed-state zuruecksetzen
+systemctl --user restart <service>        # jetzt greift der Restart wirklich
+```
+
+Gleiche Vorsichtsmassnahme bereits im Gateway-Troubleshooting-Block (Zeile ~2110).
 
 ### Security-Haertung (2026-04-09)
 
@@ -2215,3 +2281,27 @@ Wenn der Gateway während eines `openclaw agent`-Calls einen Service-Restart mac
 **🔵 Phantom-Services-Pattern**
 
 `openclaw-relay.service` und `openclaw-tunnel.service` auf yoga7 (autossh-Tunnels) waren beobachtbar systemd-`active (running)` aber **funktional tot** weil auf der NAS-Seite kein Service auf 18792 lauscht. Pattern: **`status=active` ist semantik-frei** — sagt nur "Prozess läuft", nicht "tut was Sinnvolles". Bei "Verbindung kommt nicht zustande"-Symptomen immer end-to-end testen (z.B. `curl --max-time 5 http://127.0.0.1:18792/json/version` durch den Tunnel), nicht nur den Service-Status.
+
+### 2026-05-15 — Remote-Node Update v4.x → v5.x (NAS + yoga7)
+
+**Auslöser:** Gateway-Logs voller `protocol mismatch` WARNs — beide Nodes (NAS v2026.4.15, yoga7 v2026.4.9) sprachen WS-Protokoll v3, Gateway v2026.5.6 erwartet v4. Reconnect-Storm alle ~10-25s.
+
+**Drei aufgedeckte Stolpersteine:**
+
+1. **Multi-Prefix-NPM-Falle auf yoga7** — Service hardcoded auf `~/.npm-global/lib/node_modules/openclaw/...`, aber generic `npm install -g openclaw@latest` ging in `~/.local/bin/openclaw`. Update wirkungslos sichtbar, real ineffektiv. Diagnose nur via `cat ~/.config/systemd/user/openclaw-node.service | grep ExecStart` möglich. Login-Shell zeigt `which openclaw` → `~/.local/bin` (irreführend). Gleiche Konsolidierungs-Falle wie moltbot vor 2026-04-28, nur nie aufgeräumt.
+
+2. **Schema-Migration als Update-Killer** — Nach v5-Update crashte yoga7 sofort wegen legacy `channels.telegram.streaming` (String statt Objekt). Node-Hosts brauchen Channels gar nicht, aber Schema-Validierung greift früh und prüft die ganze `openclaw.json`. Service ging in Restart-Loop und nach 5 Crashes in `failed`-State. Fix: `openclaw doctor --fix` mit Backup, plus expliziter Service-Restart.
+
+3. **`systemctl restart` als silent no-op** — Wenn der Service über `StartLimitBurst` gegangen ist, ignoriert systemd weitere `restart`-Befehle stillschweigend (Exit 0!). Pflicht-Pattern: `systemctl reset-failed <service>` VOR `restart`. Codex-Stop-Hook hat das beim Memory-Review als zweite Korrektur gefangen.
+
+**Stop-Hook-Findings (Codex Review):**
+- Erste Memory-Version hatte generischen `<host>`-Platzhalter mit yoga7-spezifischem PATH — auf NAS würde das fehlschlagen. Lösung: zwei host-spezifische Snippets statt eines generischen.
+- Erste `doctor --fix`-Sequenz endete ohne Service-Restart — Config wäre repariert, Node bliebe tot. Lösung: backup → doctor → reset-failed → restart → verify als unteilbare Sequenz.
+
+**Operative Erkenntnisse:**
+- **`openclaw nodes list` "Last Connect"-Spalte ist die authoritative Verifikations-Quelle** für Node-Updates. Log-Grep nach `protocol mismatch` zeigt nur Versuche, nicht Erfolg.
+- **SSH-Multi-Line-Befehle via interaktivem zsh-Pasting brechen IMMER** an der visuellen Spaltengrenze (auch in Double-Quotes). Lösung: Befehle direkt von moltbot ausführen statt zurück in Diana's Terminal reichen — bestätigt 2026-03-24-Lektion zum dritten Mal.
+- **`yoga7-kali` ist nur ein Pairing-Display-Label** — der Host läuft Native Debian/Ubuntu mit GNOME, keine WSL Kali. Memory war seit 2026-04-09 falsch, jetzt korrigiert.
+
+**Backups angelegt:**
+- yoga7: `~/.openclaw/openclaw.json.pre-streaming-migration-2026-05-15`
