@@ -1180,3 +1180,54 @@ Sonst sehen SW-Clients alte Versionen bis TTL-Ablauf. Default-Workflow für alle
 - UI: **Inter** 500 — für Kapitälchen-Labels mit 0.32em Tracking.
 - Old-Style + Tabular Nums (`font-variant-numeric: oldstyle-nums tabular-nums`) für Datumsangaben — wirkt wie gedruckter Nachruf.
 - `text-wrap: balance` für ausgewogene Pull-Quotes.
+
+### 2026-05-15 — Docker-Daemon Phantom-Port-Allocations
+
+**Symptom:** Mehrere Container failen beim Start mit `Bind for 0.0.0.0:<port> failed: port is already allocated`, obwohl kein anderer Container/Prozess den Port hält. Zusätzlich kann ein Container sich nicht mit seinem Netzwerk verbinden („network <id> not found"), obwohl das gleichnamige Netzwerk noch existiert (mit anderer ID).
+
+**Diagnose-Pattern — Schritt-für-Schritt:**
+```bash
+# 1) Kernel-Sockets prüfen
+ss -tln | grep ":<port>\b"
+
+# 2) iptables NAT prüfen
+iptables -t nat -L DOCKER -n | grep <port>
+
+# 3) Prozess auf Port
+lsof -i :<port>; fuser <port>/tcp
+
+# 4) Definitiver Beweis: Kann der Host selbst binden?
+python3 -c "import socket; s=socket.socket(socket.AF_INET, socket.SOCK_STREAM); \
+  s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); \
+  s.bind(('0.0.0.0', <port>)); print('FREE'); s.close()"
+
+# 5) Welcher Container will den Port?
+for c in $(docker ps -aq); do
+  b=$(docker inspect "$c" --format '{{.HostConfig.PortBindings}}')
+  echo "$b" | grep -q "<port>" && docker inspect "$c" --format '{{.Name}}: {{.HostConfig.PortBindings}}'
+done
+```
+- Wenn 1–4 alle clear sind aber Docker meldet weiterhin „allocated" → **Phantom-Allocation im Docker-Daemon-RAM**.
+- `docker rm -f` + `docker compose up -d` reicht NICHT.
+- `docker compose down --remove-orphans` + `up -d` reicht NICHT.
+- Nur ein Daemon-Restart löst Phantome auf (Daemon-State wird komplett neu aufgebaut). Auf UGREEN NAS: `sudo systemctl restart docker` — wegen Live-Production-Charakter ist das eine bewusste Diana-Entscheidung, nicht automatisierbar.
+
+**Recovery nach Daemon-Restart:**
+- `unless-stopped`/`always` Container kommen automatisch hoch (in dieser Session 48 von 54).
+- Container mit `restart: no` (z.B. `voice-agent-1`) → manuell `docker start <name>`.
+- Container, die schon vor dem Restart im Phantom-Block hingen, bleiben oft im `Created`-Status; nach dem Restart genau prüfen:
+  ```bash
+  docker ps -a --filter "status=created" --filter "status=exited" \
+    --format '{{.Names}}: {{.Status}}'
+  ```
+- Beobachtet: `searxng`, `openapi-docker-health`, `crawl4ai-n8n` blieben `Created`; `homeassistant` ging in `Exited (0)` — alle vier brauchten ein manuelles `docker start`.
+
+**Verschwundene Network-Referenzen:**
+- Symptom: `Error response from daemon: network <id> not found`.
+- Ursache: Daemon hält veraltete Network-ID im Container-Spec, obwohl das gleichnamige Netzwerk existiert (neue ID).
+- Lösung: Identisch — Daemon-Restart baut Network-IDs neu auf und referenziert sauber.
+
+**Docker-Service-Unit auf UGREEN NAS:**
+- `docker.service` (klassischer systemd-Unit) — `pkg-ContainerManager-dockerd` existiert auf UGREEN nicht (anders als auf Synology-DSM).
+- `systemctl status docker` zeigt Main PID, Tasks, Memory.
+
