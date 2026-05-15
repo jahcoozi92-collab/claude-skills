@@ -391,3 +391,69 @@ SET LOCAL hnsw.ef_search = 100;
 - Diana bevorzugt, dass Claude komplexe Multi-Befehle via SSH selbst ausführt
 - Grund: Terminal-Pasting bricht bei Zeilenumbrüchen, Quoting und Sonderzeichen
 - Pattern: `ssh moltbotadmin@192.168.22.206 'cd ... && python3 ...'`
+
+### 2026-05-15 — Ontology-CLI: chmod, query --where, related-Format, ID-Convention
+
+**🔴 ontology.py braucht chmod +x — Shebang allein reicht nicht**
+- Datei hat `#!/usr/bin/env python3` als erste Zeile
+- ABER: Default-Permissions sind `rw-rw-r--` (kein +x)
+- Direkter Aufruf scheitert: `zsh: keine Berechtigung: ~/clawd/.../ontology.py`
+- **Fix einmalig auf jeder Maschine:**
+  ```bash
+  chmod +x ~/clawd/skills/ontology/scripts/ontology.py
+  ```
+- Step 5 im Reflect-Workflow sollte einmaliger chmod-Check sein
+
+**🔴 `ontology query` ist EXAKT-MATCH via `--where`, nicht Volltextsuche**
+- FALSCH (war meine Annahme): `query -q "MQTT"` für Substring-Suche
+- RICHTIG: `query --where '{"name":"yoga7-ha-bridge"}'` (exakte Property)
+- Volltext-Workaround mit jq:
+  ```bash
+  ont list -t Pattern | jq '.[] | select(.properties.name | test("MQTT"; "i"))'
+  ```
+- Oder mit Python:
+  ```bash
+  ont list -t Software | python3 -c '
+  import json, sys, re
+  for e in json.load(sys.stdin):
+      if re.search("X", json.dumps(e.get("properties",{})), re.I):
+          print(e["id"], e["properties"].get("name"))'
+  ```
+
+**🔴 `ontology related` Output-Struktur — Keys: `relation` + `entity` (nested)**
+- FALSCH (meine erste Annahme): `.[].rel`, `.[].target_id`
+- RICHTIG:
+  ```json
+  [{
+    "relation": "uses",
+    "entity": {
+      "id": "sw_paho_mqtt_v2",
+      "type": "Software",
+      "properties": {"name": "...", "desc": "..."}
+    }
+  }]
+  ```
+- jq-Parse:
+  ```bash
+  ont related --id sw_yoga7_ha_bridge | jq -r '.[] | "  --\(.relation)--> \(.entity.id) (\(.entity.properties.name))"'
+  ```
+
+**🟡 ID-Naming-Konvention für neue Entities — IMMER `--id` setzen**
+- Konsequent: `sw_<name>` (Software), `p_<name>` (Pattern), `t_<name>` (Task)
+- Beispiel: `--id sw_yoga7_ha_bridge` statt Auto-`soft_<hash>`
+- Auto-IDs (`soft_a1b2c3d4`) entstehen wenn `--id` fehlt — schlechter durchsuchbar
+- Bestehende Auto-IDs in der Graph: gewachsen über Sessions, neu erstellte konsequent saubere Prefixe
+
+**🟡 Daily-Use-Filter-Patterns**
+| Frage | Befehl |
+|-------|--------|
+| Heute neu erstellt? | `ont list -t Pattern \| jq '.[] \| select(.created > "2026-05-14") \| .properties.name'` |
+| Volltext-Suche | `ont list -t Software \| jq '.[] \| select(.properties.name \| test("MQTT"; "i"))'` |
+| Was nutzt X? | `ont related --id sw_X \| jq -r '.[] \| "\(.relation): \(.entity.id)"'` |
+| Alle Anti-Patterns | `ont list -t Pattern \| jq '.[] \| select(.properties.name \| startswith("ANTI"))'` |
+
+**🔵 Aliase + Symlinks für Daily-Use**
+- Symlink: `ln -s ~/clawd/skills/ontology/scripts/ontology.py ~/.local/bin/ont`
+- Voraussetzung: `~/.local/bin` im PATH (Debian/Kali Default ja, manche Distros nicht)
+- zsh-Alias als Backup: `echo "alias ont='python3 ~/clawd/skills/ontology/scripts/ontology.py'" >> ~/.zshrc`
+- Verify: `which ont`

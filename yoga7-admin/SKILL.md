@@ -929,3 +929,45 @@ homeassistant/<domain>/<node>/<key>/config   ← Discovery (retained)
   - statt `cat <config>` → `grep -E "specific" <config>`
 - Bei explicit user-authorization für sensitive ops: Permission-Rule in `~/.claude/settings.json` adden
 - Alternative für one-off: User per `! ssh ...` selber ausführen, Output pasten
+
+---
+
+### 2026-05-15 — CLI-Tool-Setup-Pattern + Ontology lokal
+
+**🔴 CLI-Tool-Setup-Pattern für ~/clawd/-Tools**
+Wenn ein Python-Skript aus `~/clawd/skills/*/scripts/*.py` direkt aufrufbar sein soll:
+
+```bash
+# 1. Execute-Bit setzen (Shebang #!/usr/bin/env python3 ist meist schon da)
+chmod +x ~/clawd/skills/<tool>/scripts/<tool>.py
+
+# 2. Symlink in PATH-Verzeichnis (~/.local/bin ist auf Kali default im PATH)
+mkdir -p ~/.local/bin
+ln -sv ~/clawd/skills/<tool>/scripts/<tool>.py ~/.local/bin/<short-name>
+
+# 3. zsh-Alias als Backup (falls PATH-Issues)
+echo "alias <short-name>='python3 ~/clawd/skills/<tool>/scripts/<tool>.py'" >> ~/.zshrc
+source ~/.zshrc
+
+# 4. Verify
+which <short-name>     # /home/yoga7/.local/bin/<short-name>
+<short-name> --help    # läuft ohne python3-Prefix
+```
+
+**Symptom wenn chmod fehlt (Shebang trotzdem da):**
+```
+zsh: keine Berechtigung: /home/yoga7/clawd/.../ontology.py
+```
+
+**🔵 Ontology lokal auf Yoga7 (Reflect-Skill nutzt das)**
+- Pfad: `~/clawd/skills/ontology/scripts/ontology.py`
+- KEIN SSH zur Clawbot VM nötig — der Reflect-Skill checkt zuerst lokal
+- Symlink eingerichtet: `~/.local/bin/ont` → `ontology.py`
+- Daily-Use:
+  ```bash
+  ont list -t Software           # alle Software-Entities
+  ont get --id sw_yoga7_ha_bridge
+  ont related --id t_ha_komplettrefactor
+  ont query --where '{"name":"X"}'   # exakt-match
+  ```
+- Data-Lokation: `~/clawd/skills/ontology/data/*.json` (Backup-fähig)
