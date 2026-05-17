@@ -459,3 +459,29 @@ Script: `tools/open-webui-sync/link-files-to-collection.py` im claude-skills Rep
 SELECT COUNT(*) FROM knowledge_file;          -- > 0 = Files verknuepft
 SELECT name, json_array_length(json_extract(data, '$.file_ids')) FROM knowledge;  -- Anzahl IDs pro Collection
 ```
+
+---
+
+## 2026-05-17 — Empfohlene OpenAPI-Tools für Sprachabfragen
+
+Diese FastAPI-Services laufen bereits auf der NAS und eignen sich direkt als External Tool in Open WebUI:
+
+| Service | URL | Hauptzweck |
+|---|---|---|
+| **openapi-docker-health** | `http://192.168.22.90:8009` | `/containers/health` liefert `{up, total, problems[]}` — ideal für Sprachabfragen „Läuft alles?", „Welche Container haben Probleme?" |
+| openapi-weather | `http://192.168.22.90:8005` | Wetter |
+| openapi-filesystem | `http://192.168.22.90:8003` | Dateisystem-Zugriff |
+| openapi-memory | `http://192.168.22.90:8004` | Chat-Memory |
+| openapi-speechreader | `http://192.168.22.90:8006` | TTS via SpeechReader |
+| fem-pipeline | `http://192.168.22.90:8746` | PPTX→Video-Pipeline (Pflege-Lehre) |
+| pptx-audio-service | `http://192.168.22.90:8745` | PPTX-Text/Audio-Embed |
+
+**Wichtig:** Alle haben **keine Root-Route** (`GET /` → 404). Das ist normal und KEIN Bug — Open WebUI registriert die Tools über `/openapi.json`. Manuell prüfen: `curl http://.../openapi.json | jq .paths`.
+
+**Registrierungs-Pattern:**
+```
+Admin Settings → External Tools → + (Add Server)
+  Type: OpenAPI         ← NICHT MCP!
+  URL:  http://192.168.22.90:PORT
+  Auth: None
+```
