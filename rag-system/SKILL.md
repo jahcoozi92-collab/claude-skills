@@ -603,7 +603,14 @@ ANTWORT:
 1. Diana's Supabase-Projekt: wfklkrgeblwdzyhuyjrv
 2. Ollama läuft auf NAS Port 11434
 3. Medifox-Dokumente in NextCloud gespeichert
-4. **Aktiver Chat-Workflow:** SJ47UX9mv8wh1Wwy (RAG_Masterclass_Chat_hybrid)
+4. **Aktiver Chat-Workflow:** `SJ47UX9mv8wh1Wwy` (RAG_Masterclass_Chat_hybrid, 85 Nodes, Active=True)
+   - ⛔ **NICHT verwechseln** mit diesen INAKTIVEN Klonen/Legacy-Workflows:
+     | Falscher Workflow | ID | Status |
+     |---|---|---|
+     | RAG_Masterclass_Chat_hybrid_FIXED | `FIXB4C6D4E9319D4` | inaktiv (73 Nodes, Klon-Variante) |
+     | RAG_Masterclass_Chat_hybrid__draft_v1 | `YtCRdYSGFJ5BEcLj` | inaktiv (Draft) |
+     | Medifox_Migration_Support_RAG | `Ma9SaTX6xmG3lSB8` | inaktiv (17 Nodes, separater Migration-Helfer) |
+   - **Lesson 2026-05-17:** Bei Frage „Ist Medifox-RAG angebunden?" → produktiv ist `SJ47UX9mv8wh1Wwy`, NICHT `Ma9SaTX6xmG3lSB8`. Der Medifox-Migration-Workflow ist ein eigener, derzeit nicht genutzter Workflow.
 5. **API-Test-Endpoint:** `POST /webhook/rag-chat-api` (JSON-Antwort)
    - NICHT `GET /webhook/medifox-chat` (das liefert die HTML-Seite)
    - Payload: `{"sessionId":"test-xyz","chatInput":"Frage hier"}`
