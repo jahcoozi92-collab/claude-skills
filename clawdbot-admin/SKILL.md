@@ -2474,3 +2474,130 @@ Der Claude-Code-Auto-Mode-Classifier blockiert Edits an Files, die er als "poten
 - Memory-Notiz: `~/.claude/projects/-home-moltbotadmin/memory/project_vm_hardening_status.md`
 - Snippets bleiben in `/tmp/openclaw-hardening/` (INSTALL.sh, jail.local, 50unattended-upgrades-local, 20auto-upgrades) — bei Reboot weg, dann via Git-Geschichte rekonstruierbar
 - settings.json vor Hook-Aktivierung: `~/.claude/settings.json.pre-self-improve-hooks-2026-05-15`
+
+---
+
+## OpenClaw 2026-05-17 Lessons (Doctor-Disziplin + Provider-Fallen)
+
+### 🔴 Doctor-Warntext-Disziplin
+
+OpenClaw Doctor-Warnungen mit Wort **"after confirming"** oder **"after verifying"** sind **Vorbedingungen, keine Empfehlungen**. Configs die zweistellige Plugin-/Skill-Counts deaktivieren, niemals ohne Audit setzen. Codex Stop-Time-Review hat 2026-05-17 einen voreilig gesetzten `plugins.bundledDiscovery="allowlist"` abgefangen (80 disabled bundled plugins ohne Inventur).
+
+**Heuristik:** Doctor sagt "Disabled: N"? Bei N≥10 ist jede Aktivierungs-Aktion ein Audit, keine Cleanup-Op.
+
+### 🔴 Provider-Harness-Default-Falle
+
+OpenAI auf official endpoint `https://api.openai.com/v1` **defaultet auf "codex"-Harness** (externes ACP-CLI). Wenn nicht installiert:
+```
+Error: Requested agent harness "codex" is not registered.
+```
+**Quelle:** `dist/runtime-schema-C9vXpfG_.js:568` — "OpenAI on the official endpoint defaults to the Codex harness when omitted."
+
+**Globaler Fix (in `openclaw.json`):**
+```json
+"models": { "providers": { "openai": { "agentRuntime": { "id": "pi" } } } }
+```
+
+**Lokaler Fix für einzelne Cron-Jobs:** Modell auf `google/gemini-2.5-flash` oder `anthropic/claude-sonnet-4-6` umstellen (beide nutzen nativen `pi`-Harness).
+
+### 🔴 Agent-Fallback-Schema-Falle
+
+In `agents.list[].model` überschreibt bare-string `"x/y"` die `agents.defaults.model.fallbacks` **komplett** (kein Deep-Merge). Doctor warnt: *"clobbers agents.defaults.model.fallbacks, leaving the agent with no fallbacks"*.
+
+**DSGVO-Konsequenz:** Pflege-Agents brauchen explizite Fallbacks, sonst kein Failover bei Anthropic-Outage UND System-Defaults beinhalten `openai/gpt-5.4` (US-Provider) → würde Patientendaten in USA leaken.
+
+**Korrekte Form:**
+```json
+"model": {
+  "primary": "anthropic/claude-sonnet-4-6",
+  "fallbacks": ["anthropic/claude-opus-4-6", "anthropic/claude-haiku-4-5"]
+}
+```
+
+**Mapping nach DSGVO-Relevanz:**
+- Pflege-tauglich (`sonnet`, `pflege`, `opus`): nur Anthropic-EU im Fallback
+- Explizit non-Pflege (`deepseek`, name enthält "NICHT für Pflege"): System-Defaults OK
+
+### 🔴 CLAWDBOT→OPENCLAW Env-Migration-Reihenfolge
+
+Legacy `CLAWDBOT_*` Env-Vars triggern `DeprecationWarning: Legacy CLAWDBOT_* environment variables were detected, but OpenClaw only reads OPENCLAW_* names now`. Migration ist **5-File-Touch**:
+
+| File | Aktion |
+|------|--------|
+| `~/.openclaw/.env` | `CLAWDBOT_GATEWAY_TOKEN` → `OPENCLAW_GATEWAY_TOKEN` + `CLAWDBOT_HOOKS_TOKEN` → `OPENCLAW_HOOKS_TOKEN` |
+| `~/.openclaw/gateway.systemd.env` | gleiche Umbenennung |
+| `~/.openclaw/openclaw.json` | `${CLAWDBOT_*}` → `${OPENCLAW_*}` in `gateway.token` + `hooks.token` |
+| `~/.config/systemd/user/openclaw-gateway.service` | `OPENCLAW_SERVICE_MANAGED_ENV_KEYS` Liste: alte raus, neue rein (alphabetisch) |
+| `~/bin/dashboard-url.sh` | Fallback `${OPENCLAW_X:-${CLAWDBOT_X:-}}` für Shell-Sessions mit alten Env-Vars |
+
+**Reihenfolge ist KRITISCH:**
+1. Backup aller 5 Files mit konsistentem Suffix `.pre-rename-YYYYMMDD-HHMMSS`
+2. env-Files (`.env` + `gateway.systemd.env`) zuerst
+3. `openclaw.json` Interpolation auf neue Namen
+4. systemd-service `managed-keys` Liste anpassen
+5. externe Scripts mit Fallback ausstatten
+6. `systemctl --user daemon-reload && systemctl --user restart openclaw-gateway.service`
+
+**Falsche Reihenfolge bricht alles:** Hot-Reload während Halb-Migration → `SecretRefResolutionError: Environment variable "OPENCLAW_GATEWAY_TOKEN" is missing or empty`. Verify via Process-Env: `tr '\0' '\n' < /proc/$(systemctl --user show openclaw-gateway.service -p MainPID --value)/environ | grep CLAWDBOT_` muss leer sein.
+
+### 🟡 Cross-Agent Skills-Check ist Pflicht
+
+`openclaw skills check --agent main` oder `--agent sonnet` allein ist NICHT ausreichend. Agents ohne explizite `skills`-Allowlist (z.B. `opus`, `pflege`, `deepseek`) sehen **mehr** Skills und können andere Missing-Requirements melden. Cross-Agent-Loop:
+
+```bash
+for a in main sonnet opus pflege deepseek; do
+  openclaw skills check --json --agent $a 2>/dev/null | python3 -c "
+import json,sys; d=json.load(sys.stdin); s=d['summary']
+print(f'  $a: missing={s[\"missingRequirements\"]} disabled={s[\"disabled\"]} eligible={s[\"eligible\"]}')
+"
+done
+```
+
+Erst wenn ALLE Agents `missing=0` zeigen, ist das UI-Warning "Skills with missing dependencies" wirklich weg.
+
+### 🟡 Skills systemweit deaktivieren statt per-Agent
+
+Plattform-inkompatible Skills (macOS-only: apple-*, things-mac, peekaboo, bear-notes / fehlende CLIs: 1password, notion, slack, voice-call) gehören in `skills.entries.<name>.enabled = false` der `openclaw.json` — nicht ins Agent-allowlist-Filter. Vorteil: gilt für alle aktuellen + zukünftigen Agents, sichtbar in `openclaw skills list` als `🚫 excluded`.
+
+**Bulk-Disable per Python statt 30× `openclaw config set`:**
+```python
+import json
+from pathlib import Path
+cfg = Path.home() / ".openclaw/openclaw.json"
+data = json.loads(cfg.read_text())
+entries = data.setdefault("skills", {}).setdefault("entries", {})
+for name in ["1password", "apple-notes", "things-mac", "..."]:
+    entries.setdefault(name, {})["enabled"] = False
+cfg.write_text(json.dumps(data, indent=2) + "\n")
+```
+
+### 🔵 Auto-Mode-Classifier-Heuristik (erweitert)
+
+Der Claude-Code-Auto-Mode-Classifier blockt nicht nur Edits an "potentiell ausgeführten Files", sondern auch **globale Provider-Konfiguration**, wenn der User nur einen lokalen Fix (z.B. einen Cron-Job) angefragt hat. Bezeichnung: "scope escalation beyond the user's '...' request".
+
+**Richtig reagieren:**
+1. Nicht versuchen zu umgehen
+2. Job-lokalen Fix sofort anbieten (löst das akute Problem)
+3. Globalen Fix als optionalen Folge-Schritt eskalieren mit Auswahlfrage an den User
+4. Wenn User explizit zustimmt ("behebe alle Probleme") → globaler Fix wird genehmigt
+
+### 🔵 Backup-Naming bei Multi-File-Migrationen
+
+Konsistenter Timestamp-Suffix für ALLE in einer Migration berührten Files:
+```bash
+TS=$(date +%Y%m%d-%H%M%S)
+cp ~/.openclaw/openclaw.json{,.pre-migration-$TS}
+cp ~/.openclaw/.env{,.pre-migration-$TS}
+# ...
+```
+Rollback in einem Sweep: `for f in ~/.openclaw/*.pre-migration-$TS; do mv "$f" "${f%.pre-migration-$TS}"; done`
+
+### Referenzen
+
+- Memory-Notizen: 
+  - `~/.claude/projects/-home-moltbotadmin/memory/feedback_openai_codex_harness_default.md`
+  - `~/.claude/projects/-home-moltbotadmin/memory/feedback_clawdbot_openclaw_env_migration.md`
+  - `~/.claude/projects/-home-moltbotadmin/memory/feedback_agent_fallbacks_dsgvo.md`
+  - `~/.claude/projects/-home-moltbotadmin/memory/feedback_bundled_discovery_allowlist_audit.md`
+- Backups vom 2026-05-17: `~/.openclaw/openclaw.json.pre-runtime-envrename-20260517-162808` u.a.
+- Codex Stop-Time-Review-Vorfall: blockierte `plugins.bundledDiscovery="allowlist"` ohne Bundled-Inventur
