@@ -1164,3 +1164,41 @@ docker exec ollama ollama create model-fast -f /root/.ollama/Modelfile-fast
 │ Aufräumen:            docker system prune              │
 └────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## 2026-05-17 — „Port already allocated" Decision-Tree (NAS-bewährt)
+
+**Symptom:** `Error response from daemon: driver failed programming external connectivity ... Bind for 0.0.0.0:PORT failed: port is already allocated`
+
+**Diagnose-Pfad:**
+```
+1. sudo ss -tlnp | grep ":PORT"       ← KRITISCH: ohne sudo zeigt es keine PIDs
+   sudo lsof -i :PORT
+   │
+   ├─ Prozess sichtbar (z.B. docker-proxy mit PID)
+   │    → Verwaister Geist nach Container-Crash/SIGTERM
+   │    → docker compose down --remove-orphans räumt das NICHT auf
+   │    Fix:
+   │      sudo kill -9 <PIDs>
+   │      sudo iptables -t nat -L DOCKER -n --line-numbers | grep ":PORT"
+   │      sudo iptables -t nat -D DOCKER <line>   ← stale DNAT-Regel löschen
+   │      sudo iptables -L DOCKER -n --line-numbers | grep "<alte-container-IP>"
+   │      sudo iptables -D DOCKER <line>          ← stale FORWARD-Regel löschen
+   │      sudo iptables -t nat -L POSTROUTING -n --line-numbers | grep "<alte-container-IP>"
+   │      sudo iptables -t nat -D POSTROUTING <line>
+   │      docker compose up -d
+   │
+   └─ KEIN Prozess sichtbar, kein iptables-Eintrag → Docker-Daemon-State-Cache-Bug
+        Versuche zuerst (oft erfolglos):
+          docker rm -f <container>
+          docker network rm <network>
+          docker network prune -f
+        In Production WICHTIG: **anderen Host-Port wählen** (z.B. 8083 → 8084)
+        Daemon-Restart hilft, ist aber disruptiv (alle Container down/up)
+        Reboot der NAS löst den Daemon-Cache komplett auf
+```
+
+**Vaultwarden-Spezifika (seit Version 1.29+):**
+- Separater WebSocket-Port `3012:3012` ist **obsolet** — WebSockets laufen über Port 80 (Rocket Server unified)
+- Bei Restart-Problemen ruhig den 3012-Mapping aus `docker-compose.yml` entfernen, das macht die Migration einfacher
