@@ -56,7 +56,7 @@ Internet → Cloudflare Tunnel (cloudflared + cloudflared-archenoah, BEIDE notwe
   ├── speech.forensikzentrum.com     → SpeechReader (:5174)
   ├── speech-api.forensikzentrum.com → SpeechReader API (:8006)
   ├── ollama.forensikzentrum.com     → Ollama (:11436)
-  ├── vaultwarden.forensikzentrum.com → Vaultwarden (:8083)
+  ├── vaultwarden.forensikzentrum.com → Vaultwarden (:8084)  # ab 2026-05-17, Docker-Daemon-Cache-Bug auf 8083
   ├── homeassistant.forensikzentrum.com → HA (:8123)
   ├── jellyfin.forensikzentrum.com   → Jellyfin (:8096)
   ├── nextcloud.forensikzentrum.com  → Nextcloud (:8282)
@@ -1230,4 +1230,47 @@ done
 **Docker-Service-Unit auf UGREEN NAS:**
 - `docker.service` (klassischer systemd-Unit) — `pkg-ContainerManager-dockerd` existiert auf UGREEN nicht (anders als auf Synology-DSM).
 - `systemctl status docker` zeigt Main PID, Tasks, Memory.
+
+---
+
+### 2026-05-17 — Vaultwarden Port-Migration + Docker-Daemon-Cache + Cloudflare-Token-Mode + UGREEN-UI-Bug
+
+**Vaultwarden auf Port 8084 (vorher 8083):**
+- `docker-compose.yml`: `ports: ["8084:80"]`, WebSocket-Port `3012:3012` entfernt (seit Vaultwarden 1.29+ über Port 80 integriert)
+- `cloudflared/config.yml` auf 8084 aktualisiert, **aber** im Token-Mode wirkungslos — Route musste manuell im Cloudflare Zero Trust Dashboard auf 8084 gesetzt werden
+
+**Docker-Daemon Port-Reservation-Cache-Bug:**
+- Symptom: `Bind for 0.0.0.0:PORT failed: port is already allocated`, obwohl `sudo ss -tlnp` UND `sudo lsof -i :PORT` **nichts** zeigen
+- Auslöser: SIGTERM-Crash hinterließ verwaiste `docker-proxy`-Prozesse + stale iptables-DNAT-Regeln zu nicht mehr existierenden Container-IPs
+- Cleanup-Reihenfolge half nicht vollständig:
+  1. `sudo kill -9 <docker-proxy-PIDs>` (lsof -ti :PORT findet sie nur mit sudo)
+  2. `sudo iptables -t nat -L DOCKER -n --line-numbers` → stale Regel per Zeilennummer löschen
+  3. `docker rm -f`, `docker network rm`, `docker network prune` — Docker-Daemon-interner State blieb trotzdem blockiert
+- Robuste Lösung in Production: **anderen Host-Port nehmen**. Daemon-State löst sich erst beim nächsten Reboot.
+- ⚠️ `docker compose down --remove-orphans` räumt diese Geist-Proxies NICHT auf
+
+**Cloudflared Token-Mode (KRITISCH):**
+- `docker inspect cloudflared` zeigt `--token eyJh...` oder `CLOUDFLARE_TUNNEL_TOKEN=...` als Env
+- Im Token-Mode wird `config.yml` **ignoriert** — Routen leben ausschließlich in der Zero Trust Dashboard
+- `api-upload-routes-v2.sh` braucht einen separaten Cloudflare-API-Token (Permission „Edit Cloudflare Zero Trust")
+- Konsequenz: Port-Änderungen am NAS-Container brauchen **immer eine zweite manuelle Aktion** in der Dashboard
+
+**UGREEN-Dashboard Container-Link-Bug:**
+- Die NAS-UI generiert für **jeden** Container-Port Links der Form `http://192.168.22.90:9999/ugreen/v1/desktop/redirect?url=<base64>`
+- Bei TCP-only-Diensten (Wyoming 10200/10300/10400, MQTT 1883/9001, Postgres 5438/5439, Redis 6381, mcp-proxy/sse 8000) → Black/Whitescreen oder `ERR_EMPTY_RESPONSE`
+- **Kein Container-Fehler!** Diese Dienste werden nicht per Browser, sondern mit Native-Client genutzt:
+  - Wyoming → über Home Assistant Voice-Assistant-Settings
+  - MQTT → MQTT Explorer / HA-Integration
+  - Postgres → `docker exec -it <container> psql -U <user> -d <db>` oder pgAdmin/DBeaver
+  - Redis → `docker exec <container> redis-cli`
+  - MCP-Proxy → über `/sse` mit MCP-Client (Browser-Aufruf von `/` ergibt korrekt 404)
+
+**FastAPI-Services ohne Root-Route (NORMAL, nicht melden als Bug):**
+| Container | Port | Korrekte Aufruf-URLs |
+|---|---|---|
+| openapi-docker-health | 8009 | `/docs`, `/health`, `/containers/health` (Sprachabfrage „Läuft alles?") |
+| fem-pipeline | 8746 | `/docs`, `/health` |
+| pptx-audio-service | 8745 | `/docs`, `/health` |
+| crawl4ai | 18800 | `/playground/`, `/health` |
+| mcp-proxy-server | 8000 | `/sse`, `/status` |
 
