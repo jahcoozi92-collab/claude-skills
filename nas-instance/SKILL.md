@@ -1274,3 +1274,136 @@ done
 | crawl4ai | 18800 | `/playground/`, `/health` |
 | mcp-proxy-server | 8000 | `/sse`, `/status` |
 
+
+---
+
+### 2026-05-19 — HA Dashboards Mobile-First, Notify-API, VW Tiguan, Jarvis-Multi-Channel-Alerts, ADB-Phone-Debug
+
+**HA Dashboard-Architektur:**
+- `max_columns: 1` für ALLE Dashboards in HA → garantiert Mobile-Lesbarkeit (S25 Ultra)
+- Bei Split-Screen am Yoga7 sind 2+ Spalten auch zu schmal — `max_columns: 1` ist universell
+- **Standard HA `tile`-Karten** sind nativ mobile-optimiert (Touch-Target 44+ px, große Icons, klare Hierarchie)
+- `dense_section_placement: true` packt Sektionen auch bei breiten Viewports optimal
+- **Glassmorphism (backdrop-filter, rgba transparency) ist OUT** für HA-Dashboards — verschluckt Textkontrast
+- **Card-Mod CSS-Overrides nicht zuverlässig** auf allen Devices — Theme-Variablen + Standard-Karten bevorzugen
+
+**🔴 ANTI-PATTERNS HA-Dashboards:**
+| Was | Problem | Stattdessen |
+|---|---|---|
+| `mushroom-entity-card.secondary_info: "{{ ... }}"` | Akzeptiert NUR Literale (`state`, `last-updated` etc.) | `mushroom-template-card` oder `tile` |
+| `card-mod: style:` für Typography | Inkonsistent über Devices | Theme-Variablen (`mush-card-primary-font-size`, `ha-tile-card-icon-size`) |
+| `notify.<entity_id>` Service-Call | Deprecated in neuem Notify-Entity-System | `notify.send_message` + `target: { entity_id: notify.X }` |
+| Glassmorphism (`backdrop-filter`, `rgba(28,28,43,0.78)`) | Karten verschwimmen, weiß-auf-weiß möglich | volle Opazität `card-background-color: #1c1c2b` |
+| Mushroom-Chips mit komplexen Templates | Klein, fragil bei rendering | tile-Grid mit klaren Werten |
+| `automation:` im Package + `automation: !include` | Konfliktiert, package-Automations laden nicht | Automations nur in `/config/automations.yaml` |
+
+**🔴 HA Entity-ID-Generation:**
+- HA generiert `entity_id` aus **friendly NAME** (in der Locale-Sprache, also Deutsch), NICHT aus `unique_id`
+- Beispiel: Template-Sensor mit `name: "Dyson V11 lädt"` → `binary_sensor.dyson_v11_ladt` (nicht `dyson_v11_charging` was `unique_id` ist)
+- Dashboards IMMER mit echten DB-entity_ids verifizieren:
+  ```python
+  sqlite3.connect('file:.../home-assistant_v2.db?mode=ro', uri=True)
+  ```
+
+**🟢 Pattern „input_boolean-Fallback vor Companion-App":**
+```yaml
+input_boolean:
+  diana_anwesend:
+    name: Diana zu Hause
+```
+- Manueller Toggle bis Companion App eingerichtet
+- Sync-Automation `person.X` → `input_boolean.X_anwesend` mit Bedingung:
+  ```yaml
+  condition:
+    - condition: template
+      value_template: "{{ states('person.diana') not in ['unknown','unavailable'] }}"
+  ```
+- Verhindert dass Toggle bei `unknown` Person fälschlich togglet
+
+**🟢 Pattern „Idempotenter Sync local↔cloud":**
+- Sync-Automation hat `condition: states(A) != states(B)` als Guard
+- Verhindert Endlos-Loops bei bidirektionalem Setup (lokaler Switch ↔ Cloud-Toggle)
+
+**🟢 Pattern „Picture-Elements für Fahrzeug-Status":**
+- Top-Down-SVG unter `/config/www/<auto>.svg` → erreichbar als `/local/<auto>.svg`
+- `picture-elements`-Karte mit `state-icon` Elements positioniert per `top: X%, left: Y%`
+- Türen/Fenster/Haube zeigen Live-Status (grün=zu, rot=offen)
+- Funktioniert ohne Custom-Cards, nur HA-native
+
+**🟢 Pattern „Jarvis-Multi-Channel-Alert":**
+```yaml
+action:
+  - service: notify.send_message
+    target: { entity_id: notify.sm_s938b }
+    data: { title: "...", message: "..." }
+  - service: tts.speak
+    target: { entity_id: tts.elevenlabs_text_zu_sprache }
+    data:
+      media_player_entity_id: media_player.dianas_echo_show_8_2nd_gen
+      message: >-
+        {% if is_state('input_boolean.diana_anwesend','on') %}Diana, ...
+        {% else %}Achtung. Niemand zu Hause...{% endif %}
+```
+- **Voice via ElevenLabs auf Echo Show + Echo Dot** — natürliche Sprache, kontextabhängig
+- Push UND Voice parallel — niemand verpasst den Alarm
+
+**🟢 Software: `volkswagencarnet` HACS-Integration**
+- Für VW Tiguan 2024 (Diesel/eHybrid + andere VW-Modelle)
+- Erzeugt 63 Entities pro Auto (sensor, binary_sensor, lock, switch, device_tracker)
+- **Entity-Naming:** `<DOMAIN>.<VIN-lowercase>_<sensor>` (z.B. `sensor.wvgzzzct6rw519244_fuel_level`)
+- Wichtige Entities:
+  - `device_tracker.<vin>_position` (GPS mit lat/lon Attributen)
+  - `binary_sensor.<vin>_vehicle_moving` (für Jarvis-Bewegungs-Alarm)
+  - `lock.<vin>_door_locked`, `lock.<vin>_trunk_locked` (mit lock-commands feature)
+  - 8 Tür/Fenster `binary_sensor.<vin>_door_closed_*`, `_window_closed_*`
+  - Live-Werte: `_fuel_level`, `_fuel_range`, `_odometer`, `_adblue_level`
+  - Trips: `_last_trip_*`, `_long_term_trip_*`, `_refuel_trip_*`
+  - Wartung: `_service_inspection_days`, `_oil_inspection_days`
+- Login via VW-ID-Account (gleicher wie We-Connect-App)
+
+**🟢 Pattern „Scene-Definitionen mit Climate":**
+- Climate-Eintrag im scene.yaml braucht **`state: heat`** + temperature, nicht nur temperature
+- Sonst: `Invalid config for 'scene' ... State for climate.X should be a string`
+- Korrekt:
+  ```yaml
+  climate.schlafzimmer_room_climate_cont_2:
+    state: "heat"
+    temperature: 18
+  ```
+
+**🟢 Pattern „Lovelace mode:yaml-Deprecation (HA 2026.8)":**
+- Top-Level `lovelace.mode: yaml` wird entfernt
+- Migration: `resource_mode: yaml` + expliziter `lovelace`-Dashboard-Eintrag mit `url_path: lovelace` (oder per default-Konvention) + `filename: ui-lovelace.yaml`
+- Beispiel-Konfiguration siehe configuration.yaml in `/volume1/docker/home-assistant/config/`
+
+**🟢 Tool: ADB Wireless an Dianas Samsung Galaxy S25 Ultra**
+- Adresse: `192.168.22.202:35035` (permanent gepairt)
+- **Wichtig:** ADB ist auf **Yoga7** installiert (`/usr/bin/adb`), NICHT auf NAS — Auto-Classifier blockt NAS-`apt install android-tools-adb`
+- Pattern für Phone-Debugging:
+  ```bash
+  adb -s 192.168.22.202:35035 shell pm dump io.homeassistant.companion.android | grep LOCATION
+  adb -s 192.168.22.202:35035 shell appops get io.homeassistant.companion.android
+  adb -s 192.168.22.202:35035 shell pidof io.homeassistant.companion.android
+  ```
+- **Force-Stop weckt dormante App auf:**
+  ```bash
+  adb shell am force-stop io.homeassistant.companion.android
+  adb shell am start -n io.homeassistant.companion.android/.launch.LaunchActivity
+  # Launcher-Activity NICHT .MainActivity sondern .launch.LaunchActivity
+  ```
+- Companion App registriert sich bei HA, aber Standort-Sensor wird oft dormant — Force-Stop reaktiviert sofort
+- Eingesetzt für: Permissions-Check, App-Crash-Diagnose, GPS-Hänger-Beheben
+
+**🔵 Beobachtungen:**
+- **Recorder schließt `automation` Domain aus** (per default config in `02_system_monitoring`/HA-Standard) → Automation-State nicht in DB, Automations laufen TROTZDEM. Debug über `docker logs homeassistant`-grep
+- **zsh ohne bracketed-paste** bricht Multi-Line scp-Befehle bei Newlines → Variable-Pattern nutzen:
+  ```bash
+  D=user@host:/path/
+  scp file $D
+  ```
+- **`cp` mit `-i` alias** (interactive) fragt bei Overwrite → für sichere Overwrites: `cat file > target`
+- **Hugging Face ZeroGPU GPU-Tasks aborten** häufig — für deterministische Image-Bedarfe lieber manuelles SVG schreiben
+- **`input_text` mit Mode `password`**: Default `max: 100` reicht knapp für Shelly-API-Keys (89+ Zeichen) — auf `255` setzen
+- **Ping-Sensoren `binary_sensor.ping` Platform deprecated** → `command_line` mit `ping -c 2 -W 2` als binary_sensor
+- **systemmonitor Domain ist config_entry-only**, nicht mehr YAML-konfigurierbar — für NAS-Stats `command_line`-Sensoren direkt aus `/proc/stat`, `/proc/meminfo`, `df` nutzen (HA-Container ist privileged, hat Zugriff)
+- **Mit `awk '/^cpu /'`** statt allgemeinem `awk` arbeiten — `/proc/stat` hat mehrere `cpu` Zeilen pro CPU-Core, HA `command_line` erwartet einzelnen Wert
