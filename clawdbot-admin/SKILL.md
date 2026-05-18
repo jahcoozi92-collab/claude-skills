@@ -425,6 +425,59 @@ Diagnose (ps, ss, df, ...), Datei-Lesen (cat, head, grep, ...), Git, Python3, No
 
 **Nicht in safeBins (brauchen /approve):** rm, docker, systemctl, chmod, chown, awk, sed, jq — diese koennen destruktiv sein oder beliebigen Code ausfuehren.
 
+### Claude Code CLI Model Routing (3-Slot-System)
+
+**WICHTIG — Begriffstrennung:** Hier geht es um **Claude Code (das CLI-Tool)**, NICHT um OpenClaw-Gateway-Agenten. Beide nutzen dieselben Modellnamen (Sonnet/Opus/Haiku), die Konfiguration ist aber komplett getrennt:
+
+| System | Config-Datei | Slot-Modell |
+|--------|--------------|-------------|
+| OpenClaw-Gateway-Agenten | `~/.openclaw/openclaw.json` → `agents.list[].model` | Per-Agent (siehe Model-Aliases unten) |
+| Claude Code CLI | `~/.claude/settings.json` | 3-Slot global |
+
+**Die drei Claude-Code-Slots:**
+
+| Slot | Setting-Key | Zweck | Empfohlener Default |
+|------|-------------|-------|---------------------|
+| Hauptkonversation | `model` | User-Antworten, Tool-Calls | `claude-sonnet-4-6` |
+| Small/Fast | `env.ANTHROPIC_SMALL_FAST_MODEL` | Compaction, Subagent-Specs, File-Summaries | `claude-haiku-4-5-20251001` |
+| Reasoning-Tiefe | `effortLevel` | Reasoning-Pfade pro Tool-Call (`low`/`medium`/`high`) | `medium` |
+
+**🔴 Nicht-offensichtlich:** `effortLevel: "high"` aktiviert standardmaessig **Opus** als Hauptmodell — auch wenn `model` nicht gesetzt ist. Wer „high" als „mehr Qualitaet bei Sonnet" liest, zahlt unbemerkt Opus-Preise. `medium` laesst das explizit gesetzte `model` aktiv ohne Auto-Eskalation.
+
+**🔴 Cost-Hebel Small/Fast-Slot:** In langen Sessions (>1M Token) treibt Compaction signifikante Kosten. Wenn der Slot leer bleibt, faellt er aufs Hauptmodell zurueck — bei Opus-Default sind Compaction-Calls dann Opus-Calls. Haiku 4.5 spart hier ~95%.
+
+**Empfohlene Config (`~/.claude/settings.json`):**
+```json
+{
+  "model": "claude-sonnet-4-6",
+  "effortLevel": "medium",
+  "env": {
+    "ANTHROPIC_SMALL_FAST_MODEL": "claude-haiku-4-5-20251001"
+  }
+}
+```
+
+**Manueller Override pro Session:**
+- `/model opus` — Hochschalten fuer harte Tasks (Architektur, Multi-File-Refactoring, schwere Debug-Sessions)
+- `/model sonnet` — Zurueckschalten
+- Override persistiert nur in der Session, nicht in settings.json
+
+**Wann Opus wirklich noetig ist:**
+- Refactoring ueber >5 Files mit Cross-File-Abhaengigkeiten
+- Architektur-Design ohne klare Vorgabe
+- Investigation mit mehreren parallelen Hypothesen-Tracks
+- Wenn Sonnet zweimal hintereinander danebenliegt
+
+**Cost-Diagnose-Pattern (fuer `/cost`-Output):**
+1. **Top-Modelle-Tabelle pruefen** — Modell >70% Kostenanteil = Default-Lock-In, nicht Nutzungs-Pattern
+2. **Avg-Cost-pro-Nachricht vergleichen** — Opus ≈ Sonnet pro Msg → Haeufigkeit ist Problem, nicht Session-Laenge
+3. **Top-Tools pruefen** — `process`/`update_plan` hoch → effortLevel:high faehrt Reasoning-Loops; runter auf medium
+
+**Verifikation nach Restart:** Status-Zeile zeigt aktives Modell. Falls noch `opus` steht trotz Sonnet-Config → einmalig `/model sonnet` setzen; alte Session-Overrides persistieren manchmal.
+
+**Historie:**
+- 2026-05-18: Migration von `effortLevel:high` (Opus-Default) auf 3-Slot-Routing. Trigger: Opus-Anteil 89% der Claude-Code-Kosten ($6.55 von $7.39 in der vorangegangenen Abrechnungs-Periode). Erwartete Ersparnis: ~85%.
+
 ### Model-Aliases (`~/.clawdbot-model-aliases.sh`)
 
 Schnelles Model-Switching per Shell-Funktion. Wird in `.bashrc` gesourced.
