@@ -1407,3 +1407,62 @@ action:
 - **Ping-Sensoren `binary_sensor.ping` Platform deprecated** → `command_line` mit `ping -c 2 -W 2` als binary_sensor
 - **systemmonitor Domain ist config_entry-only**, nicht mehr YAML-konfigurierbar — für NAS-Stats `command_line`-Sensoren direkt aus `/proc/stat`, `/proc/meminfo`, `df` nutzen (HA-Container ist privileged, hat Zugriff)
 - **Mit `awk '/^cpu /'`** statt allgemeinem `awk` arbeiten — `/proc/stat` hat mehrere `cpu` Zeilen pro CPU-Core, HA `command_line` erwartet einzelnen Wert
+
+### 2026-05-19/20 — Jarvis Brain Deploy auf UGREEN NAS + Voice-Stack-Discovery
+
+**🔴 UGREEN-rsync läuft im Restricted-Mode — tar-pipe als Fallback**
+- `rsync user@nas:dir/` scheitert mit `mkdir failed: No such file or directory (2)` oder `invalid path: 'jarvis/brain/'`
+- Sowohl absolute (`/home/Jahcoozi/...`) als auch relative Pfade (`jarvis/...`) werden vom rsync-Daemon abgelehnt
+- **Workaround (zuverlässig):** tar-pipe via ssh stdin/stdout
+  ```bash
+  (cd $LOCAL && tar --exclude='__pycache__' --exclude='*.pyc' -czf - dirname) \
+    | ssh Jahcoozi@192.168.22.90 "rm -rf /home/Jahcoozi/target/dirname && tar -xzf - -C /home/Jahcoozi/target"
+  ```
+- Vorteil: kein rsync-Server-Mode, kein TLS, funktioniert mit jeder UGREEN-Firmware
+- Nachteil: kein delta-sync, immer Voll-Übertragung — bei großen Verzeichnissen `--newer` oder `find -mtime` davor
+
+**🔴 NAS-Shell expandiert `~` nicht für SSH-Heredocs**
+- `ssh nas "mkdir -p ~/jarvis"` wird zu `Jahcoozi/jarvis` (relativ zu `/`) statt `/home/Jahcoozi/jarvis`
+- Absolute Pfade in Scripts hardcoden: `NAS_PATH="${NAS_PATH:-/home/Jahcoozi/jarvis}"`
+- Erste ssh-Test-Sequenz für jedes neue Setup: `ssh nas 'echo HOME=$HOME; pwd; whoami'`
+- NAS-Home auf DXP4800: `/home/Jahcoozi`, Group: `admin` (nicht users)
+
+**🔴 Bestehender Voice-Stack auf NAS muss respektiert werden**
+Bevor neue Jarvis-Container deployen, IMMER `docker ps` auf NAS prüfen. Was schon läuft (2026-05-19):
+
+| Container | Port | Rolle |
+|---|---|---|
+| `homeassistant` | 8123 | Hauptbrain für Smart-Home, Spotify, Alexa |
+| `ha-wyoming-openwakeword` | 10400 | **schon mit `hey_jarvis` preloaded** (threshold 0.6) |
+| `ha-wyoming-piper` | 10200 | lokales TTS-Fallback |
+| `ha-wyoming-whisper` | 10300 | lokales STT-Fallback |
+| `voice-livekit` | 7880 | LiveKit-Server (intern) |
+| `voice-frontend` | 3000 | Next.js Voice-UI mit Azure/Deepgram/Gemini |
+| `jarvis-watchdog` | — | überwacht voice-* Container, ntfy-Topic `jarvis-bianca-…` |
+| `jarvis-config` | 8093 | FastAPI Web-Konfig-Backend |
+| `mosquitto` | 1883 | MQTT-Bus für IoT |
+| `matter-server` | 5580 | Matter/Thread |
+| `ollama` | 11434 | lokale LLMs |
+
+**Konsequenz:** Neuer `jarvis-brain` (8765) **ergänzt** als LLM-Router + Memory + HUD, läuft NICHT als Wake-Word-Ersatz. Wake-Word-Detection bleibt bei `ha-wyoming-openwakeword`; Brain wird nachgeschaltet via MQTT-Event oder HA-Webhook.
+
+**🟡 docker-compose `context:` ist relativ zur compose.yml**
+- `deploy/nas/docker-compose.yml` mit `build.context: ../../brain` → suchte `/home/Jahcoozi/brain` (zwei Levels über deploy)
+- Korrekt: `../brain` (ein Level), weil Layout `jarvis/{brain,deploy/nas}`
+- Fehlermeldung war eindeutig: `unable to prepare context: path "/home/Jahcoozi/brain" not found`
+- Lesson: Vor erstem Deploy compose-Pfad mental durchgehen, nicht doppelt abstrahieren
+
+**🟡 Ed25519-Device-Identity persistent im Volume**
+- `pynacl.signing.SigningKey.generate()` → Base64-encoded keypair in `/data/oc5-device.json`
+- Container-Volume `jarvis-data:/data` überlebt Image-Rebuilds → Device-ID stabil
+- Pattern für jedes Pairing-System (OpenClaw v3, Matter, HomeKit-Bridge)
+
+**🟡 HA Long-Lived Token Setup für Container**
+- Token via HA-UI → Profil → "Long-Lived Access Tokens" → "Create Token"
+- ENV-Var im Container: `HA_URL=http://host.docker.internal:8123` (nicht 127.0.0.1!), `HA_TOKEN=...`
+- Test: `curl -H "Authorization: Bearer $HA_TOKEN" http://localhost:8123/api/states | jq '[.[] | select(.entity_id|startswith("media_player."))]'`
+
+**🔵 NAS-Container-Inspect ohne Source-Zugriff**
+- `/volume1/docker/<dir>/` ist oft geschützt (Auto-Klassifizierung blockt)
+- Trotzdem informativ: `docker inspect <container>` → Env (gefiltert), Mounts, Cmd, Ports
+- Sensible Werte (Token/Key/Secret/Password) per Regex aus Env-Liste raus filtern bevor Ausgabe

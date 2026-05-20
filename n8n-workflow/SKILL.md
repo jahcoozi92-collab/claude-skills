@@ -2878,3 +2878,106 @@ Code-Node am Ende liest `$('Format Chat Input').first().json._started_at` und be
 **Webhook-Cache nach Update:**
 
 Nach n8n-Update (z.B. 2.19.4 → 2.19.5) sind aktive Webhooks oft nicht registriert (404 trotz `active=true`). Lösung: deactivate/activate-Zyklus über die API ODER `docker restart n8n-n8n-1`. Erstes ist schneller und ohne Downtime für andere Workflows.
+
+---
+
+### 2026-05-19 — TTS-Gateway-Pattern + Aktivierungs-Workflow + Binary-Response
+
+**🔴 Container-Brain ruft niemals direkt ElevenLabs — n8n als TTS-Gateway-Proxy**
+
+Pattern für jeden externen Service der API-Keys braucht: Statt jedem Microservice den Key zu geben, **bleibt der Key in n8n** (im Credential-Store), und Apps rufen einen Webhook-Endpoint im LAN.
+
+```
+container A ─┐
+container B ─┼─→ POST /webhook/jarvis-tts {text, voice_id?}
+container C ─┘                ↓
+                          n8n (cred: elevenLabsApi)
+                                ↓
+                          ElevenLabs API
+                                ↓
+                          MP3-Binary Response
+```
+
+Vorteile:
+- Ein zentraler Key, eine Rotation
+- n8n-Logs liefern Aufruf-Telemetrie für free
+- Cache/Rate-Limit/Fallback an einer Stelle
+- Brain weiß nichts vom Provider — wechselbar (ElevenLabs → Piper → Azure)
+
+**Anwendungsbeispiel (Jarvis):**
+```python
+async with httpx.AsyncClient() as c:
+    r = await c.post("https://n8n.forensikzentrum.com/webhook/jarvis-tts",
+                     json={"text": text, "voice_id": "PhufIH7nYh2Up1uej6aY"})
+    mp3_bytes = r.content
+```
+
+**🔴 Workflow-Aktivierung NUR nach manuellem End-to-End-Test**
+
+User-Regel: "Keine Routinen aktivieren bis 100% verifiziert". Auch Auto-Klassifizierung blockt automatisches Aktivieren bei Workflow-Erstellung.
+
+Korrekte Sequenz via n8n REST:
+```bash
+# 1. Workflow erstellen (kommt automatisch INAKTIV)
+WF_ID=$(curl -X POST -H "X-N8N-API-KEY: $KEY" \
+  $BASE/api/v1/workflows --data @workflow.json | jq -r .id)
+# 2. User klickt "Execute Workflow" im UI mit Test-Body → MP3 zurück?
+# 3. ERST DANN aktivieren:
+curl -X POST -H "X-N8N-API-KEY: $KEY" $BASE/api/v1/workflows/$WF_ID/activate
+```
+
+Sofortiges Aktivieren bei POST ist ein Anti-Pattern, das gegen die User-Regel verstößt.
+
+**🔴 n8n-API Base-URL hat NIE `/api/v1` in der Config**
+
+Memory bestätigt: `~/.config/n8n-mcp/n8n-api-config.sh` setzt `N8N_API_URL=https://n8n.forensikzentrum.com` (ohne Suffix).
+
+```bash
+source ~/.config/n8n-mcp/n8n-api-config.sh
+BASE="${N8N_API_URL%/}/api/v1"   # Suffix selbst dranhängen, %/ entfernt trailing slash
+```
+
+**🟡 Webhook → Binary-Response (Audio/PDF/Image)**
+
+Webhook-Workflow der ein Binary-Asset zurückliefert:
+
+| Node | Konfig |
+|---|---|
+| Webhook | `responseMode: responseNode` (NICHT default!) |
+| HTTP Request | `options.response.response.responseFormat: file` |
+| Respond to Webhook | `respondWith: binary`, `responseDataSource: automatically` |
+| | + `responseHeaders` Override: `Content-Type: audio/mpeg`, `CORS *` |
+
+Default-Mode liefert JSON-Metadaten statt Bytes — Frontend bekommt nutzlosen Text.
+
+**🟡 ElevenLabs TTS Node-Konfig (referenz)**
+
+```json
+{
+  "method": "POST",
+  "url": "https://api.elevenlabs.io/v1/text-to-speech/{{ $json.voiceId }}?output_format=mp3_44100_128",
+  "authentication": "predefinedCredentialType",
+  "nodeCredentialType": "elevenLabsApi",
+  "jsonBody": "{\"text\":..., \"model_id\":\"eleven_multilingual_v2\", \"voice_settings\":{\"stability\":0.55,\"similarity_boost\":0.78,\"style\":0.35}}",
+  "options": {
+    "response": {"response": {"responseFormat": "file"}},
+    "timeout": 60000
+  }
+}
+```
+
+**🔵 Voice-ID-Referenzen (Diana's ElevenLabs-Setup)**
+- Ayliva (Diana's Lieblingsstimme, Tiguan-Trigger): `PhufIH7nYh2Up1uej6aY`
+- Credential-ID: `xvqKEqinl5BZFKKu` "ElevenLabs Schulung account"
+- Existierender Tool-Router-Workflow: `n7a7ilpDJswn9KUj` (Voice_Assistant_ElevenLabs) — Switch zu Kalender/Wetter/RAG/Smarthome/Docker/Agents/News/Musik
+- Neuer TTS-Gateway: `NeI5yy8ADUGltUsS` (Jarvis TTS Gateway Ayliva)
+
+**🔵 Bulk-Workflow-Discovery für Suche**
+```bash
+# Alle Workflow-JSONs holen
+mkdir -p /tmp/wf && curl -fsS -H "X-N8N-API-KEY: $KEY" \
+  "$BASE/workflows?limit=200" | jq -r '.data[].id' | \
+  xargs -I{} sh -c "curl -fsS -H 'X-N8N-API-KEY: $KEY' $BASE/workflows/{} > /tmp/wf/{}.json"
+# Suche
+grep -l -iE 'voice_id|elevenlabs' /tmp/wf/*.json
+```
