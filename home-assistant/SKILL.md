@@ -36,6 +36,21 @@ docker logs homeassistant --tail 100 -f
 # Check health
 docker inspect --format='{{.State.Health.Status}}' homeassistant
 
+# Einzelne Config-Entry reloaden (kein HA-Restart nötig)
+# Anwendung: Integration steckt nach Backend-Restart im Fehler-Zustand
+ENTRY_ID=$(docker exec homeassistant python3 -c "
+import json
+with open('/config/.storage/core.config_entries') as f:
+    [print(e['entry_id']) for e in json.load(f)['data']['entries'] if e.get('domain')=='ollama']")
+curl -X POST -H "Authorization: Bearer $HA_LONG_LIVED_TOKEN" \
+  "$HA_URL/api/config/config_entries/entry/$ENTRY_ID/reload"
+# Erwartete Antwort: {"require_restart":false}
+
+# Reload-Erfolg verifizieren — state muss "loaded" sein
+curl -s -H "Authorization: Bearer $HA_LONG_LIVED_TOKEN" \
+  "$HA_URL/api/config/config_entries/entry?domain=ollama" \
+  | python3 -c "import sys,json; [print(e['state']) for e in json.load(sys.stdin)]"
+
 # Entity Registry auslesen
 docker exec homeassistant python3 -c "
 import json
@@ -64,6 +79,22 @@ In allen HA-Skripten/Bash-Routinen `source ~/.config/homeassistant/env` als erst
 
 Token-Generation: HA UI → Profil → Sicherheit → "Lange gültige Zugriffstokens".
 Bei Leak (Token im Chat/Commit/Screenshot): sofort revoken in derselben UI-Sektion.
+
+### Token-Fallback-Quellen (wenn `~/.config/homeassistant/env` fehlt)
+
+Auf NAS oder fremder Maschine ohne lokales Token-Env: bereits existierende Long-Lived Tokens liegen in anderen Service-Configs:
+
+| Pfad | Variable | Owner |
+|---|---|---|
+| `/volume1/docker/n8n/.env` | `HA_TOKEN` | n8n-User (clawdbot) |
+| `/volume1/docker/moltbot/.env` | `HOMEASSISTANT_TOKEN` | openwebui-User |
+
+`.storage/auth` enthält **nur Hash-Listen** der Tokens, nicht den JWT — Revoke geht damit, aber nicht Re-Use. Über die existierenden Service-Tokens kann man ad-hoc REST-Calls absetzen ohne neues Token in der UI erzeugen zu müssen.
+
+```bash
+TOKEN=$(grep "^HA_TOKEN=" /volume1/docker/n8n/.env | cut -d= -f2-)
+curl -s -H "Authorization: Bearer $TOKEN" http://192.168.22.90:8123/api/config/...
+```
 
 ### Env-Export für Python-Subprocesses
 `source <env>` setzt Variablen nur in der aktuellen Shell, **nicht** für aufgerufene Python-Skripte. Wenn ein Python-Helper `os.environ["HA_LONG_LIVED_TOKEN"]` liest, KeyError. Lösung:
@@ -265,6 +296,51 @@ Subentries haben `llm_hass_api: ["assist"]` → Tool-Calling mit allen exponiert
 # FALSCH (deprecated)
 - service: climate.set_temperature
 ```
+
+## Jinja-Templates in YAML-Heading-Cards (Whitespace-Falle)
+
+Heading-Cards mit zeitabhängigen Begrüßungen (oder beliebigen Conditional-Texts) erzeugen sichtbare Leerzeichen-Artefakte, wenn YAML-Folded-Scalar `>-` mit Jinja-Blöcken kombiniert wird ohne Whitespace-Control.
+
+**Problem:** `>-` faltet jede Newline zu einem Space. Im Template entstehen dann Spaces VOR/NACH den Block-Tags, die als Output erhalten bleiben:
+
+```yaml
+# FALSCH — rendert " Hallo " (führende und nachfolgende Spaces)
+heading: >-
+  {% set h = now().hour %}
+  {% if h < 6 %}Gute Nacht
+  {% elif h < 14 %}Hallo
+  {% else %}Guten Abend{% endif %}
+```
+
+Bei `heading_style: title` sieht das eingerückt/asymmetrisch aus — User-feedback: "Überschrift sieht seltsam aus".
+
+**Fix:** Jinja-Whitespace-Marker `{%- -%}` in jeder Branch — entfernt Whitespace links/rechts vom Tag:
+
+```yaml
+# RICHTIG — rendert "Hallo" sauber
+heading: >-
+  {%- set h = now().hour -%}
+  {%- if h < 6 %}Gute Nacht
+  {%- elif h < 14 %}Hallo
+  {%- else %}Guten Abend{% endif -%}
+```
+
+Verify offline (vor HA-Reload):
+```bash
+docker exec homeassistant python3 -c "
+import yaml
+from jinja2 import Environment
+with open('/config/dashboards/home.yaml') as f:
+    d = yaml.safe_load(f)
+h = d['views'][0]['sections'][0]['cards'][0]['heading']
+env = Environment()
+for hour in [3, 8, 12, 16, 20, 23]:
+    env.globals['now'] = lambda hh=hour: type('N',(),{'hour':hh})()
+    print(repr(env.from_string(h).render()))
+"
+```
+
+YAML-Mode-Dashboards aktualisieren sich ohne HA-Restart — Browser-Hard-Refresh (`Ctrl+Shift+R`) reicht.
 
 ## Webhook Patterns (Security-gehaertet)
 
@@ -658,6 +734,7 @@ A+B kombinieren — A für Standard-Visualisierung, B für €-Logik die Energy 
 22. **`device_class: energy` ohne `state_class`**: Sensor erscheint NICHT als Wahlmöglichkeit im Energy Dashboard. Beide setzen — `state_class: total_increasing` für Long-Term-Statistics-Aufnahme.
 23. **Tote Auth-Varianten beim 401-Debug durchprobieren**: NIEMALS spekulativ `x-ha-access`-Header, `?api_password=`-Query oder andere Legacy-Auth-Methoden testen, wenn HA mit 401 antwortet. Diese Varianten sind seit modernen HA-Versionen entfernt — jeder Fehlversuch zählt gegen `login_attempts_threshold` und schreibt die Source-IP in `ip_bans.yaml`. Besonders gefährlich für Bot-/Gateway-IPs (z.B. moltbot 192.168.22.206), die dann von HA komplett abgeschnitten sind, bis ip_bans.yaml + HA-Restart Cleanup macht. **Richtig**: Ausschließlich `Authorization: Bearer <Long-Lived-Token>` testen. Vor weiteren Tests: `docker logs homeassistant | grep -i "login attempt"` lesen und ggf. `cat config/ip_bans.yaml` prüfen.
 24. **check_config-Output ohne Diff bewerten**: `check_config` zeigt oft vorbestehende, nicht-blockierende Fehler (z.B. `entity_category` für `command_line`-Sensoren) — die blockieren den Restart NICHT und sind keine Folge des aktuellen Edits. Nicht abbrechen ohne zu klären: war der Fehler vor meiner Änderung schon im Output? Wenn ja: weiter mit Restart, Fehler separat tracken. Wenn nein: rollback und neu prüfen.
+25. **Integration nach Backend-Restart als "kaputt" behandeln**: Wenn eine Integration mit `ConnectionError` / `httpx.ConnectError` im Setup scheitert, ist das oft eine **Race-Condition** zwischen HA und dem Backend-Container (Ollama, Postgres, Mosquitto …), nicht ein dauerhaftes Problem. Erst **Diagnose**: Timestamp des HA-Errors vs. `docker inspect <name> --format '{{.State.StartedAt}}'` vergleichen. Wenn der HA-Error VOR dem Backend-Container-Start liegt → reine Race-Condition. **Fix ohne HA-Restart**: einzelne Config-Entry reloaden via `POST /api/config/config_entries/entry/<entry_id>/reload` (siehe Common Commands). HA hat kein Auto-Retry für gescheiterte Integration-Setups — manuell reload nötig.
 
 ## Cross-Machine-Limitation (NAS-Instanz)
 
@@ -960,6 +1037,7 @@ curl -s -H "Authorization: Bearer $HA_TOKEN" \
   1. `kill <pid>` für orphan docker-proxy
   2. Port im compose wechseln (z.B. 11436 → 11437) + alte Integration löschen + neue mit neuer URL
 - Konsequenz: HA-Integration muss neu eingerichtet werden (DELETE config_entry + neuer flow)
+- **Doku-Drift bestätigt 2026-05-20:** Ollama läuft jetzt auf **11437** (extern), `/volume1/docker/CLAUDE.md` dokumentiert noch 11436. HA-Config-Entry-Title spiegelt aktuellen Port (`http://192.168.22.90:11437`). Bei Race-Restart Integration NICHT neu einrichten — nur reloaden (siehe Common Mistake #25).
 
 **🔵 Dashboard-Hero-Pattern für Übersicht**
 - Erste Section im Dashboard mit `column_span: 4` (volle Breite)
