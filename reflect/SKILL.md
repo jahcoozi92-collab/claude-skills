@@ -110,14 +110,24 @@ Diese Änderungen anwenden? [J]a / [N]ein / oder Anpassungen beschreiben
 
 1. Lies die aktuelle Skill-Datei von `~/.claude/skills/[skill-name]/SKILL.md`
 2. Wende die Änderungen mit dem Edit-Tool an
-3. Führe Git-Befehle aus:
+3. **Commit lokal** (Push als separater Schritt, siehe 3b):
    ```bash
    cd ~/.claude/skills
    git add [skill-name]/SKILL.md
    git commit -m "[skill]: [änderungszusammenfassung]"
+   ```
+3a. **Vor Push: Multi-Instanz-Rebase** — auf jeder Maschine läuft eine Claude-Instanz, die parallel committet (Yoga7/Clawbot/NAS/Windows). Push fails sonst mit `non-fast-forward`:
+   ```bash
+   git fetch origin main
+   git log --oneline HEAD..origin/main  # zeigt was andere Instanzen gepusht haben
+   git pull --rebase origin main         # rebased lokalen Commit drauf
+   ```
+3b. **Push als separater Schritt** — Auto-Mode-Classifier blockt `git push origin main` oft, weil das "J" des Users den Reflect-Workflow approve t, NICHT automatisch den Push auf den Default-Branch:
+   ```bash
    git push origin main
    ```
-4. Bestätige: "Skill aktualisiert und zu GitHub gepusht"
+   Wenn blockiert: explizit beim User nachfragen ("Soll ich pushen?"). User-OK reicht dann.
+4. Bestätige: "Skill aktualisiert und zu GitHub gepusht (Commit-Hash)"
 5. **Ontology aktualisieren** — PFLICHT nach jedem Reflect:
    - **Yoga7:** Ontology ist LOKAL verfügbar — `cd ~/clawd && python3 skills/ontology/scripts/ontology.py [command]`
    - **Andere Maschinen:** Via SSH auf Clawbot VM (192.168.22.206): `ssh moltbotadmin@192.168.22.206 'cd ~/clawd && python3 skills/ontology/scripts/ontology.py [command]'`
@@ -457,3 +467,31 @@ SET LOCAL hnsw.ef_search = 100;
 - Voraussetzung: `~/.local/bin` im PATH (Debian/Kali Default ja, manche Distros nicht)
 - zsh-Alias als Backup: `echo "alias ont='python3 ~/clawd/skills/ontology/scripts/ontology.py'" >> ~/.zshrc`
 - Verify: `which ont`
+
+### 2026-05-20 — Push-Confirm-Step, Multi-Instanz-Rebase, MEMORY-Concurrency
+
+**🔴 Auto-Mode-Classifier blockt `git push origin main` trotz User-"J"**
+- Reflect-Workflow-"J" approve t den Reflect-Vorschlag, NICHT pauschal Push auf Default-Branch
+- Classifier-Reasoning: "User's 'J' approved /reflect but did not specifically authorize a push to the default branch"
+- **Fix im Workflow**: commit als Schritt 3, push als separater Schritt 3b
+- Wenn Push blockt: explizit beim User nachfragen ("Soll ich pushen?") — kostet eine kurze Iteration, ist aber sauber
+- Niemals Push mit `--no-verify` o.ä. erzwingen wollen — Classifier ist absichtlicher Guard
+
+**🔴 Multi-Instanz-Rebase ist Pflicht vor Push**
+- 4 Maschinen pushen ins gleiche Repo (`jahcoozi92-collab/claude-skills`) — Race ist Regel, nicht Ausnahme
+- Beispiel dieser Session: Yoga7 hat während meiner Reflexion `2070bd1 reflect: Jarvis-Multi-Skill` gepusht
+- Push fails mit `non-fast-forward`
+- **Pattern** vor jedem Push:
+  ```bash
+  git fetch origin main
+  git log --oneline HEAD..origin/main   # was kam dazu?
+  git pull --rebase origin main         # lokal sauber rebased
+  git push origin main
+  ```
+- `rebase` > `merge` für Skill-Repo: linear, kein Merge-Noise
+
+**🟡 MEMORY.md kann während Reflect von User/Linter geändert werden**
+- Mitten in Step 4 kann ein `<system-reminder>` eintreffen, dass MEMORY.md modifiziert wurde
+- Konkret: User hat `screenshot_drop.md`-Eintrag hinzugefügt während ich am Skill-Push war
+- **NICHT reverten** — der Linter/User-Change ist absichtlich
+- Memory-Reads zwischen Schritten erneuern, nicht aus initialer Context-Ladung cachen
