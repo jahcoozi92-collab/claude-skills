@@ -1466,3 +1466,75 @@ Bevor neue Jarvis-Container deployen, IMMER `docker ps` auf NAS prüfen. Was sch
 - `/volume1/docker/<dir>/` ist oft geschützt (Auto-Klassifizierung blockt)
 - Trotzdem informativ: `docker inspect <container>` → Env (gefiltert), Mounts, Cmd, Ports
 - Sensible Werte (Token/Key/Secret/Password) per Regex aus Env-Liste raus filtern bevor Ausgabe
+
+---
+
+### 2026-05-21 — Docker-Port-Cache-Detail + n8n-Workflow-DB-Direct-Edit
+
+Ergänzungen zu den Lektionen 2026-05-15/17 (Phantom-Allocations, Vaultwarden-Migration). Drei Container betroffen: `nextcloud_app` (8282), `ollama` (11437), `openapi-docker-health` (8009) — alle gleicher 15:55-Vorfall.
+
+**🔴 iptables-DNAT-Cleanup braucht EXAKTE Rule-Syntax**
+- `iptables -t nat -D DOCKER -p tcp --dport <port> -j DNAT --to-destination <ip>:<port>` schlägt fehl mit `Bad rule (does a matching rule exist?)`
+- Grund: Docker-DNAT-Regeln enthalten `! -i br-<bridge-id>` als Match-Bedingung — fehlt im Delete-Statement, matched nichts
+- **Korrekter Workflow:**
+  ```bash
+  # 1) Exakte Regel holen (Output ist „-A" Notation, einfach „-A" → „-D" tauschen)
+  sudo iptables -t nat -S DOCKER | grep <port>
+  # → -A DOCKER ! -i br-d985838a7e21 -p tcp -m tcp --dport 8009 -j DNAT --to-destination 172.25.0.9:8000
+
+  # 2) Mit identischen Args löschen
+  sudo iptables -t nat -D DOCKER ! -i br-d985838a7e21 -p tcp -m tcp --dport 8009 -j DNAT --to-destination 172.25.0.9:8000
+  ```
+- Die in 2026-05-15 erwähnte „Zeilennummer"-Methode (`iptables -L --line-numbers` + `-D <chain> <num>`) ist Alternative, aber `-S` + Copy-Paste ist robuster
+
+**🔴 Daemon-Restart fixt NICHT garantiert alle Ports**
+- In dieser Session: nach `systemctl restart docker` waren 8282 + 11437 frei, ABER 8009 blieb blockiert
+- OS-seitig komplett frei (ss/lsof/iptables alle leer), Bind-Test mit Python erfolgreich, dennoch `port is already allocated`
+- **Daemon-internal allocator-state überlebt manchmal Restart** — Mechanismus unklar (vermutlich persistenter Snapshot)
+- Bestätigung der 2026-05-17 Lektion: **Port-Umzug ist robusterer Fallback** als Daemon-Restart-Schleifen
+- Pattern für Port-Migration: Compose-Port ändern → up -d → `grep -rln "<altport>"` in Konsumenten-Dirs (n8n, HA, openwebui, cloudflared) → einzeln updaten
+
+**🟡 n8n-Workflow-DB-Direct-Edit (workflow_entity + workflow_history)**
+
+Wenn ein Live-Workflow eine URL/Config-Änderung braucht und der Generator-Roundtrip zu aufwändig ist:
+
+```bash
+# 1) Sicherheits-Backup
+cp /volume1/docker/n8n/data/database.sqlite /tmp/database.sqlite.bak-$(date +%Y%m%d-%H%M%S)
+
+# 2) Workflow finden + activeVersionId holen
+sqlite3 /volume1/docker/n8n/data/database.sqlite \
+  "SELECT id, name, active, activeVersionId FROM workflow_entity WHERE nodes LIKE '%<altwert>%';"
+
+# 3) ATOMAR beide Tables updaten (workflow_history wird sonst übersehen)
+sqlite3 /volume1/docker/n8n/data/database.sqlite <<'SQL'
+BEGIN;
+UPDATE workflow_entity  SET nodes=replace(nodes, ':8009/path', ':8010/path'), updatedAt=datetime('now') WHERE id='<wfid>';
+UPDATE workflow_history SET nodes=replace(nodes, ':8009/path', ':8010/path'), updatedAt=datetime('now') WHERE versionId='<verid>';
+COMMIT;
+SELECT 'after_entity:',  (length(nodes) - length(replace(nodes, '<altwert>', ''))) / length('<altwert>') FROM workflow_entity  WHERE id='<wfid>';
+SELECT 'after_history:', (length(nodes) - length(replace(nodes, '<altwert>', ''))) / length('<altwert>') FROM workflow_history WHERE versionId='<verid>';
+SQL
+
+# 4) n8n restart (Pflicht — sonst greift workflow_history-Update nicht)
+docker restart n8n-n8n-1
+
+# 5) Healthcheck
+until docker exec n8n-n8n-1 wget -q --spider http://localhost:5678/healthz 2>/dev/null; do sleep 3; done
+```
+
+**Wichtig:**
+- `replace(...)` mit MÖGLICHST SPEZIFISCHEN String (`:8009/containers/health` statt nur `8009`) — sonst false-positives bei MAC-Adressen, Timestamps etc.
+- `sqlite3` ist auf dem HOST verfügbar, NICHT im n8n-Container (Alpine-Image hat es nicht)
+- Lektion aus `n8n/CLAUDE.md` bestätigt: workflow_history-Tabelle ist die Read-Source für aktive Workflows — Update von workflow_entity alleine wirkt nicht
+- DB-Backup-Path `/tmp/database.sqlite.bak-*` (2.6 GB) nach erfolgreichem Test wieder löschen
+
+**🔵 HA-ESTABLISHED-Connections als Polling-Diagnose**
+- `sudo lsof -i :<port>` zeigt auch outbound ESTABLISHED — wenn Listener weg ist, der Connection-Versuch aber bleibt: identifiziert wer polled
+- In dieser Session: PID gehörte zu `homeassistant`, aber HA-Config selbst hatte 8009 nicht — die Polling-URL kam aus einem aktiven n8n-Workflow (`Voice_Assistant_ElevenLabs` → `Docker Status`-Node) den HA via Webhook anstößt
+- **Lesson:** Bei „wer polled diesen Port" nicht nur Konsumenten-Config greppen, sondern auch transitive Aufrufer (n8n-Workflows, HA-Automations die HTTP-Requests triggern)
+- Workflow-Suche im n8n-SQLite:
+  ```bash
+  sqlite3 /volume1/docker/n8n/data/database.sqlite \
+    "SELECT id, name, active FROM workflow_entity WHERE nodes LIKE '%<port>%';"
+  ```
