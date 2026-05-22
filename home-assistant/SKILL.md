@@ -342,6 +342,241 @@ for hour in [3, 8, 12, 16, 20, 23]:
 
 YAML-Mode-Dashboards aktualisieren sich ohne HA-Restart — Browser-Hard-Refresh (`Ctrl+Shift+R`) reicht.
 
+## Custom Cards & card_mod Design Patterns
+
+### tap_action für `button.*`-Entities — NIEMALS `toggle`
+
+`button`-Entities haben nur **eine** Service-Aktion: `button.press`. Es gibt KEIN `button.toggle` und KEIN `button.turn_on/off`. `tap_action: { action: toggle }` auf einer Button-Card macht UI-seitig nichts (still failure), weil HA den Service nicht findet — Codex/Review-Hooks fangen das, der User sieht aber nur eine tote Card.
+
+```yaml
+# FALSCH — Button reagiert nicht
+- type: custom:mushroom-entity-card
+  entity: button.klimaanlage_sz_create_data_archive
+  tap_action: { action: toggle }
+
+# RICHTIG — modern syntax (HA 2024.8+)
+- type: custom:mushroom-template-card
+  primary: SZ Diagnose-Export
+  icon: mdi:file-export
+  tap_action:
+    action: perform-action
+    perform_action: button.press
+    target:
+      entity_id: button.klimaanlage_sz_create_data_archive
+    confirmation:
+      text: Diagnose-Archiv erstellen?
+```
+
+**Faustregel pro Entity-Domain:**
+
+| Domain | `toggle` erlaubt? | Korrekte Action |
+|--------|-------------------|-----------------|
+| `switch.*` | ✅ ja | `toggle` oder `switch.turn_on/off` |
+| `light.*` | ✅ ja | `toggle` |
+| `input_boolean.*` | ✅ ja | `toggle` |
+| `button.*` | ❌ nein | `perform-action: button.press` |
+| `scene.*` | ❌ nein | `perform-action: scene.turn_on` |
+| `script.*` | ❌ nein | `perform-action: script.<name>` oder `script.turn_on` |
+| `climate.*` | ❌ nein | `perform-action: climate.set_hvac_mode` etc. |
+
+### State-aware card_mod-Animationen (Pflicht bei Glow/Pulse)
+
+card_mod-Styles werden **unkonditional** angewendet, solange kein Jinja drumrum steht. Eine Card mit `animation: pulse infinite` pulsiert auch dann, wenn das Gerät aus ist — das verwirrt den User („warum pulsiert SZ obwohl die Klima aus ist?").
+
+card_mod akzeptiert Jinja **direkt im `style:`-Block**. Das ist der saubere Hebel:
+
+```yaml
+card_mod:
+  style: |
+    {% set s = states('climate.klimaanlage_sz_klimaanlage') %}
+    {% set on = s not in ['off','unavailable','unknown','none'] %}
+    {% set heat = s == 'heat' %}
+    {% if heat %}{% set rgb = '255,140,60' %}
+    {% else %}{% set rgb = '80,180,255' %}{% endif %}
+    ha-card {
+      {% if on %}
+      background: linear-gradient(140deg, rgba({{ rgb }},0.22) 0%, rgba(20,30,50,0.78) 100%) !important;
+      box-shadow: 0 0 32px rgba({{ rgb }},0.22) !important;
+      animation: pulse 4.5s ease-in-out infinite;
+      {% else %}
+      background: linear-gradient(140deg, rgba(40,45,55,0.45) 0%, rgba(28,32,42,0.65) 100%) !important;
+      filter: grayscale(40%) brightness(0.82);
+      /* keine animation: → ruhiger Off-State */
+      {% endif %}
+    }
+    {% if on %}
+    @keyframes pulse {
+      0%,100% { box-shadow: 0 0 28px rgba({{ rgb }},0.18); }
+      50%     { box-shadow: 0 0 48px rgba({{ rgb }},0.42); }
+    }
+    {% endif %}
+```
+
+Wichtig: `not in ['off','unavailable','unknown','none']` — nicht nur `!= 'off'`. Sonst pulsiert die Card auch bei Cloud-Verbindungsabbruch.
+
+### `config.entity` als DRY-Hebel in card_mod
+
+In Mushroom-Cards referenziert `config.entity` im Jinja die Entity der jeweiligen Card. Damit lässt sich der gleiche YAML-Anchor für viele Tiles wiederverwenden:
+
+```yaml
+- type: custom:mushroom-entity-card
+  entity: switch.klimaanlage_sz_health_mode
+  card_mod: &active_tile
+    style: |
+      ha-card {
+        background: {% if is_state(config.entity, 'on') %}
+          linear-gradient(135deg, rgba(120,80,200,0.30), rgba(60,40,100,0.50))
+        {% else %}
+          rgba(28,32,42,0.55)
+        {% endif %} !important;
+      }
+- type: custom:mushroom-entity-card
+  entity: switch.klimaanlage_sz_silent_modus
+  card_mod: *active_tile   # gleicher Anchor, anderes Switch
+```
+
+### Bubble-Card `card_type: climate` crasht bei fehlender Entity
+
+Wenn die referenzierte Entity nicht existiert oder im `unavailable`-State noch nie `attributes` hatte, wirft die Bubble-Card im Browser:
+
+```
+TypeError: Cannot read properties of undefined (reading 'attributes')
+```
+
+und nimmt das gesamte Dashboard mit (weißer Bildschirm). Schutz vor First-Render:
+
+1. **Vor Rollout**: Entity-Registry prüfen, dass `climate.X` existiert UND mindestens einmal initialisiert wurde
+2. **Beim Build mit Platzhaltern**: Cards in `type: conditional`-Wrapper packen, der State auf `not in ['unavailable','unknown']` prüft
+3. **Setup-Banner**: bei fehlender Entity stattdessen `type: markdown` mit Setup-Anleitung rendern
+
+### Glassmorphism-Standard-Stack
+
+Wiederverwendbares card_mod-Setup für „Apple Liquid Glass"-Look — funktioniert konsistent für Bubble, Mushroom, mini-graph, ApexCharts:
+
+```yaml
+ha-card {
+  background: linear-gradient(135deg, rgba(20,28,42,0.78) 0%, rgba(28,40,60,0.62) 100%) !important;
+  backdrop-filter: blur(22px) saturate(170%);
+  -webkit-backdrop-filter: blur(22px) saturate(170%);
+  border: 1px solid rgba(255,255,255,0.08) !important;
+  border-radius: 22px !important;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.40) !important;
+}
+```
+
+**Mode-Coloring-Palette** (für climate/state-reactive Themes — als RGB-Triple, in `rgba(...,alpha)` einsetzbar):
+
+| Modus | RGB-Triple |
+|-------|------------|
+| `cool` | `80,180,255` (Eisblau) |
+| `heat` | `255,140,60` (Orange) |
+| `dry` | `220,200,80` (Bernstein) |
+| `fan_only` | `100,230,220` (Türkis) |
+| `auto` | `180,120,255` (Lila) |
+| `off`/disabled | `120,130,150` (Neutralgrau) |
+
+Performance-Hinweis: `backdrop-filter: blur(...)` kostet GPU — bei >15 gleichzeitigen Glass-Cards auf einem View ist Frame-Drop auf Tablets sichtbar. Blur-Radius reduzieren oder Cards weiter unten ohne Blur rendern.
+
+## hOn / Haier Custom Integration (HA 2026.x-Patches)
+
+`Andre0512/hon` (Custom Component für Haier hOn-Klima/Geräte) ist seit Aug 2024 inaktiv. v0.14.0 bricht in HA 2026.x mit zwei Breaking-Changes der HA-Core-API:
+
+### Patch 1: `HomeAssistantType` entfernt → `HomeAssistant`
+
+In 12 .py-Dateien (`__init__.py`, `binary_sensor.py`, `button.py`, `climate.py`, `config_flow.py`, `entity.py`, `fan.py`, `light.py`, `number.py`, `select.py`, `sensor.py`, `switch.py`):
+
+```bash
+cd /config/custom_components/hon
+sed -i 's/from homeassistant\.helpers\.typing import HomeAssistantType/from homeassistant.core import HomeAssistant/g' *.py
+sed -i 's/HomeAssistantType/HomeAssistant/g' *.py
+```
+
+### Patch 2: `async_forward_entry_setup` (Singular) → `async_forward_entry_setups` (Plural)
+
+In `__init__.py`:
+
+```python
+# FALSCH (alte API, in HA 2026.x entfernt)
+for platform in PLATFORMS:
+    hass.async_create_task(
+        hass.config_entries.async_forward_entry_setup(entry, platform)
+    )
+
+# RICHTIG (atomic, mit Plural-Service)
+await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+```
+
+### Python-Dep-Stolperfalle: pip-Name ≠ Import-Name
+
+```bash
+docker exec homeassistant pip install pyhOn==0.17.5   # pip-Name: gemischte Schreibweise
+docker exec homeassistant python3 -c "import pyhon"   # Import: alles lowercase
+```
+
+Verwechsung kostet einen Setup-Versuch + verwirrenden Stack-Trace.
+
+### Live-Pull aus hOn-Cloud (Diagnose-Anker)
+
+Wenn `climate.X.state` und das physische Gerät divergieren, ist hOn-Cloud die Ground Truth:
+
+```python
+from pyhon import Hon
+import asyncio, json
+
+ce = json.load(open("/config/.storage/core.config_entries"))
+hon_entry = next(e for e in ce["data"]["entries"] if e.get("domain") == "hon")
+email = hon_entry["data"]["email"]
+password = hon_entry["data"]["password"]
+
+async def run():
+    async with Hon(email=email, password=password) as hon:
+        await hon.setup()
+        for app in hon.appliances:
+            for k in ["onOffStatus","machMode","tempIndoor","tempSel"]:
+                v = app._data.get(k) if hasattr(app, "_data") else None
+                print(f"{app.nick_name} {k} = {v}")
+
+asyncio.run(run())
+```
+
+`onOffStatus=1` ist die Wahrheit, `climate.X.state` ist der HA-State-Machine-Cache.
+
+## Mehrquellen-State-Check bei „Wert stimmt nicht"-Reports
+
+Wenn der User sagt „Sensor X zeigt falschen Wert" oder „Gerät ist aus, aber HA sagt an": **nie blind einer einzelnen Quelle vertrauen**. Diskrepanzen sind häufiger als Bugs.
+
+**Quellen-Hierarchie** (steigende Verlässlichkeit von oben nach unten):
+
+1. **`climate.X.state` / aggregierter HA-State** — zeigt den letzten persisted Modus, kann veraltet sein nach Cloud-Cut oder Restart
+2. **`climate.X` Attribut `hvac_action`** — sagt ob aktiv arbeitend (`cooling`/`heating`) oder `idle` (an, aber Zieltemp erreicht)
+3. **`sensor.X_machine_status`** — vom Gerät gemeldeter Betriebszustand
+4. **`select.X_programm`** — letzter gesetzter Modus (kann von state divergieren)
+5. **Direct API/Cloud-Pull** (z.B. `pyhon.Hon`-Live-Query, MQTT-Topic, Webhook) — Ground Truth
+
+**Diagnose-Pattern für climate:**
+
+```python
+import json
+d = json.load(open("/config/.storage/core.restore_state"))
+target = "climate.klimaanlage_flur_klimaanlage"
+for item in d["data"]:
+    s = item.get("state", {})
+    if s.get("entity_id") == target:
+        a = s.get("attributes", {})
+        print("state            =", s.get("state"))
+        print("hvac_action      =", a.get("hvac_action"))
+        print("current_temp     =", a.get("current_temperature"))
+        print("target_temp      =", a.get("temperature"))
+        print("last_changed     =", s.get("last_changed"))
+```
+
+**Häufige Ursachen für „falsche" Anzeige:**
+
+- `hvac_action: idle` bei `state: cool` → an, aber Zieltemp erreicht (kein Bug, sondern Standby)
+- `state: cool` + `machine_status: off` → letzter App-Modus gecached, Gerät via Fernbedienung aus
+- Alle Werte `unavailable` → Cloud/WS-Connection weg
+- State-Cache aus `core.restore_state` nach Restart, bevor erstes Cloud-Update kam
+
 ## Webhook Patterns (Security-gehaertet)
 
 ```yaml
@@ -455,6 +690,36 @@ lovelace:
       show_in_sidebar: true
       filename: dashboards/system_monitor.yaml
 ```
+
+### Lovelace YAML-Mode → Resources kommen aus `configuration.yaml`
+
+Wenn `lovelace.mode: yaml` (statt `storage`) — egal ob nur Sub-Dashboards oder das ganze System YAML-getrieben sind — werden Custom-Card-JS-Resources **NICHT** mehr aus `.storage/lovelace_resources` gelesen. HA ignoriert diese Datei in dem Modus stillschweigend. Folge: ApexCharts/Bubble-Card/Mushroom/Card-Mod erscheinen im UI als „Unknown card-type".
+
+**Lösung**: Resources unter `lovelace.resources:` in `configuration.yaml` deklarieren (vor `dashboards:`):
+
+```yaml
+lovelace:
+  mode: storage        # auch wenn storage-mode für Haupt-Dashboard
+  resources:
+    - url: /hacsfiles/mushroom/mushroom.js
+      type: module
+    - url: /hacsfiles/Bubble-Card/bubble-card.js
+      type: module
+    - url: /hacsfiles/mini-graph-card/mini-graph-card-bundle.js
+      type: module
+    - url: /hacsfiles/card-mod/card-mod.js
+      type: module
+    - url: /local/community/apexcharts-card.js
+      type: module
+  dashboards:
+    lovelace-haier:
+      mode: yaml
+      filename: dashboards/haier_klima.yaml
+      title: Klima
+      icon: mdi:air-conditioner
+```
+
+Nach Änderung: HA-Restart (Resources werden nur beim Bootstrap geladen), nicht nur Reload.
 
 ## Bootstrap-Phase Logging
 
@@ -1066,6 +1331,9 @@ Bei Scripts/Helpers reicht `script.reload` / `homeassistant.reload_config_entry`
 23. **Tote Auth-Varianten beim 401-Debug durchprobieren**: NIEMALS spekulativ `x-ha-access`-Header, `?api_password=`-Query oder andere Legacy-Auth-Methoden testen, wenn HA mit 401 antwortet. Diese Varianten sind seit modernen HA-Versionen entfernt — jeder Fehlversuch zählt gegen `login_attempts_threshold` und schreibt die Source-IP in `ip_bans.yaml`. Besonders gefährlich für Bot-/Gateway-IPs (z.B. moltbot 192.168.22.206), die dann von HA komplett abgeschnitten sind, bis ip_bans.yaml + HA-Restart Cleanup macht. **Richtig**: Ausschließlich `Authorization: Bearer <Long-Lived-Token>` testen. Vor weiteren Tests: `docker logs homeassistant | grep -i "login attempt"` lesen und ggf. `cat config/ip_bans.yaml` prüfen.
 24. **check_config-Output ohne Diff bewerten**: `check_config` zeigt oft vorbestehende, nicht-blockierende Fehler (z.B. `entity_category` für `command_line`-Sensoren) — die blockieren den Restart NICHT und sind keine Folge des aktuellen Edits. Nicht abbrechen ohne zu klären: war der Fehler vor meiner Änderung schon im Output? Wenn ja: weiter mit Restart, Fehler separat tracken. Wenn nein: rollback und neu prüfen.
 25. **Integration nach Backend-Restart als "kaputt" behandeln**: Wenn eine Integration mit `ConnectionError` / `httpx.ConnectError` im Setup scheitert, ist das oft eine **Race-Condition** zwischen HA und dem Backend-Container (Ollama, Postgres, Mosquitto …), nicht ein dauerhaftes Problem. Erst **Diagnose**: Timestamp des HA-Errors vs. `docker inspect <name> --format '{{.State.StartedAt}}'` vergleichen. Wenn der HA-Error VOR dem Backend-Container-Start liegt → reine Race-Condition. **Fix ohne HA-Restart**: einzelne Config-Entry reloaden via `POST /api/config/config_entries/entry/<entry_id>/reload` (siehe Common Commands). HA hat kein Auto-Retry für gescheiterte Integration-Setups — manuell reload nötig.
+26. **`tap_action: { action: toggle }` auf `button.*`-Entity**: Buttons haben nur `press`, kein `toggle`. Card reagiert nicht auf Tap (still failure, kein UI-Feedback). IMMER `perform-action: button.press` + `target.entity_id`. Faustregel: `toggle` nur für `switch.* / light.* / input_boolean.*` — alle anderen Domänen brauchen domain-spezifische Service-Calls. Codex Stop-Hook fängt das, aber besser vor Commit erkennen (Audit-grep: `grep -nB1 "action: toggle" *.yaml | grep "entity: button"`).
+27. **card_mod-Animationen ohne State-Check**: Pulse/Glow/Conic-Rotation in `style:` ohne Jinja-Wrapper laufen unkonditional weiter, auch wenn das Gerät aus ist. User-Report: „Card pulsiert obwohl Klima aus". Lösung: `{% if states('...') not in ['off','unavailable','unknown','none'] %} animation: ... {% endif %}` UND `@keyframes` ebenfalls in den `{% if %}`-Block. Zusätzlich Off-State explizit gestalten (`filter: grayscale(40%) brightness(0.82)`), damit der User sieht: „aus = ruhig".
+28. **Lovelace YAML-Mode + Resources via .storage**: Im `mode: yaml` werden Custom-Card-JS-URLs aus `.storage/lovelace_resources` ignoriert. Resources MÜSSEN in `configuration.yaml` unter `lovelace.resources:`. Nach Edit: HA-Restart nötig (nicht nur Reload).
 
 ## Cross-Machine-Limitation (NAS-Instanz)
 
