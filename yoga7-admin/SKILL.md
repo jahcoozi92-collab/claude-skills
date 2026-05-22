@@ -1062,4 +1062,66 @@ Diana läuft regelmäßig in vi rein (wenn nano fehlt oder kein TTY). Vorbereite
 | Quit ohne Speichern | `:q!` `Enter` |
 | Nur Speichern | `:w` `Enter` |
 
+### 2026-05-22 — Claude CLI Remote-Control Debug + Auth/Log-Diagnose
+
+**🔴 Auth-Status NIE via `~/.claude/.credentials.json` lesen**
+
+Always-On-Constraint (CLAUDE.md sensitive paths) verbietet das aus gutem Grund — Auto-Mode-Classifier blockt korrekt mit:
+> "Reading ~/.claude/.credentials.json violates the user's CLAUDE.md sensitive-paths rule and exposes OAuth token contents to the transcript."
+
+**Richtiger Weg:**
+```bash
+claude auth status
+# → { "loggedIn": true, "authMethod": "claude.ai", "apiProvider": "firstParty",
+#     "email": "...", "orgId": "...", "subscriptionType": "max" }
+```
+
+Liefert alles was man für Auth-Debugging braucht (Login, Org-ID, Subscription) ohne Token-Exposure. Classifier-Block ist **Signal, kein Workaround-Trigger** — bei Block den sauberen CLI-Weg nehmen, nicht mit `head`/`grep` ausweichen.
+
+**🟡 Claude-Log-Pfade auf Yoga7 — Map**
+
+| Pfad | Zweck | Auffällig wenn… |
+|------|-------|-----------------|
+| `~/.config/Claude/logs/ssh.log` | Desktop SSH-Manager (`ClaudeSSHManager`, Remote-Probes) | Häufige `network-interface change` = unstabile Verbindung |
+| `~/.config/Claude/logs/cowork_vm_node.log` | Cowork-VM-Subprozess (`vmOneShot`, `startVM`) | `Keepalive Already running` = harmlos, kein Reconnect-Spam |
+| `~/.config/Claude/logs/mcp-server-*.log` | Pro MCP-Server (Args, ENOENT, Crash-Reason) | Siehe Eintrag 2026-05-07 |
+| `~/.config/Claude/logs/mcp.log` | MCP-Dispatcher (Server-übergreifend) | — |
+| `~/.config/Claude/logs-dev/main.log` | Desktop-App Haupt (Electron) | Growthbook-Debug-Spam dominiert — `grep -v growthbook\|debug` |
+| `~/.config/Claude/logs-dev/claude.ai-web.log` | Web-Renderer (Allowlist, Org-Sync) | `Updated allowlist for org <id>` = eingeloggt |
+| `~/.config/Claude/logs-dev/main-window.log` | Hauptfenster-Renderer | — |
+| `~/.claude/debug/` | Nur befüllt wenn `--debug-file` aktiv war | Standardmäßig leer |
+| `~/.claude/auto-update.log` | Update-Historie der CLI | Bei Versions-Konflikten checken |
+
+**🟡 `claude --remote-control` Debug-Pattern (Phone-Pairing)**
+
+`claude --remote-control [name]` startet Phone-Pairing-Session. Fehler **"Remote Control failed to connect: Session creation failed — see debug log"** wird im UI angezeigt, aber **nicht persistent geloggt**. Verweis "see debug log" meint nur das laufende Terminal-Debug.
+
+**Reproduktion mit Debug:**
+```bash
+# In SEPARATEM Terminal (kollidiert sonst mit aktiver Claude-Session):
+claude --remote-control --debug "api,!1p,!file" --debug-file ~/claude-remote-debug.log
+```
+
+Filter-Syntax: `"category,!exclude1,!exclude2"` — `!1p` filtert First-Party-Telemetry, `!file` filtert File-Tool-Spam, `api` zeigt Backend-Calls.
+
+**🔵 Diagnose-Reihenfolge bei "see debug log" Fehlern**
+
+1. **Recent logs scannen** (welche Datei wurde überhaupt zuletzt geschrieben?):
+   ```bash
+   find ~/.claude ~/.config/Claude -name "*.log" -mmin -120 2>/dev/null
+   ```
+2. **Auth-Status checken** (häufigste Fehlerursache):
+   ```bash
+   claude auth status
+   ```
+3. **Prozess-Status** (läuft Desktop-App, gleiche Org wie CLI?):
+   ```bash
+   ps aux | grep -iE "claude|remote" | grep -v grep
+   ```
+4. **Erst dann Re-Run mit `--debug-file`** wenn Fehler reproduzierbar
+
+**🔵 Interaktive CLI-Subcommands brauchen separates Terminal**
+
+`--remote-control`, `claude auth login` u.ä. sind interaktiv und blockieren die Shell. Wenn schon eine `claude`-Session läuft (häufig auf Yoga7), nicht im gleichen TTY starten — neues Terminal/Tab öffnen oder dem User per `!`-Prefix-Hinweis sagen, dass er das selbst macht.
+
 Alternative bevor vi: Heredoc-Pipe statt Editor öffnen.
