@@ -708,6 +708,337 @@ Vertragsdaten allein zeigen den Tarif. Für **konkreten Verbrauch + €** ergän
 
 A+B kombinieren — A für Standard-Visualisierung, B für €-Logik die Energy Dashboard nicht abdeckt (Abschlags-Vergleich, Geräte-Kosten).
 
+## Premium Lovelace Dashboards (2026-05-22)
+
+Patterns für hochwertige, responsive Dashboards mit Glassmorphism, 3D-Modellen und konsistentem Design. Voraussetzung: `mushroom`, `button-card`, `card-mod`, `custom:layout-card`, optional `apexcharts-card`, `mini-graph-card` installiert (alle via HACS).
+
+### Mushroom-Card Overflow-Fix (KRITISCH)
+
+`mushroom-template-card` mit langem `secondary`-Text rutscht aus der Card auf Mobile oder bei schmalen Spalten. Default-CSS hat `min-width` issues.
+
+```yaml
+card_mod:
+  style: |
+    ha-card {
+      padding: 14px 16px !important;
+      border-radius: 22px !important;
+      overflow: hidden;
+    }
+    mushroom-state-info {
+      min-width: 0 !important;       /* PFLICHT – sonst Overflow */
+      max-width: 100% !important;
+    }
+    mushroom-state-info .primary {
+      font-size: clamp(1.05em, 3.4vw, 1.45em) !important;
+      white-space: nowrap !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+    }
+    mushroom-state-info .secondary {
+      font-size: clamp(0.78em, 2.5vw, 0.92em) !important;
+      line-height: 1.35 !important;
+      white-space: normal !important;
+      word-break: break-word !important;
+      margin-top: 4px !important;
+    }
+    @media (max-width: 480px) {
+      ha-card { padding: 11px 13px !important; border-radius: 18px !important; }
+      mushroom-shape-icon { --icon-size: 38px !important; }
+    }
+```
+
+Zusätzlich `multiline_secondary: true` auf der Card setzen.
+
+### Glassmorphism Card-Pattern (kopierbar)
+
+Konsistente Premium-Optik für alle Karten. Anchor-fähig via `card_mod: &name`.
+
+```yaml
+card_mod: &glass_card
+  style: |
+    ha-card {
+      background: rgba(20,28,42,0.55) !important;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255,255,255,0.08) !important;
+      border-radius: 18px !important;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.30);
+      padding: 14px 16px !important;
+      transition: transform .2s ease, box-shadow .2s ease;
+    }
+    ha-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 14px 32px rgba(0,0,0,0.40);
+    }
+```
+
+Re-use via `card_mod: *glass_card`. View-Background mit radial-gradients (dunkles Blau/Rot) gibt der Glass-Card den Tiefen-Effekt.
+
+### Custom-Progressbar via `::after` Pseudo-Element
+
+Tank-, AdBlue-, Service-Bars direkt in einer Mushroom-Card ohne extra Element:
+
+```yaml
+card_mod:
+  style: |
+    ha-card {
+      padding: 14px 16px 20px 16px !important;
+      position: relative;
+      overflow: hidden;
+    }
+    ha-card::after {
+      content: "";
+      position: absolute;
+      left: 16px; right: 16px; bottom: 8px;
+      height: 3px;
+      border-radius: 2px;
+      background:
+        linear-gradient(90deg,
+          {% set f = states('sensor.X_fuel_level') | float(0) %}
+          {% set col = '#ef4444' if f < 15 else ('#f59e0b' if f < 30 else '#10b981') %}
+          {{ col }} 0%,
+          {{ col }} {{ f }}%,
+          rgba(255,255,255,0.06) {{ f }}%,
+          rgba(255,255,255,0.06) 100%);
+    }
+```
+
+Jinja im Card-Mod-Style wird beim Card-Update neu gerendert.
+
+### custom:layout-card für echte Responsive Grids (PFLICHT)
+
+HA-eigenes `type: grid columns: N` ist **nicht responsive** — N Spalten fix, auch auf Phone-Viewports. Lösung: `custom:layout-card` mit CSS-Grid-Auto-Fit.
+
+```yaml
+- type: custom:layout-card
+  layout_type: custom:grid-layout
+  layout:
+    grid-template-columns: "repeat(auto-fit, minmax(140px, 1fr))"
+    grid-gap: 10px
+  cards:
+    - type: tile
+      ...
+```
+
+Richtwerte `minmax(X, 1fr)`:
+- Stat-Tiles mit Zahl: `140px`
+- Quick-Actions (Icon + 2 Lines): `135px`
+- Detail-Tiles: `150-180px`
+- Lock-Cards mit Buttons: `220px`
+
+### YAML Flow-Mapping `?`-Trap
+
+Inline `{ key: value? }` triggert YAML-ParserError. `?` ist YAML-Key-Separator in Flow-Mappings.
+
+```yaml
+# ✗ FAIL – yaml.parser.ParserError
+confirmation: { text: Tiguan verriegeln? }
+
+# ✓ OK – Block-Style
+confirmation:
+  text: "Tiguan verriegeln?"
+```
+
+Generell: alle Strings mit `?`, `:`, `,`, `{`, `}`, `[`, `]` in Flow-Mappings quoten.
+
+### Anti-Pattern „Zu viele Tiles"
+
+Symptom: User sagt „unübersichtlich, zu viel". Daumenregel:
+- **Cockpit/Daily-View**: max. 6 Schnellaktionen, max. 4 Stat-Tiles
+- **Detail-View pro Raum/Gerät**: max. 4 Toggle-Tiles für Komfortfunktionen
+- **Diagnose/Power-User-Sachen** in `subview: true` View — nur via Banner-Klick oder Sidebar erreichbar
+
+Frage vor jedem Tile: **„Wird das im Alltag genutzt?"** Wenn nein → Diagnose-Subview.
+
+### 3D-Modelle via model-viewer (lokales GLB)
+
+Echte 3D-Modelle in HA Lovelace einbetten, ohne CDN-Abhängigkeit oder iframe-Embed-Dienste:
+
+**1. GLB nach `/config/www/<folder>/` legen:**
+```bash
+mkdir -p /volume1/docker/home-assistant/config/www/Tiguan
+cp /path/to/model.glb /volume1/docker/home-assistant/config/www/Tiguan/model.glb
+```
+
+**2. model-viewer.min.js lokal hosten** (kein CDN-Load zur Laufzeit):
+```bash
+cd /volume1/docker/home-assistant/config/www/Tiguan
+curl -sL -o model-viewer.min.js \
+  "https://unpkg.com/@google/model-viewer@3.5.0/dist/model-viewer.min.js"
+```
+
+**3. viewer.html erstellen:**
+```html
+<!DOCTYPE html>
+<html><head>
+  <meta charset="UTF-8" />
+  <script type="module" src="model-viewer.min.js"></script>
+  <style>
+    html,body { margin:0; padding:0; background:transparent; height:100% }
+    model-viewer { width:100%; height:100vh; background:transparent }
+  </style>
+</head><body>
+  <model-viewer id="m" src="model.glb"
+    camera-controls touch-action="pan-y"
+    auto-rotate auto-rotate-delay="1200" rotation-per-second="16deg"
+    shadow-intensity="1.6" shadow-softness="0.75"
+    exposure="0.82" environment-image="neutral" tone-mapping="aces"
+    field-of-view="28deg" bounds="tight"
+  ></model-viewer>
+  <script>
+    const mv = document.getElementById('m');
+    mv.addEventListener('load', () => {
+      // Camera mathematisch fitten – siehe nächste Sektion
+      fitCamera();
+      // Optional Material-Tinting
+      repaint();
+    });
+  </script>
+</body></html>
+```
+
+**4. Im Dashboard via iframe-Card einbinden (transparent, nahtlos):**
+```yaml
+- type: iframe
+  url: /local/Tiguan/viewer.html?v=5    # Cache-Buster für Updates!
+  aspect_ratio: "16:9"
+  card_mod:
+    style: |
+      ha-card {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        padding: 0 !important;
+      }
+      ha-card iframe {
+        border: none !important;
+        background: transparent !important;
+        filter: drop-shadow(0 30px 32px rgba(0,0,0,0.55));
+      }
+```
+
+**Cache-Buster `?v=N`** hochzählen bei jeder viewer.html-Änderung, sonst zeigt der Browser die alte Version. Mobile Companion-App cached aggressiv.
+
+### Camera-Fit für GLB (mathematisch, nicht „auto")
+
+`camera-orbit="auto auto auto"` + `bounds="tight"` funktionieren in der Praxis **nicht zuverlässig** — Camera landet oft im Modell-Innenraum oder das Modell ist winzig. Lösung: JS nach `load`-Event die Bounding-Box auslesen und Distanz berechnen.
+
+```js
+function fitCamera() {
+  const size = mv.getDimensions();          // {x, y, z}
+  const center = mv.getBoundingBoxCenter();
+  const maxDim = Math.max(size.x, size.y, size.z);
+  const fov = parseFloat((mv.getAttribute('field-of-view') || '28').replace('deg',''));
+  const fitDist = maxDim / (2 * Math.tan(fov * Math.PI / 360));
+  const distance = fitDist * 1.18;          // 18% Luft drumherum
+  mv.cameraTarget = `${center.x}m ${center.y}m ${center.z}m`;
+  mv.cameraOrbit = `35deg 78deg ${distance.toFixed(2)}m`;
+  mv.minCameraOrbit = `auto auto ${(fitDist * 0.55).toFixed(2)}m`;
+  mv.maxCameraOrbit = `auto auto ${(fitDist * 4).toFixed(2)}m`;
+}
+```
+
+Padding-Faktor-Tuning:
+- `1.0` = Wagen randet — schneidet ab
+- `1.15` = füllt Card sehr gut aus ✓ (Standard)
+- `1.6` = zu viel Luft, Auto wirkt klein
+
+`camera-orbit="35deg 78deg"` = Hero-Shot-3/4-Ansicht. Bei `45deg` ist es klassische Press-Photo-Perspektive.
+
+### GLB-Material-Tinting via JS
+
+Nach `load`-Event Materialien des GLB umfärben, z.B. Karosserie schwarz-metallic:
+
+```js
+function repaintBlack() {
+  const paintHints = ['paint','body','karosse','exterior','lack','door','hood',
+                      'fender','bumper','roof','pillar','panel','tailgate','trunk'];
+  const tireHints = ['tire','tyre','reifen','rubber'];
+  const glassHints = ['glass','window','fenster','scheibe','windshield'];
+  const chromeHints = ['chrome','rim','felg','wheel_rim','badge','emblem','grill'];
+
+  mv.model.materials.forEach((mat) => {
+    const name = (mat.name || '').toLowerCase();
+    if (glassHints.some(h => name.includes(h))) return;  // Glas NICHT anfassen
+    if (chromeHints.some(h => name.includes(h))) {
+      mat.pbrMetallicRoughness.setBaseColorFactor([0.78, 0.80, 0.84, 1.0]);
+      mat.pbrMetallicRoughness.setMetallicFactor(0.95);
+      mat.pbrMetallicRoughness.setRoughnessFactor(0.12);
+      return;
+    }
+    if (tireHints.some(h => name.includes(h))) {
+      mat.pbrMetallicRoughness.setBaseColorFactor([0.025, 0.025, 0.025, 1.0]);
+      mat.pbrMetallicRoughness.setRoughnessFactor(0.85);
+      return;
+    }
+    if (paintHints.some(h => name.includes(h))) {
+      // Deep Black Pearl Metallic
+      mat.pbrMetallicRoughness.setBaseColorFactor([0.015, 0.015, 0.018, 1.0]);
+      mat.pbrMetallicRoughness.setMetallicFactor(0.93);
+      mat.pbrMetallicRoughness.setRoughnessFactor(0.16);
+    }
+  });
+}
+```
+
+Fallback für GLBs mit generischen Material-Namen (`Material.001`):
+```js
+const bc = mat.pbrMetallicRoughness.baseColorFactor;
+if (bc && (bc[0]+bc[1]+bc[2])/3 > 0.55) {
+  // helle Materialien dunkler ziehen
+  mat.pbrMetallicRoughness.setBaseColorFactor([0.06, 0.06, 0.07, bc[3] ?? 1.0]);
+}
+```
+
+### Sketchfab vs. lokales GLB — Trade-off
+
+| Aspekt | Sketchfab-iframe | Lokales GLB + model-viewer |
+|---|---|---|
+| Setup | 1 URL | GLB + JS + HTML, ~3 Dateien |
+| Material-Customization | ❌ | ✓ volle PBR-Kontrolle |
+| Offline-Fähigkeit | ❌ | ✓ |
+| Datentransfer | je Aufruf | einmal cached |
+| Auto-Rotate-Speed | begrenzt | frei |
+| Camera-Limits | nein | min/max-Orbit konfigurierbar |
+| iOS Companion-App | manchmal blank | zuverlässig |
+| Update-Latenz | sofort | Cache-Buster nötig |
+| Risiko bei Constraint „no remote assets" | ✗ | ✓ |
+
+**Empfehlung**: Lokales GLB wenn Material-Kontrolle/Offline gewünscht, Sketchfab nur für schnelle Quick-Wins.
+
+### Sections-View vs. Subview
+
+```yaml
+- title: Diagnose
+  path: diagnose
+  icon: mdi:stethoscope
+  subview: true           # ← versteckt aus Sidebar, nur via navigate erreichbar
+  type: sections
+```
+
+`subview: true` blendet die View aus Tab-Bar/Sidebar aus. Erreichbar nur via `navigation_path: /lovelace-XYZ/diagnose` aus anderen Karten (z.B. Status-Banner). Power-User-/Wartungs-Inhalte gehören dorthin.
+
+### `relative_time` für Live-Status in Schnellaktionen
+
+Sekundärtext "vor 5 Minuten" statt absolute Zeit:
+
+```yaml
+secondary: >-
+  {% if is_state('binary_sensor.X_request_in_progress','on') %}läuft …
+  {% else %}{{ relative_time(states.sensor.X_last_data_refresh.last_changed) }}{% endif %}
+```
+
+`relative_time(datetime)` rendert lokalisiert ("vor 3 Minuten", "vor 2 Stunden").
+
+### Dashboard-Reload ohne HA-Restart
+
+YAML-Mode-Dashboards aktualisieren sich beim Browser-Reload, ohne dass HA neu startet:
+- Desktop: **Strg+Shift+R**
+- iOS/Android Companion-App: App komplett schließen + neu öffnen, oder `Settings → Companion App → Reset frontend cache`
+- card-mod-Styles cachen aggressiv — bei DOM-Änderungen evtl. auch HA-Frontend-Cache leeren via Profile → Browser-Storage löschen
+
+Bei Scripts/Helpers reicht `script.reload` / `homeassistant.reload_config_entry` via Developer Tools — kein Restart nötig.
+
 ## Common Mistakes to Avoid
 
 1. **Container-Name**: `homeassistant` (kein Bindestrich!)
