@@ -1644,3 +1644,84 @@ curl -s -H "Authorization: Bearer $HA_TOKEN" \
 - 4 Quick-Stat-Cards in horizontal-stack: Lichter an, Heizungen aktiv, Fenster offen, aktueller Verbrauch
 - Klickbar (tap_action: navigate) → Räume / Wetter / Energie
 - Card-mod-Gradient für moderne Optik (rgba + backdrop-filter: blur)
+
+---
+
+### 2026-05-23 — Custom-Integration-Bugs, reverse_state-Konvention, UI-Fehler-Triage
+
+**🔴 `hon` Custom-Integration: sync_command-ValueError nach erfolgreichem Befehl**
+- Setup: Haier hOn-Integration (`custom_components/hon/`) + `pyhOn==0.17.5`
+- Symptom UI: "Die Aktion climate/set_hvac_mode konnte nicht ausgeführt werden. Allowed values: ['2', '4', '5', '6', '7', '8'] But was: 0"
+- Trotz Fehlermeldung: **Befehl wird tatsächlich ausgeführt** (z.B. Klimaanlage geht aus)
+- Stack-Trace zeigt: `commands["stopProgram"].send()` ist schon durch, der Fehler kommt aus dem nachgelagerten `self._device.sync_command("stopProgram", "settings")` in `climate.py:202`
+- pyhon strict-validiert beim Sync den Wert `0` gegen `settings.machMode.values = ['2','4','5','6','7','8']` → ValueError eskaliert ins UI
+- **Fix-Pattern:** try/except ValueError um JEDEN sync_command-Aufruf:
+  ```python
+  try:
+      self._device.sync_command("stopProgram", "settings")
+  except ValueError as err:
+      _LOGGER.debug("sync_command stopProgram->settings ignored: %s", err)
+  ```
+- Betroffene Files in hon-Integration: `climate.py` (4 Stellen), `switch.py` (2), `number.py` (1, braucht Logger-Import), `select.py` (1)
+- Backups vor Patch: `*.py.bak-YYYYMMDD-HHMMSS`
+- Beim HA-Restart kompiliert Python die `.pyc`-Cache-Files neu — Verifikation: mtime der `.pyc` > Restart-Zeit
+
+**🔴 volkswagencarnet `reverse_state=True` Konvention**
+- Alle `*_closed_*`-BinarySensoren (`door_closed_*`, `window_closed_*`, `hood_closed`, `trunk_closed`, `sunroof_closed`, `windows_closed`) haben `reverse_state=True` in `pyhon-style` dashboard.py
+- Source: `/usr/local/lib/python3.14/site-packages/volkswagencarnet/vw_dashboard.py:2575+`
+- Bedeutung in HA-State:
+  - `state: 'off'` = **geschlossen** (kein Problem, normal)
+  - `state: 'on'` = **offen** (Warnung)
+- Templates müssen `is_state(..., 'off')` für "geschlossen" prüfen — das fühlt sich semantisch verkehrt an, ist aber korrekt
+- Tile-Karten mit `device_class: door` zeigen via HA-Standard-Lokalisierung automatisch korrekt "Geschlossen"/"Offen"
+- Custom-Cards (mushroom-template, button-card mit JS) müssen Logik selbst korrekt setzen — Bug-Hotspot beim Copy-Paste aus anderen Dashboards
+
+**🔴 UI-Fehlermeldung "Allowed values: [...]" — Triage-Reihenfolge**
+- Bei `ServiceValidationError`/`ValueError` mit "Allowed values" im UI **NICHT** sofort im Dashboard suchen
+- Reihenfolge:
+  1. `docker logs homeassistant --since 24h | grep -B30 "Allowed values"` — vollständige Stack-Trace
+  2. Stack-Trace lesen: ist der Fehler aus `homeassistant/components/...` oder aus `custom_components/...` bzw. `pyhon/site-packages`?
+  3. Wenn Custom-Integration: dort fixen (try/except), nicht im Dashboard
+  4. Wenn HA-Core: Dashboard-Werte gegen Entity-Capabilities prüfen
+- Falsche Hypothese ("Dashboard schickt falschen Wert") kostet eine Iteration — Stack-Trace zuerst lesen
+
+**🟡 Diana-Präferenz: Fahrzeug-Dashboard Farblogik invertiert**
+- Standard HA-Konvention: geschlossen=grün/neutral, offen=rot
+- Diana möchte für Fahrzeug-Dashboard `fahrzeug.yaml`: **geschlossen=rot, offen=grün**
+- Bestätigt 2026-05-23 nach Rückfrage — bewusste Präferenz, nicht Missverständnis
+- Bei Edit/Reflect: nicht erneut diskutieren, direkt umsetzen
+- Separate Lock-Logik bleibt Standard: `locked=grün, unlocked=rot` (separater Status, nicht von Inversion betroffen)
+- Pattern für gemischte Logik:
+  ```js
+  const C_CLOSED = '#ef4444';  // rot für Tür/Fenster geschlossen
+  const C_OPEN   = '#10b981';  // grün für Tür/Fenster offen
+  const C_OK     = '#10b981';  // grün für Lock verriegelt
+  const C_WARN   = '#ef4444';  // rot für Lock unverriegelt
+  ```
+
+**🟡 SVG Dark-Mode robust — Card-Background reicht oft nicht**
+- Problem: `background: linear-gradient(..., rgba(15,22,42,0.75) ...)` ist semi-transparent → Light-Theme schimmert durch
+- Lösung 1 (Card): Vollopaken Background setzen: `linear-gradient(180deg, #0a0e1a 0%, #050810 100%)`
+- Lösung 2 (SVG, robust auch bei Theme-Wechsel): Als erste Zeichenebene ein `<rect>` mit dunklem `<radialGradient>` einfügen:
+  ```svg
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="35%" r="75%">
+      <stop offset="0%" stop-color="#1a2238"/>
+      <stop offset="60%" stop-color="#0a0e1a"/>
+      <stop offset="100%" stop-color="#03050b"/>
+    </radialGradient>
+  </defs>
+  <rect x="0" y="0" width="400" height="720" rx="20" fill="url(#bg)"/>
+  ```
+- Beide kombinieren = doppelter Schutz, theme-unabhängig
+
+**🔵 Storage-Mode-Dashboards: kein HA-Restart nötig**
+- YAML-Files in `config/dashboards/*.yaml` werden bei jedem Lovelace-View-Aufruf neu eingelesen
+- Browser-Hard-Reload (Strg+Shift+R / Cmd+Shift+R) genügt, um Änderungen zu sehen
+- HA-Restart nur nötig bei: Änderungen in `configuration.yaml`, Packages, Custom-Components, scripts.yaml
+- check_config bleibt trotzdem sinnvoll für YAML-Syntax-Verifikation vor jedem Edit
+
+**🔵 Custom-Component-Backups vor Edit IMMER**
+- Pattern: `cp climate.py climate.py.bak-$(date +%Y%m%d-%H%M%S)` vor jeder Änderung
+- HACS-Updates überschreiben sonst eigene Fixes ohne Vorwarnung
+- Alternative für längere Lifetime: Fix als PR upstream einreichen (`Andre0512/hon`)
