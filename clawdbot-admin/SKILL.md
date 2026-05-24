@@ -309,10 +309,34 @@ Der Gateway laeuft auf dem **npm-Paket** (nicht mehr lokalem Build). Extensions 
 
 **Update-Workflow:**
 ```bash
-npm install -g --prefix ~/.local openclaw@latest    # explizit .local (XDG-konform; npm config get prefix = .local)
-openclaw --version                                  # Pruefen
-systemctl --user restart openclaw-gateway.service   # Gateway neustarten
+npm install -g openclaw@latest                       # KEIN --prefix! npm nutzt konfigurierten Prefix (~/.local/lib/node_modules/)
+openclaw --version                                   # Pruefen ob neue Version sichtbar
+systemctl --user restart openclaw-gateway.service    # Gateway neustarten
 ```
+
+**⚠️ Nach jedem Major-Update — systemd Unit manuell anpassen:**
+```bash
+# Version in Unit-Datei aktualisieren (npm macht das NICHT automatisch):
+sed -i 's/Description=OpenClaw Gateway (v[0-9.]*)/Description=OpenClaw Gateway (v2026.X.Y)/' \
+  ~/.config/systemd/user/openclaw-gateway.service
+sed -i 's/OPENCLAW_SERVICE_VERSION=[0-9.]*/OPENCLAW_SERVICE_VERSION=2026.X.Y/' \
+  ~/.config/systemd/user/openclaw-gateway.service
+systemctl --user daemon-reload
+```
+
+**🔴 Control-UI `update.run` schlaegt auf systemd-Services IMMER fehl:**
+- Fehlermeldung: `managed-service-handoff-started` → das ist NORMALES Verhalten, kein Bug
+- OpenClaw erkennt via `OPENCLAW_SYSTEMD_UNIT` + `OPENCLAW_SERVICE_MARKER` Env-Vars, dass es ein managed service ist
+- In-Process-Update wuerde systemd-Restart-Zyklus umgehen → Gateway bricht bewusst ab
+- **Loesung:** Immer manuell mit `npm install -g openclaw@latest` + `systemctl --user restart openclaw-gateway.service` updaten
+
+**🔴 npm -g vs. --prefix-ohne-g — KRITISCHER PFAD-UNTERSCHIED:**
+| Befehl | Installiert nach | Richtig? |
+|--------|-----------------|----------|
+| `npm install -g openclaw@latest` | `~/.local/lib/node_modules/` | ✅ |
+| `npm install --prefix ~/.local openclaw@latest` | `~/.local/node_modules/` | ❌ (falscher Pfad — ohne -g!) |
+| `npm install openclaw@latest` | `./node_modules/` (cwd!) | ❌ |
+Das `-g` Flag erzwingt globales Install-Layout mit `lib/`-Subverzeichnis. `--prefix` OHNE `-g` ist ein lokales Projekt-Install → Binary-Symlink findet das Paket nicht. Merksatz: fuer OpenClaw auf moltbot immer `npm install -g`, nie `--prefix` allein.
 
 **CLI-Wrapper:** `~/.local/bin/openclaw` zeigt auf npm-Paket (nicht mehr clawdbot-src).
 
@@ -2644,6 +2668,43 @@ cp ~/.openclaw/.env{,.pre-migration-$TS}
 # ...
 ```
 Rollback in einem Sweep: `for f in ~/.openclaw/*.pre-migration-$TS; do mv "$f" "${f%.pre-migration-$TS}"; done`
+
+### 2026-05-24 — OpenClaw Update: npm-Pfad-Dualismus + systemd-Handoff
+
+**Ausgangslage:** Control-UI zeigte "Update skipped: managed-service-handoff-started". Gateway lief auf v2026.5.20, verfuegbar war v2026.5.22.
+
+**Kernerkenntnisse:**
+
+**🔴 `managed-service-handoff-started` = erwartet, kein Fehler**
+OpenClaw prueft beim In-Process-Update via `OPENCLAW_SYSTEMD_UNIT` und `OPENCLAW_SERVICE_MARKER` Env-Vars ob es als managed service laeuft. Falls ja: Update absichtlich abbrechen. Manueller Eingriff ist Pflicht.
+
+**🔴 npm `--prefix` ohne `-g` installiert in falschen Pfad**
+- `npm install --prefix ~/.local openclaw@latest` → `~/.local/node_modules/` (FALSCH)
+- `npm install -g openclaw@latest` → `~/.local/lib/node_modules/` (RICHTIG)
+- Das `-g` Flag erzwingt globales Install-Layout mit `lib/`-Subverzeichnis
+- Ohne `-g` behandelt npm `--prefix` als lokales Projektverzeichnis → Binary-Symlink bricht
+
+**🔴 Falsches `npm install --prefix` (ohne -g) kann Lock-Datei und Filesystem inkonsistent hinterlassen**
+Wenn `npm install --prefix ~/.local` (ohne `-g`) und `npm install -g` gemischt werden, entsteht ein Split-State: npm schreibt Lock-Datei in `~/.local/package-lock.json` (lokaler Kontext), aber die tatsaechlichen Paket-Dateien liegen unter `~/.local/lib/node_modules/` (global). Symptome:
+- `npm ls --prefix ~/.local openclaw` → zeigte neue Version
+- `node -e "require('.../package.json').version"` → zeigte alte Version
+- Fix: `rm ~/.local/package.json ~/.local/package-lock.json` dann sauber `npm install -g openclaw@latest`
+
+**🟡 systemd Unit-Datei nach Update manuell anpassen**
+npm aktualisiert `openclaw-gateway.service` NICHT automatisch. Nach jedem Version-Bump:
+- `Description=OpenClaw Gateway (vXXXX.X.XX)` anpassen
+- `OPENCLAW_SERVICE_VERSION=XXXX.X.XX` anpassen  
+- `systemctl --user daemon-reload`
+
+**Bewaehrte Update-Sequenz:**
+```bash
+npm install -g openclaw@latest
+openclaw --version                                 # Neue Version verifizieren
+# Unit anpassen (Description + SERVICE_VERSION)
+systemctl --user daemon-reload
+systemctl --user restart openclaw-gateway.service
+journalctl --user -u openclaw-gateway.service -n 20 --no-pager  # Erfolg pruefen
+```
 
 ### Referenzen
 
