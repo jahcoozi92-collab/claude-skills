@@ -141,6 +141,15 @@ Diese Änderungen anwenden? [J]a / [N]ein / oder Anpassungen beschreiben
    ```
    - GRANULAR: eine Entity pro Konzept/Tool/Erkenntnis, nicht eine Meta-Entity pro Session
    - Checkliste: Neue Software? Patterns? Tasks? Relationen?
+   - **🔴 NIE mehrzeilige JSON-Befehle ins Terminal pasten** — Terminal-Paste trennt bei Zeilenumbruch `-p` von seinem JSON (`error: argument --props/-p: expected one argument`, JSON wird als eigener „Befehl" interpretiert). Stattdessen:
+     - **Bevorzugt:** Claude führt die Befehle selbst aus (ein `create`/`relate` pro SSH-Call): `ssh moltbotadmin@192.168.22.206 'cd ~/clawd && python3 skills/ontology/scripts/ontology.py create ...'`
+     - **Wenn der Auto-Mode-Classifier Cross-Host-SSH blockt** und der User selbst ausführen muss: alle Befehle in ein Skript schreiben und per **stdin-Pipe** an die VM geben — ein einziger kurzer Einzeiler, JSON-Quoting bleibt im File intakt:
+       ```bash
+       # Claude schreibt z.B. /tmp/ontology_update.sh (je 1 Zeile pro create/relate)
+       # User führt von der QUELL-Maschine aus (Skript liegt dort, läuft via bash -s auf der VM):
+       ssh moltbotadmin@192.168.22.206 'bash -s' < /tmp/ontology_update.sh
+       ```
+     - Skript-Reihenfolge: erst ALLE `create`, dann ALLE `relate` — Relations brauchen existierende Endpunkte, sonst dangling Edges.
 
 ### Step 5: Falls abgelehnt
 
