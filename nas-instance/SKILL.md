@@ -1538,3 +1538,37 @@ until docker exec n8n-n8n-1 wget -q --spider http://localhost:5678/healthz 2>/de
   sqlite3 /volume1/docker/n8n/data/database.sqlite \
     "SELECT id, name, active FROM workflow_entity WHERE nodes LIKE '%<port>%';"
   ```
+
+### 2026-05-26 — Cleanup-Session: Classifier-Move-Block, SSH-Paste-Datenverlust, Docker-Prune-Lock, Repo-Layout
+
+**🔴 Auto-Mode-Classifier blockt `mv`/`mkdir+mv` von VORHANDENEN Dateien in der Production-Wurzel `/volume1/docker`**
+- Gilt auch für rein kosmetische Moves (Docs nach `docs/`). Classifier-Reasoning sinngemäß: „beyond the cosmetic cleanup the user authorized / relocating pre-existing files in a live production NAS root".
+- `cp` und `command cp` (z.B. Restore aus Backup) sind erlaubt — nur `mv`/`mkdir+mv` von Bestandsdateien wird geblockt.
+- → Datei-Verschiebungen in der Wurzel muss **der User selbst im Terminal** ausführen; ich liefere split-sichere Befehle und ziehe danach die Referenzen nach.
+
+**🔴 SSH-Paste-Split + `mv A B` = Datenverlust durch Overwrite (passiert, recovered)**
+- Diana's SSH-Terminal zerschneidet mehrzeilige/lange Pastes am Newline (vgl. 2026-05-19 zsh-bracketed-paste, Z.1399). Ein gesplittetes `mv BACKUP_README.md SERVICE_OVERVIEW.md` hat `SERVICE_OVERVIEW.md` mit dem Inhalt von `BACKUP_README.md` ÜBERSCHRIEBEN.
+- Das **`!`-Präfix gehört NUR in die Claude-Code-Eingabezeile** — im rohen SSH-Shell ist `!` Bash-History/Negation: `! cmd1 && cmd2 && cmd3` → `(! cmd1)` wird false → `cmd2/cmd3` werden geskippt (hat hier zufällig vor dem Overwrite geschützt, beim 2. Versuch ohne `!` dann nicht mehr).
+- **Regel für User-ausgeführte Moves:** EINE Zeile pro Befehl, KEIN `!`, absolute Pfade, und IMMER `mv <eine-quelle> <ziel-dir>/` (Ziel = Verzeichnis mit Slash). NIE `mv A B` mit zwei Dateinamen — bei einem Paste-Split kann das eine Geschwister-Datei überschreiben; mit Dir-Ziel ist das Schlimmste „no such file".
+- **Restore-Quelle:** `/mnt/@usb/sdc2/NAS_Daily_Backups/backup_<YYYY-MM-DD>_030001/docker/...` = autoritative Vor-Schaden-Kopien (03:00-Cron, 2 Versionen). Nach Restore mit `diff -q "$BACKUP/$f" "./$f"` verifizieren.
+
+**🟡 `-i`-Aliase umgehen (cp/rm interaktiv auf der NAS)**
+- `cp`/`rm` sind als `-i` aliased. `cp -f` reicht NICHT — der Alias gewinnt (`cp -i -f` → Prompt; ohne Input kein Overwrite).
+- Fix: `command cp -f ...` (oder `\cp -f`), `rm -fv ...`. Ergänzt die bestehende `cat file > target`-Variante (Z.1404) um eine alias-sichere Standard-Methode.
+
+**🟡 `docker image prune -a` Lock: „a prune operation is already running"**
+- Es kann parallel ein anderer Prune laufen (Reclaimable fiel diese Session von 64 GB → 25 GB ohne mein Zutun). → Retry-Loop:
+  ```bash
+  for i in 1 2 3 4 5; do out=$(docker image prune -a -f 2>&1); echo "$out" | grep -q "already running" && { sleep 15; continue; }; echo "$out"|tail -2; break; done
+  ```
+- Build-Cache wächst während des parallelen Vorgangs wieder nach (206 MB → 1,3 GB) → nach Abschluss nochmal `docker builder prune -f`.
+- `image prune -a` entfernt nur Images OHNE referenzierenden Container (auch gestoppte zählen) → gefahrlos; `--volumes` NICHT in Production.
+
+**🟡 Optical-Cleanup Repo-Layout `/volume1/docker`**
+- `docs/` = `BACKUP_README.md`, `SERVICE_OVERVIEW.md`, `SECURITY_REPORT.md`. `scripts/` = alle Helfer (`container-health-check.sh`, `setup-backup-cron.sh`, `test-*backup.sh`, `vaultwarden_ha_sync.sh`, `secure_credentials_migration.py`, `nuke-graph-directory.sh`, `smoke.sh`).
+- **`daily-backup.sh` + `daily-backup-cron.log` bleiben in der Wurzel** (cron ruft per Absolutpfad). Andere Skripte nutzen absolute Pfade intern → laufen aus `scripts/`.
+- **Service-Verzeichnisse NIE verschieben** (relative Bind-Mounts `./data`/`./config` brechen beim `compose up`-Recreate).
+- Referenzen nachziehen: `CLAUDE.md` + `CLAUDE_AUTOCLAUDE.md` (`./container-health-check.sh` → `./scripts/...`), `docs/BACKUP_README.md`, `docs/SECURITY_REPORT.md` und der interne Echo-Cron-Hinweis im verschobenen `vaultwarden_ha_sync.sh`. Neuer Health-Check-Befehl: `./scripts/container-health-check.sh`.
+
+**🔵 `/init` CLAUDE.md-Drift**
+- Inventar driftete stark: ~50 Container laufen, ~12 waren dokumentiert; Ports veraltet (Vaultwarden 8083→8084, Ollama 11436→11437, Open-WebUI „3000 intern" →8080). Beim `/init`/Review IMMER gegen `docker ps` + `docker network ls` abgleichen statt CLAUDE.md zu vertrauen.
