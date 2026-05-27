@@ -1572,3 +1572,39 @@ until docker exec n8n-n8n-1 wget -q --spider http://localhost:5678/healthz 2>/de
 
 **🔵 `/init` CLAUDE.md-Drift**
 - Inventar driftete stark: ~50 Container laufen, ~12 waren dokumentiert; Ports veraltet (Vaultwarden 8083→8084, Ollama 11436→11437, Open-WebUI „3000 intern" →8080). Beim `/init`/Review IMMER gegen `docker ps` + `docker network ls` abgleichen statt CLAUDE.md zu vertrauen.
+
+---
+
+### 2026-05-26 — Docker-Update-Check, Backup link-dest-Fix, fuseblk/pkill-Fallen
+
+**🔴 Docker-Image-Update-Check: Digest-Vergleich, NICHT "kein Slash = local build"**
+- Zuverlässig — lokaler RepoDigest vs Registry-Manifest-Digest:
+  ```bash
+  local=$(docker image inspect "$img" --format '{{range .RepoDigests}}{{.}}{{end}}' | grep -oE 'sha256:[a-f0-9]{64}')
+  remote=$(docker buildx imagetools inspect "$img" --format '{{.Manifest.Digest}}')
+  [ "$local" = "$remote" ] && echo up-to-date || echo UPDATE
+  ```
+- `docker manifest inspect` taugt NICHT zum Vergleich (liefert Per-Arch-Digests aus der Manifest-Liste, nicht den List-Digest = RepoDigest).
+- 🔴 FALLE: Heuristik "Image-Name ohne `/` ⇒ lokaler Build" ist FALSCH — offizielle Docker-Hub-Images (`mariadb`, `nginx`, `redis`, `php`, `eclipse-mosquitto`) haben keinen Slash, sind aber Registry-Images (`library/*`). Echte lokale Compose-Builds erkennt man daran, dass `buildx imagetools inspect` fehlschlägt (kein Remote).
+- Pinned-Tags (z.B. `n8nio/n8n:1.73.1`) bekommen keinen Update, nur floating Tags (`latest`, `stable`, `main`, `*-alpine`) verschieben den Digest.
+
+**🔴 daily-backup.sh: --link-dest + Excludes gegen stille code-11-Fehler**
+- Symptom: USB-Backup-Platte (`/mnt/@usb/sdc2`, fuseblk) bei 93% → `[ERROR] ... failed (code: 11)` (rsync = kein Platz) → Backups schlugen TÄGLICH STILL fehl (kein verlässliches Recovery). Immer `backup.log`-Tail prüfen, nicht nur dass der Job lief.
+- Ursache: Skript rsyncte ganz `/volume1/docker/` als VOLLKOPIE pro Lauf (kein `--link-dest`), inkl. reproduzierbarer/redundanter Daten; `manage_versions` (keep 2) räumt erst AM ENDE → 3 Vollkopien gleichzeitig → voll.
+- Fix angewendet (Original gesichert `daily-backup.sh.bak_*`): `--link-dest=<vorheriges Backup>/docker/` (+ `/home/`); `PREV_BACKUP` in `main()` VOR `create_backup_structure` ermitteln; Excludes `ollama/data/models/*`, `ollama/models/*`, `ollama/ollama.tgz`, `glm-4.7-flash/data/*`, `yoga7-backup/*` (~155 GB/Kopie).
+- `Crawl4AI` NICHT ausschließen: schwere venvs greifen schon über generisches `*/venv/*`; Rest ist nicht-reproduzierbarer Code/Config. Modelfiles (`ollama/Modelfile-*`) bleiben drin — nur Modell-Blobs raus.
+- 🟡 ÜBERGANGS-FALLE: Beim ERSTEN Lauf kollidiert das schlanke neue Backup mit 2 noch fetten alten (prune-at-end) → Home/DBs scheitern an Platz. Lösung: **2× laufen lassen** — Lauf 1 prunt das älteste Fette, Lauf 2 dedupliziert gegen das schlanke und läuft komplett durch ("Backup Completed Successfully!"). Danach self-healing über die täglichen 03:00-Läufe.
+
+**🟡 `du` über fuseblk (NTFS/exFAT-USB) hängt praktisch**
+- `du -xh --max-depth=1 /mnt/@usb/sdc2` über 2,6 TB lief nicht durch (Minuten ohne Output). Stattdessen Top-Level mit `ls -la` ansehen, dann gezielt einzelne Unterordner mit `timeout 90 sudo du -sh <dir>` messen (Timeouts als "zu groß" akzeptieren).
+
+**🟡 `pkill -f '<pattern>'` killt die EIGENE Shell (exit 144)**
+- Der Pattern matcht auch den gerade laufenden eval'ten Befehlsstring des Bash-Tools → die eigene Ausführung wird mitgekillt (`Exit code 144`), passierte 2× diese Session.
+- Stattdessen: spezifischen Prozess per PID killen, oder Pattern eng genug fassen (vollständiger Binär-/Skript-Pfad). Im-Hintergrund gestartete Tasks lieber per Task-ID/TaskStop beenden.
+- Verwandt: `run_in_background:true` PLUS inneres `&` im Befehl = der Launcher kehrt sofort mit Exit 0 zurück (Fehlsignal "fertig"), der echte Prozess läuft detached. Nur EINES von beiden nutzen.
+
+**🔵 Verwaisten Docker-data-root sicher erkennen/löschen**
+- `@docker.empty.<unixtime>` (hier 486 GB, Okt 2025) = alter data-root nach Migration. Verifizieren: `docker info --format '{{.DockerRootDir}}'` (live = `/volume1/@docker`) + `mount | grep @docker` zeigt nur Live-Root + `lsof +D <dir>` leer → dann `sudo rm -rf` gefahrlos.
+
+**🔵 `@version_explorer_cache` kann auf TB-Skala wachsen — nur über UGOS-UI lösbar**
+- Diese Session: 1,9 TB, weil UGOS Version Explorer das churny `/volume1/docker` versioniert. NICHT per `rm` anfassen (beschädigt das Feature). Remediation: in der UGOS-Weboberfläche Version Explorer für die `docker`-Freigabe deaktivieren + Versionen löschen. Empfehlung: nie für `docker`/`@kvm`/Modell-Verzeichnisse aktivieren.
