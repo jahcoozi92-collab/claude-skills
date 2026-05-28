@@ -1125,3 +1125,91 @@ Filter-Syntax: `"category,!exclude1,!exclude2"` — `!1p` filtert First-Party-Te
 `--remote-control`, `claude auth login` u.ä. sind interaktiv und blockieren die Shell. Wenn schon eine `claude`-Session läuft (häufig auf Yoga7), nicht im gleichen TTY starten — neues Terminal/Tab öffnen oder dem User per `!`-Prefix-Hinweis sagen, dass er das selbst macht.
 
 Alternative bevor vi: Heredoc-Pipe statt Editor öffnen.
+
+### 2026-05-29 — Cowork Asar 1.9659.1 Reinstall + zsh-Paste-Problem + Google Chrome
+
+**🔴 Multi-Line Code-Blocks brechen in Diana's zsh beim Paste**
+- Symptom: Code-Block mit Backslash-Continuation `wget -O /tmp/file \\\n  https://...` wird vom User pastet → zsh interpretiert den Newline als Befehltrenner → `wget` läuft ohne URL, https-Zeile wird als eigene Befehlszeile gewertet (`datei nicht gefunden`)
+- Konkret diese Session: `wget` + `&&` + `sudo apt install` → drei Fehler hintereinander, weil jeder Zeilenumbruch eine eigene Eingabe wurde
+- **Regel:** Befehle für User-Terminal IMMER als **echten One-Liner** anbieten (ohne Backslash, ohne Newline, ohne `\n`). Lieber lang als gebrochen.
+- Wenn der Befehl unvermeidbar lang ist: in eigene `bash`-Subshell ausführen lassen via Heredoc oder Skript-Datei, NICHT als Code-Block den User pastet
+- Symptom-Diagnose: User-Output enthält Befehl auf mehrere Zeilen aufgeteilt + Fehler wie `URL fehlt`, `zsh: datei nicht gefunden`, `install: Ungültige Option -- y`
+
+**🔴 Google Chrome als System-`.deb` (Korrektur zu 2026-05-02)**
+- Diana möchte **Google Chrome**, nicht Firefox/System-Chromium (auch wenn der ursprüngliche Workaround Firefox empfahl)
+- **NIEMALS Flatpak-Variante** vorschlagen — `org.chromium.Chromium` Flatpak war ja gerade der Sandbox-Bug, der den Cowork-Login zerlegte. Flatpak Chrome hätte exakt das gleiche Problem
+- Install-Pattern (Claude lädt selbst, sudo bleibt beim User):
+  ```bash
+  # Claude im Background:
+  wget -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+  # User im Terminal:
+  sudo apt install -y /tmp/chrome.deb
+  xdg-settings set default-web-browser google-chrome.desktop
+  ```
+- Verify: `xdg-settings get default-web-browser` → `google-chrome.desktop` + `which google-chrome` → `/usr/bin/google-chrome`
+
+**🔴 Cowork-Reinstall-Sequenz bei Asar 1.9659.1+ (KRITISCH — Patch ist instabil)**
+- `install.sh --force` zieht aktuelle Asar (1.9659.1) — die hat aber zwei post-Patch-Probleme:
+  1. `configureWebAuthn` Crasher (macOS-API auf Linux), siehe [[reference_claude_cowork_linux.md]]
+  2. `Helpers/disclaimer` ohne +x → EACCES bei jedem MCP-Spawn
+- **Pflicht-Schritte NACH install.sh --force:**
+  ```bash
+  # configureWebAuthn defensiv patchen
+  cd ~/.local/share/claude-desktop
+  python3 -c "
+  p='linux-app-extracted/.vite/build/index.js'
+  s=open(p).read()
+  s=s.replace('aA.app.configureWebAuthn({touchID:','aA.app.configureWebAuthn&&aA.app.configureWebAuthn({touchID:',1)
+  open(p,'w').write(s)"
+  # MCP-Disclaimer ausführbar machen
+  chmod +x ~/.config/Claude/Helpers/disclaimer
+  # Stale Singleton-Locks weg
+  rm -f ~/.config/Claude/Singleton{Lock,Cookie,Socket}
+  # Asar-Cache invalidieren (damit Patch beim Repack greift)
+  rm -rf ~/.local/share/claude-desktop/.asar-cache
+  ```
+- Verify-Doctor: `~/.local/share/claude-desktop/install.sh --doctor` — 17 ✓ erwartet, 2 ⚠ (asar-Version + parallele Desktop-Files) sind OK
+
+**🔴 IndexedDB LOCK-Race bei Multi-Instance (NEU — passiert beim ersten Start nach Reinstall)**
+- Wrapper macht `nohup ... &` ohne Check ob Cowork schon läuft → bei mehrfacher Login-URL-Aktivierung entstehen 2-6 parallele Instanzen
+- Symptom-Folge: `LOCK: File currently in use (ChromeMethodBFE: 15::LockFile::2)` → `account_profile data is undefined` (React-Query-Crash) → App stürzt sichtbar ab, oft NACH erfolgreichem Login
+- **Recovery-Reihenfolge (in dieser Reihenfolge!):**
+  ```bash
+  pkill -9 -f "electron.*asar-cache/app.asar"
+  rm -f ~/.config/Claude/Singleton{Lock,Cookie,Socket}
+  find ~/.config/Claude -maxdepth 4 -name LOCK -delete
+  rm -rf ~/.local/share/claude-desktop/.asar-cache
+  ```
+- Wenn LOCK NACH Cleanup SOFORT wieder kommt (= DB-Korruption): IndexedDB komplett umziehen statt löschen (User kommt notfalls an alte Daten ran):
+  ```bash
+  STAMP=$(date +%Y%m%d_%H%M%S)
+  mv ~/.config/Claude/IndexedDB ~/cowork-indexeddb-backup-$STAMP
+  mv ~/.config/Claude/"Local Storage" ~/cowork-localstorage-backup-$STAMP
+  mv ~/.config/Claude/"Session Storage" ~/cowork-sessionstorage-backup-$STAMP
+  ```
+- Beim Start IMMER mit `sleep 6 && pgrep -c "electron.*asar-cache"` verifizieren dass nur 1 Instanz lebt (=2 PIDs)
+
+**🟡 Cleanup-Pattern nach erfolgreichem Cowork-Reinstall**
+- Diana möchte explizit aufräumen nach Reinstall — Inventar-First-Workflow:
+  ```bash
+  du -sh /tmp/*.deb ~/cowork-*-backup-* ~/cowork-local-reverts-*.patch \
+    ~/.local/state/claude-cowork/logs/startup.log \
+    ~/.local/share/claude-desktop/linux-app-extracted/.vite/build/*.bak* 2>&1
+  ```
+- Sichere Lösch-Kandidaten (~365 MB diese Session):
+  - `/tmp/chrome.deb` (~124 MB) — nach erfolgreichem `apt install`
+  - `~/cowork-*-backup-*` (Reinstall-Backups) — wenn Reinstall verifiziert läuft
+  - `~/cowork-local-reverts-*.patch` (>4 Wochen alt) — irrelevant
+  - `index.js.bak-webauthn` (~13 MB) — wird bei nächstem Reinstall ohnehin überschrieben
+  - `~/.local/share/applications/claude-desktop.desktop` + `-priority.desktop` (alte parallele Launcher, NICHT Cowork)
+- **startup.log truncate statt löschen** (228 MB diese Session): `truncate -s 0 ~/.local/state/claude-cowork/logs/startup.log` — App schreibt weiter ins gleiche File-Handle
+
+**🔵 Chromium-Flatpak nach Chrome-Install obsolet (~1.3 GB)**
+- `~/.var/app/org.chromium.Chromium/` belegt 1.3 GB
+- Nicht ohne explizite User-Bestätigung deinstallieren (Bookmarks/Profile drin)
+- Falls User ja sagt: `flatpak uninstall org.chromium.Chromium` — plus Profilordner manuell entfernen
+
+**Meta-Lektion: Reflexion auf eigene Multi-Start-Fehler**
+- Ich habe in dieser Session 2-3x Cowork gestartet ohne vorher `pgrep` zu prüfen ob schon eine Instanz lief
+- Das produzierte die LOCK-Race direkt — eine selbstverschuldete Eskalation
+- **Regel vor jedem Cowork-Start:** `pgrep -c "electron.*asar-cache" && echo "läuft schon, NICHT erneut starten"` oder explizit `pkill -9` vorher
