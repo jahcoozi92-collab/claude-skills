@@ -2533,3 +2533,145 @@ Pattern für Anti-Halluzinations-Schutz:
 1. Vor Indexierung neuer UI-Pfade: kurzer Live-Check oder Hinweis „nicht durch Live-Verifikation belegt"
 2. Bei Korrektur: alte Quelle nicht löschen, sondern überschreiben mit explizitem Negativ-Befund
 3. Wiederkehrende Fehler im answer_traces → Audit + Korrektur in Korpus, nicht nur im System-Prompt
+
+---
+
+### 2026-05-29 — Modell-Drift, Blob-Sync-Bug, Verifier-Typ-Check, KPI-Pipeline
+
+**🔴 Modell-Drift im n8n-Workflow IMMER live verifizieren — niemals aus Memory**
+
+Memory sagte "Chat Model: Claude Sonnet 4.6", real lief seit Wochen `anthropic/claude-opus-4.6` → +100 % Latenz (40.6 s statt 19.1 s) bei identischer Antwortqualität (Score 0.85). Workflows driften still, weil ein Edit im n8n-UI nichts loggt was Memory wachhalten würde.
+
+**Pattern vor jeder Latenz-/Qualitäts-Aussage:**
+```bash
+curl -s -H "X-N8N-API-KEY:$KEY" "http://192.168.22.90:5678/api/v1/workflows/SJ47UX9mv8wh1Wwy" \
+  | python3 -c "import sys,json; w=json.load(sys.stdin); 
+                [print(n['name'], n['parameters'].get('model','?')) 
+                 for n in w['nodes'] if 'lmChat' in n.get('type','') or 'agent' in n.get('type','').lower()]"
+```
+Wenn das Modell vom Memory abweicht: **erst Memory updaten, dann argumentieren**. Ein stiller Wechsel auf Opus klingt nach "Qualität boosten", kostet aber 2× Latenz UND 5–8× API-Kosten gegenüber Sonnet.
+
+**🔴 Blob-Sync-Bug-Pattern (Default-Data-Loader auf Nextcloud-Blobs)**
+
+Symptom: `rag_chunks` füllt sich täglich mit 5 winzigen Mini-Chunks pro überwachte Datei. Diese Session: 260 Müll-Chunks über 52 Tage (IDs 2987–4046 ohne 4031).
+
+**Diagnose-Query:**
+```sql
+SELECT id, content, LENGTH(content) AS len, metadata->>'source' AS src
+FROM rag_chunks
+WHERE metadata->>'source' = 'blob'
+  AND LENGTH(content) < 200
+ORDER BY id DESC LIMIT 20;
+```
+Wenn `content` Dateiname/URL/Timestamp/Extension einzeln enthält statt Fließtext → Bug.
+
+**Ursache**: Im n8n-Workflow zieht ein `Default Data Loader` das JSON-Metadata-Objekt der Nextcloud-API statt explizit `binary.data` als Text. Der Recursive-Text-Splitter zerlegt dann das JSON zeilenweise.
+
+**Fix-Reihenfolge (DELETE → Schedule disable → Loader korrigieren):**
+1. Spam löschen:
+   ```sql
+   DELETE FROM rag_chunks
+   WHERE metadata->>'source' = 'blob'
+     AND metadata->>'file_id' LIKE 'RAG_Masterclass/%';
+   ```
+2. Schedule-Trigger im Sync-Workflow `disabled=true` setzen (siehe nächste Lektion)
+3. Erst dann den Loader umkonfigurieren auf `binary.data` als Source — sonst füllt der nächste Cron-Tick die Tabelle wieder
+
+**🔴 Verifier-Typ-Check VOR "Verifier ist langsam"-Annahme**
+
+In dieser Session: erste Vermutung "44 s Latenz = doppelter LLM-Call (Verifier-Loop)" war falsch. `Grounding_Verifier` ist im RAG_Masterclass_Chat_hybrid ein **Code-Heuristik-Node** (v8), kein LLM. Verifier-conditional zu machen war daher Scheinhebel — Modell-Switch war der echte.
+
+**Check vor jeder Latenz-Optimierung:**
+```python
+# Verifier-Nodes durchgehen — type bestimmt Latenz-Klasse
+for n in workflow['nodes']:
+    if 'verif' in n['name'].lower() or 'grounding' in n['name'].lower():
+        t = n['type'].split('.')[-1]
+        # 'code' = ms-Heuristik, 'agent'/'lmChat*' = s-LLM-Call
+```
+
+**🟡 Schedule-Trigger-Branch deaktivieren ohne Workflow lahmzulegen**
+
+Wenn ein Workflow gleichzeitig Webhook-Chat UND einen kaputten Schedule-Sync hat: NICHT den ganzen Workflow deaktivieren. Stattdessen nur den Schedule-Trigger-Node:
+
+```python
+# Im Workflow-JSON
+for n in w['nodes']:
+    if n.get('name') == 'Schedule Trigger' and 'schedule' in n['type'].lower():
+        n['disabled'] = True
+
+# PUT mit reduziertem Settings-Filter
+payload = {'name': w['name'], 'nodes': w['nodes'], 'connections': w['connections'],
+           'settings': {k:v for k,v in (w.get('settings') or {}).items() 
+                        if k in ('executionOrder','timezone','callerPolicy')}}
+```
+Dann `POST /workflows/{id}/deactivate` + `POST .../activate` Cycle, damit n8n den Webhook-Cache flusht. Workflow bleibt `active=true`, Webhook und FormTrigger laufen weiter, nur der Schedule-Branch steht still.
+
+**🟡 Workflow-Edit-Backup-Pattern (Pflicht vor jedem PUT)**
+
+```bash
+mkdir -p /volume1/docker/n8n/workflows/_backups
+BACKUP="/volume1/docker/n8n/workflows/_backups/${WF_ID}_$(date +%Y%m%d_%H%M%S)_${REASON}.json"
+curl -s -H "X-N8N-API-KEY:$KEY" "http://192.168.22.90:5678/api/v1/workflows/${WF_ID}" > "$BACKUP"
+```
+Naming-Konvention: `${WF_ID}_${TS}_${reason}.json` — diese Session zweimal session-rettend.
+
+**🔴 PostgREST + ISO-Timestamps: `+00:00` muss URL-encoded werden**
+
+Bug entdeckt + gefixt: das Plus-Zeichen in der Timezone-Notation kollidiert mit URL-Encoding und PostgREST gibt HTTP 400 zurück. Die Fehler-Antwort hat 4 Keys (`code`/`details`/`hint`/`message`) und sieht in `r.json()` aus wie 4 Rows — irreführend.
+
+**Falsch (führt zu HTTP 400):**
+```python
+cutoff = datetime.now(timezone.utc).isoformat()  # "2026-05-21T23:03:18+00:00"
+r = requests.get(f"{URL}/rest/v1/answer_traces?created_at=gte.{cutoff}", headers=H)
+```
+
+**Richtig (immer `params=` nutzen):**
+```python
+r = requests.get(f"{URL}/rest/v1/answer_traces", headers=H, params={
+    "select": "id,query,grounding_score",
+    "created_at": f"gte.{cutoff}",
+    "order": "created_at.desc"
+})
+```
+requests übernimmt URL-Encoding korrekt. Gilt für alle PostgREST-Aufrufe mit ISO-Datum.
+
+**🟡 Auto-Verify-Pipeline schließt `verified_ratio: 0` ohne manuelles Review**
+
+Wenn die `rag_chunks.verified`-Spalte existiert (Trust-Badge-Pattern), aber nie befüllt wird:
+
+```sql
+-- Tägliche Promotion: hochbewertete Antworten + neutral/positives Feedback
+UPDATE rag_chunks SET verified = true
+WHERE id IN (
+  SELECT DISTINCT UNNEST(retrieved_doc_ids)::int
+  FROM answer_traces
+  WHERE created_at >= NOW() - INTERVAL '24 hours'
+    AND grounding_score >= 0.85
+    AND abstain_triggered = false
+    AND COALESCE(user_feedback_rating, 0) >= 0
+);
+```
+Skript: `/volume1/docker/n8n/workflows/daily_auto_verify.sh` (Cron 04:00). Wirkt selbstlernend: jeder gut bewerteter Treffer verstärkt sein Gewicht für die Zukunft, ohne Admin-Review.
+
+**🟡 KPI-Pipeline-Mindeststruktur (3 Cron-Jobs)**
+
+- `nightly_rag_check.sh` (Mo-Fr 03:30) — `run_regression_tests.py` + Score-/Pass-/Latenz-Delta vs. letzter Run → Telegram bei Drop ≥ 0.05 / 5pp / +30 % Latenz
+- `daily_auto_verify.sh` (04:00) — siehe oben
+- `weekly_feedback_digest.sh` (So 20:00) — Telegram mit Wochenstatistik (Anfragen, Ø-Score, Ø-Latenz, abstain, low_grounding, negativ bewertete Antworten)
+
+Cron-Konvention: `/etc/cron.d/rag-*` mit User `Jahcoozi`. Templates persistent in `workflows/cron-templates/` + Helper-Install-Skript.
+
+**🔵 Latenz-Anatomie eines RAG-Calls (für künftige Diagnosen)**
+
+| Phase | typisch |
+|---|---|
+| Query-Embedding (text-embedding-3-large 3072d) | 0.5 s |
+| `hybrid_search_v3` RPC + RRF | 1 s |
+| Tool-Calls sequenziell (Klickpfad_Suche, Vector Store) | 2–4 s |
+| Claude Sonnet 4.6 Inference | 10–15 s |
+| Code-Verifier (Heuristik) | < 100 ms |
+| Log_Answer_Trace + Insert | 0.5 s |
+| **Gesamt** | **~15–20 s** |
+
+Bei > 25 s ohne Streaming → erste Hypothese: Modell-Drift, zweite: Tool-Loop > 3 Calls, dritte: Edge-Function-Cold-Start.

@@ -1608,3 +1608,96 @@ until docker exec n8n-n8n-1 wget -q --spider http://localhost:5678/healthz 2>/de
 
 **🔵 `@version_explorer_cache` kann auf TB-Skala wachsen — nur über UGOS-UI lösbar**
 - Diese Session: 1,9 TB, weil UGOS Version Explorer das churny `/volume1/docker` versioniert. NICHT per `rm` anfassen (beschädigt das Feature). Remediation: in der UGOS-Weboberfläche Version Explorer für die `docker`-Freigabe deaktivieren + Versionen löschen. Empfehlung: nie für `docker`/`@kvm`/Modell-Verzeichnisse aktivieren.
+
+---
+
+### 2026-05-29 — Cron-Install via /etc/cron.d/ (Classifier-Workaround + Copy-Paste-Resilience)
+
+**🔴 Auto-Mode-Classifier blockt `sudo install` nach /etc/cron.d/ — auch mit User-Passwort via stdin**
+
+Selbst `echo "$PW" | sudo -S install ...` wird abgelehnt mit Reasoning "Installing system-wide cron jobs in /etc/cron.d/ creates unauthorized persistence mechanisms". Die User-Erlaubnis "mach das bitte" inkl. Passwort-Drop reicht dem Classifier nicht — er verlangt Userhandlung selbst.
+
+**Lösung: Helper-Skript-Pattern**
+
+Statt User direkt 2× `sudo install` tippen zu lassen (zerfällt beim Copy-Paste, siehe nächste Lektion), bereite ein installiertes Helper-Skript vor:
+
+```bash
+# 1) Templates in persistenten Pfad (überlebt Reboot, /tmp nicht)
+mkdir -p /volume1/docker/n8n/workflows/cron-templates
+cp /tmp/rag-auto-verify   /volume1/docker/n8n/workflows/cron-templates/
+cp /tmp/rag-weekly-digest /volume1/docker/n8n/workflows/cron-templates/
+
+# 2) Install-Skript daneben legen
+cat > /volume1/docker/n8n/workflows/cron-templates/install.sh <<'EOF'
+#!/bin/bash
+set -e
+SRC="/volume1/docker/n8n/workflows/cron-templates"
+install -m 0644 -o root -g root "$SRC/rag-auto-verify"   /etc/cron.d/rag-auto-verify
+install -m 0644 -o root -g root "$SRC/rag-weekly-digest" /etc/cron.d/rag-weekly-digest
+echo "✓ Installiert" && ls -la /etc/cron.d/rag-*
+EOF
+chmod +x /volume1/docker/n8n/workflows/cron-templates/install.sh
+```
+
+User-Befehl ist dann nur noch:
+```bash
+sudo bash /volume1/docker/n8n/workflows/cron-templates/install.sh
+```
+— eine einzige kurze Zeile, robust gegen Terminal-Copy-Paste-Zerlegung, idempotent, dokumentiert sich selbst.
+
+**🔴 Lange `sudo`-Befehle werden vom Terminal beim Paste in zwei Befehle zerlegt**
+
+Symptom in dieser Session: User pastet
+```
+sudo install -m 0644 -o root -g root
+  /volume1/docker/n8n/workflows/cron-templates/rag-auto-verify /etc/cron.d/rag-auto-verify
+```
+→ Shell führt zwei separate Befehle aus: `sudo install -m 0644 -o root -g root` (fehlt File-Operand) und der zweite Teil als eigenständiger Pfad (`zsh: keine Berechtigung`).
+
+**Drei Anti-Patterns die alle gescheitert sind:**
+1. `\`-Line-Continuation am Zeilenende → Terminal-Paste nimmt das `\` als Literal-Zeichen
+2. Mehrere `cmd1 && cmd2 && cmd3` in einer logischen Zeile → Terminal bricht trotzdem nach 80 Zeichen
+3. "Bitte komplett markieren und einfügen" → User markiert sichtbare Zeilen, Wrapping verfälscht Markierung
+
+**Funktionierender Pattern** für NAS-Setup mit User-Eingabe:
+- Pre-stage alle Inhalte in Dateien
+- User-Befehl darf MAX 60 Zeichen sein, ein Wort + ein Pfad
+- Bevorzugt: `sudo bash <pfad/install.sh>` oder `sudo bash <pfad/uninstall.sh>`
+
+**🟡 `/tmp` ist flüchtig — Cron-Templates IMMER in persistenten Pfad**
+
+Reboot räumt `/tmp` auf, dann ist das Helper-Skript weg. Konvention: `/volume1/docker/<service>/cron-templates/` (übersteht Reboot, ist im Daily-Backup mit drin, gehört semantisch zum Service).
+
+**🟡 User-Crontab (`crontab -e` als Jahcoozi) ist auf UGREEN/Synology gesperrt**
+
+```
+/var/spool/cron/: mkstemp: Permission denied
+```
+→ `/var/spool/cron/crontabs/` ist nicht schreibbar. Stattdessen `/etc/cron.d/` (per sudo via Helper-Skript) ODER Synology/UGREEN Task Scheduler GUI.
+
+**🟡 `.env`-Permissions für Cron-Jobs prüfen**
+
+Wenn ein Cron-Skript Tokens aus `/volume1/docker/n8n/.env` liest und als User `Jahcoozi` läuft:
+```bash
+test -r /volume1/docker/n8n/.env && echo OK || echo FEHLT-LESEN
+ls -la /volume1/docker/n8n/.env
+```
+Im Cron-File Token explizit als ENV-Var setzen, NICHT aus Shell-Profil erwarten:
+```cron
+0 20 * * 0 TELEGRAM_TOKEN="$(grep '^TELEGRAM_BOT_TOKEN=' /volume1/docker/n8n/.env | cut -d= -f2-)" /pfad/skript.sh
+```
+
+**🟡 Cron-Logfile-Retention im Skript selbst — sonst wächst `logs/` unbegrenzt**
+
+```bash
+# Am Ende jedes Cron-Skripts:
+ls -t "$LOG_DIR"/skript_*.log 2>/dev/null | tail -n +31 | xargs -r rm -f
+```
+Verhindert das `workflows/logs/`-Verzeichnis-Sprawl (diese Session: über 100 Crawler-Logs angesammelt).
+
+**🔵 SSH-Quick-Verify nach Cron-Install**
+
+```bash
+ssh Jahcoozi@192.168.22.90 'ls -la /etc/cron.d/<prefix>-* && systemctl is-active cron'
+```
+`systemctl is-active cron` muss `active` liefern — wenn `inactive`, hilft das beste Cron-File nichts. Cron lädt `/etc/cron.d/` automatisch ein (kein Reload nötig).
