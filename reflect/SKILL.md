@@ -126,7 +126,10 @@ Diese Änderungen anwenden? [J]a / [N]ein / oder Anpassungen beschreiben
    ```bash
    git push origin main
    ```
-   Wenn blockiert: explizit beim User nachfragen ("Soll ich pushen?"). User-OK reicht dann.
+   Wenn blockiert: explizit beim User nachfragen — **die Frage MUSS das Wort "pushen" enthalten**, sonst akzeptiert der Classifier "ja" als Mehrdeutigkeit. Funktionierender Wording-Pattern (verifiziert 2026-05-29):
+   - Claude: "Soll ich pushen?"
+   - User: "ja pushen" oder "ja push" → Classifier lässt durch
+   - User: nur "ja" oder "J" → Classifier kann erneut blocken (Mehrdeutigkeit)
 4. Bestätige: "Skill aktualisiert und zu GitHub gepusht (Commit-Hash)"
 5. **Ontology aktualisieren** — PFLICHT nach jedem Reflect:
    - **Yoga7:** Ontology ist LOKAL verfügbar — `cd ~/clawd && python3 skills/ontology/scripts/ontology.py [command]`
@@ -149,6 +152,18 @@ Diese Änderungen anwenden? [J]a / [N]ein / oder Anpassungen beschreiben
        # User führt von der QUELL-Maschine aus (Skript liegt dort, läuft via bash -s auf der VM):
        ssh moltbotadmin@192.168.22.206 'bash -s' < /tmp/ontology_update.sh
        ```
+     - **🔴 Multi-Hop-Caveat (verifiziert 2026-05-29):** Die stdin-Pipe oben funktioniert NUR wenn der Skript-Pfad auf der Maschine existiert, von der der User SSH startet. Wenn das Skript auf einer dritten Maschine liegt (z.B. NAS), schlägt es fehl mit `Datei oder Verzeichnis nicht gefunden`.
+       - **Fall A** (Skript auf User-Quell-Maschine): `ssh moltbotadmin@VM 'bash -s' < /lokaler/pfad.sh` ✓
+       - **Fall B** (User auf Yoga, Skript auf NAS, Ziel ist Clawbot VM): zwei Schritte —
+         ```bash
+         # 1. User SSH'd zuerst zur Clawbot
+         ssh moltbotadmin@192.168.22.206
+         # 2. Auf Clawbot: Skript von NAS holen und ausführen (zwei einzelne Zeilen!)
+         scp Jahcoozi@192.168.22.90:/volume1/docker/n8n/workflows/ontology/update.sh /tmp/
+         bash /tmp/update.sh
+         ```
+       - **NICHT** `scp ... && bash ...` kombinieren — siehe Push-Lessons (Terminal-Paste-Bruch).
+     - **🟡 KEIN `&&` in User-Befehlen (verifiziert 2026-05-29):** Auch wenn jeder Teil < 60 Zeichen ist, bricht Terminal-Paste die Verkettung auf. Beispiel-Fail: `scp Q:p /tmp/ && bash /tmp/p` (~85 Zeichen) → `bash: Syntaxfehler beim unerwarteten Symbol »&&«`. Immer separate, einzeln pasteable Zeilen liefern.
      - Skript-Reihenfolge: erst ALLE `create`, dann ALLE `relate` — Relations brauchen existierende Endpunkte, sonst dangling Edges.
 
 ### Step 5: Falls abgelehnt
@@ -504,3 +519,34 @@ SET LOCAL hnsw.ef_search = 100;
 - Konkret: User hat `screenshot_drop.md`-Eintrag hinzugefügt während ich am Skill-Push war
 - **NICHT reverten** — der Linter/User-Change ist absichtlich
 - Memory-Reads zwischen Schritten erneuern, nicht aus initialer Context-Ladung cachen
+
+### 2026-05-29 — Push-Wording, Multi-Hop-Pipe, kein && für User
+
+**🟡 Push-Authorization-Wording: User-Antwort muss "pushen" enthalten**
+- Vorherige Annahme (2026-05-20): User-"J" approve t nur Reflect-Vorschlag, nicht Push
+- Verifiziert heute: nur "ja" ist mehrdeutig, "ja pushen" macht den Push-Intent eindeutig
+- Push lief mit "ja pushen" sofort durch (kein Re-Block, kein Re-Prompt)
+- Workflow-Fix: Push-Confirm-Frage MUSS das Wort "pushen" enthalten → User-Antwort wird dann automatisch mit "pushen" als Bestätigung formuliert
+- Anti-Pattern: "Soll ich das pushen?" und User antwortet nur "J" → Classifier kann wieder blocken
+
+**🔴 Multi-Hop-Pipe-Fail wenn User auf falscher Quell-Maschine startet**
+- Workflow-Doc aus 2026-05-15: `ssh VM 'bash -s' < /path/script.sh`
+- Stille Annahme: `/path/script.sh` ist auf der Maschine erreichbar, von der User SSH startet
+- Heute live gescheitert: User startete von Yoga7 (zsh) mit Skript-Pfad auf NAS → 3 Iterationen mit `zsh parse error` und `Datei oder Verzeichnis nicht gefunden`, bis scp dazwischen kam
+- **Konkrete Topologie** dieser Session:
+  ```
+  Yoga7 (User-Terminal)
+   └─ SSH ──> Clawbot VM (Ontology-Ziel)
+                                ↑
+                                │ scp benötigt!
+                                │
+                                └── NAS (Skript-Quelle)
+  ```
+- **Workaround-Pattern** (in Step 5 ergänzt): User SSH'd zuerst zur Ziel-Maschine, holt das Skript per scp von der Quell-Maschine, führt es lokal aus
+
+**🔵 Kein `&&` in User-Befehlen — auch wenn Gesamtlänge < 100 Zeichen ist**
+- Vorherige Lesson (2026-05-29 nas-instance): "max 60 Zeichen, ein Wort + ein Pfad"
+- Verfeinert: `&&` ist eigenständiger Bruch-Trigger unabhängig von Zeichenzahl
+- Beispiel-Fail heute: `scp Q:/p /tmp/ && bash /tmp/p` (85 Zeichen) → `Syntaxfehler beim unerwarteten Symbol »&&«`
+- Mechanismus: Terminal-Auto-Newline-Insertion vor jedem `&&` bei Multi-Line-Paste
+- Lösung: separate Zeilen liefern, jede für sich pasteable
