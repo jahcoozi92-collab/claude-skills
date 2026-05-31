@@ -2981,3 +2981,66 @@ mkdir -p /tmp/wf && curl -fsS -H "X-N8N-API-KEY: $KEY" \
 # Suche
 grep -l -iE 'voice_id|elevenlabs' /tmp/wf/*.json
 ```
+
+---
+
+### 2026-05-31 — Telegram-Trigger-Bildpipeline + PUT-Credential-Erhalt + Gemini-Bild-API
+
+Bau eines Telegram→Gemini-Workflows (Raum-Foto rein → KI-verbesserter Raum zurück, Workflow-ID `nJ6SLdyx1ajtepTO`). Zentrale neue Patterns + ein realer Bug:
+
+**🔴 KRITISCH: Ein Telegram-Bot kann nur EINEN Trigger-Consumer bedienen**
+- Telegram liefert Updates per getUpdates/Webhook an genau einen Consumer. Zwei `telegramTrigger`-Workflows auf demselben Bot → nur einer bekommt die Nachrichten (Race/Konflikt).
+- Für einen NEUEN Telegram-Trigger-Workflow IMMER einen neuen Bot via `@BotFather` (`/newbot`) anlegen — NICHT eine bestehende Bot-Credential (z.B. `V5Uu10rEX9pFxQr2` "n8n KI-Assistenz", hatte 4 aktive Trigger) wiederverwenden.
+- Senden (sendPhoto/sendMessage) ist davon unberührt — derselbe Bot darf in vielen Workflows SENDEN, nur das EMPFANGEN (Trigger) ist exklusiv.
+
+**🔴 KRITISCH: API-PUT überschreibt im UI gesetzte Credentials**
+- Szenario: User hat gerade im n8n-UI Credentials an Nodes zugewiesen. Ein PUT mit selbst gebauten Nodes (ohne `credentials`-Feld) LÖSCHT diese Zuweisungen still.
+- Pattern für Updates an einem schon credential-verknüpften Workflow:
+  ```
+  1. GET /workflows?limit=200 → Workflow rausfiltern (GET-by-ID gibt 404, s.o.)
+     → die zurückgegebenen Nodes ENTHALTEN die credential-Refs
+  2. Nodes in-place modifizieren (nur die gewünschten Parameter ändern)
+  3. PUT mit genau diesen Nodes → Credentials bleiben erhalten
+  ```
+- Neue Nodes, die auch eine Credential brauchen: das `credentials`-Dict eines bestehenden gleichartigen Nodes auslesen und 1:1 übernehmen → keine manuelle Nachverknüpfung nötig.
+  ```python
+  tg_cred = nodes["Hinweis senden"]["credentials"]["telegramApi"]  # {id, name}
+  neuer_node["credentials"] = {"telegramApi": tg_cred}
+  ```
+
+**🔴 KRITISCH: Telegram-Trigger braucht IMMER einen Eingangs-Guard**
+- Realer Bug dieser Session: Test mit `/start` → Download-Node `Bad Request: file_id not specified`. Der Trigger empfängt ständig Nicht-Foto-Updates (`/start`, Text, Sticker), nicht nur Fotos.
+- Echte Trigger-Output-Struktur (verifiziert): `$json` = `{ update_id, message: {...} }`.
+  - Foto: `message.photo` = Array, größtes Bild = LETZTES Element → `message.photo[message.photo.length-1].file_id`
+  - Bildunterschrift: `message.caption`
+  - Als Datei gesendetes Bild (unkomprimiert): `message.document.file_id` (+ `message.document.mime_type`)
+- Lösung: direkt nach dem Trigger ein Code+IF-Guard, der `fileId` extrahiert und `istFoto` setzt; bei Text → freundliche „schick mir ein Foto"-Antwort statt Crash.
+
+**🟡 Telegram-Node-Parameter (n8n-nodes-base.telegram v1.2)**
+- **Datei herunterladen:** `{ resource: "file", fileId: "={{ ... }}", additionalFields: {} }` → liefert Binary in Property `data`.
+- **Foto senden:** `{ operation: "sendPhoto", chatId, binaryData: true, additionalFields: { caption } }` → Binary-Property default `data` (kein `binaryPropertyName` nötig).
+- **Text senden:** KEIN `operation`-Feld, nur `{ chatId, text, additionalFields: { parse_mode? } }` → Default-Operation ist Nachricht.
+
+**🟡 Gemini-Bild-API (Nano Banana) aus n8n HTTP-Node**
+- Endpoint: `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent`
+- Auth: Header-Auth-Credential, **Header-Name `x-goog-api-key`**, Wert = Google-AI-Key.
+- Body in einem Code-Node bauen (base64 via `getBinaryDataBuffer(0,'data')`), dann HTTP-Node:
+  `specifyBody: "json"`, `jsonBody: "={{ $json.requestBody }}"` (Objekt-Expression).
+  - NICHT `contentType: "raw"` setzen → bricht das JSON-Response-Parsing (Regel #32).
+- Request-Body-Form (Bild-Edit): `contents:[{parts:[{text:PROMPT},{inlineData:{mimeType,data:b64}}]}], generationConfig:{responseModalities:["TEXT","IMAGE"], imageConfig:{imageSize:"2K"}}`
+- Antwort-Bild: `candidates[0].content.parts[].inlineData.data` (base64) → zurück zu Binary via `prepareBinaryData(Buffer.from(b64,'base64'), name, mime)`.
+- Stil-pro-Foto: `message.caption` lesen, Keyword→Stilbeschreibung mappen (modern, industrial, …), ohne Caption Default-Stil.
+
+**🔴 Gemini-Image-Modelle haben KEIN Free-Tier (gilt auch für die Banana-Skill)**
+- `HTTP 429` mit `"limit: 0"` für `generate_content_free_tier_requests` ist KEIN Rate-Limit, sondern fehlendes Billing.
+- Sowohl `gemini-3.1-flash-image-preview` als auch `gemini-2.5-flash-image` → Free-Tier-Quota = 0. Billing am AI-Studio-Projekt aktivieren, dann läuft derselbe Call.
+- ~0,13 $/Bild bei 2K. Vor produktivem Telegram-Bot: Zugriffsschutz (nur erlaubte Chat-IDs), sonst zahlt man fremde Generationen.
+
+**🔵 Debug: echte Node-Struktur aus Execution lesen statt raten**
+```bash
+curl -s -H "X-N8N-API-KEY: $KEY" \
+  "$BASE/executions?workflowId=<ID>&includeData=true&limit=3"
+# runData: data.resultData.runData[<NodeName>][0].data.main[0][0].json
+```
+- Bei „leeren"/falschen Werten in einem Node: erst die tatsächliche Eingangsstruktur ansehen — der Test-Input war hier schlicht `/start` statt eines Fotos.
+- Beispiel-Nodes anderer Workflows liefern korrekte Parameter-Shapes: `GET /workflows?limit=200` gibt VOLLE Nodes inkl. Parametern zurück → als Vorlage grep-bar.
