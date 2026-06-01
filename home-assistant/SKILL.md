@@ -251,6 +251,24 @@ python3 -m venv /tmp/hamv && /tmp/hamv/bin/pip install websockets
 
 `POST /api/tts_get_url` gibt häufig `Extra data` oder leere Response. Zum Audio-Testen besser: im HA-UI unter Settings → Voice Assistants → Pipeline → "Test" klicken, oder echten End-to-End-Test via Companion-App.
 
+### Pipeline-Storage: exakte JSON-Keys + „kopflose" Pipeline
+
+`.storage/assist_pipeline.pipelines` → `data.items[]` + `data.preferred_item` (NICHT `pipelines` / `preferred_pipeline` — falsche Keys liefern still `None` und täuschen „keine Pipeline" vor). Jedes Item: `conversation_engine`, `stt_engine`, `tts_engine`, `tts_voice`, `wake_word_entity`, `wake_word_id`, `prefer_local_intents`.
+
+**Kopflose Pipeline:** `conversation_engine` kann auf einen **nicht existierenden** Agenten zeigen (z.B. `conversation.ollama_conversation`, wenn die Ollama-Integration zwar angelegt, aber ohne Modell konfiguriert ist → es wird gar kein Conversation-Entity erzeugt). Folge: Gerätebefehle laufen noch über lokale Intents (`prefer_local_intents: true`), aber freies „mit dem Assistenten reden" schlägt **still** fehl. Prüfen: zeigt `preferred_item.conversation_engine` auf ein real existierendes `conversation.*`-Entity (Recorder/REST, nicht raten)?
+
+**Refactor-Hygiene (Dangling References):** Beim Entfernen/Umbenennen von Entities AUCH `homeassistant.exposed_entities`, Automations-Trigger und Dashboard-Refs mitziehen — sonst zeigt Voice auf tote Entities (real: „hey jarvis, Flurlicht an" war auf gelöschtes `light.flur_eg` exponiert statt auf das lebende `switch.eg_flur_licht`). Klassisch „unsichtbar kaputt".
+
+**Template-Rebind-Caveat:** Ein neuer `template`-Sensor reclaimt eine entity_id NICHT, wenn ein Waisen-Eintrag einer **anderen Platform** (z.B. alter `rest`-Sensor) den Slug noch hält → der neue bekommt `_2`. Fix: im Stop-Fenster den Waisen-Registry-Eintrag löschen, dann übernimmt der Template-Sensor die kanonische entity_id (Automationen/Dashboards bleiben unverändert).
+
+### Voice-Satellit via ESPHome (freihändiges Wake-Word)
+
+Der openWakeWord-Service allein triggert NICHTS — es braucht eine Audioquelle. Ohne registriertes `assist_satellite`-Entity gibt es kein freihändiges „hey jarvis", nur Push-to-talk in der App (Assist-Knopf).
+- **Server-WW** (M5Stack Atom Echo, ESP32 ohne PSRAM, ~17 €): Gerät streamt Audio, das vorhandene `wyoming-openwakeword` erkennt das Wake-Word. `voice_assistant: { use_wake_word: true }` + `on_client_connected: voice_assistant.start_continuous`.
+- **On-device WW** (HA Voice PE / ESP32-S3-Box, mit PSRAM): `micro_wake_word` (Modell `hey_jarvis`) läuft lokal auf dem Chip → weniger Netz-Last, niedrigere Latenz, robustere Erkennung. Voice PE ist adopt-and-go (offizielle Firmware, kein Hand-YAML).
+- Config IMMER vor dem Flashen validieren: `docker exec esphome esphome config /config/<datei>.yaml` (fängt Versions-Drift ab, ESPHome-Dashboard auf :6052).
+- **2026.5-Falle:** `speaker: { platform: i2s_audio }` akzeptiert kein `mode: mono` mehr (Mono ist Default; Zeile entfernen).
+
 ## Native LLM-Integrations ab HA 2024+
 
 Große Provider sind seit HA 2024.x **nativ** integriert — **kein HACS mehr nötig** für Conversation-Agents:
@@ -576,6 +594,31 @@ for item in d["data"]:
 - `state: cool` + `machine_status: off` → letzter App-Modus gecached, Gerät via Fernbedienung aus
 - Alle Werte `unavailable` → Cloud/WS-Connection weg
 - State-Cache aus `core.restore_state` nach Restart, bevor erstes Cloud-Update kam
+
+### Recorder-DB als token-freie Ground-Truth + „Frozen-since-restart"-Heuristik
+
+Wenn kein Token griffbereit ist (oder Registry-/YAML-Annahmen geprüft werden müssen): die SQLite-Recorder-DB direkt abfragen — liefert den **aktuellen** Wert + `last_updated_ts` ohne REST/Token.
+
+```bash
+docker exec -i homeassistant python3 - <<'PY'
+import sqlite3
+con=sqlite3.connect('/config/home-assistant_v2.db'); cur=con.cursor()
+for e in ['climate.schlafzimmer_room_climate_cont_2','switch.eg_flur_licht']:
+    cur.execute("""SELECT s.state, datetime(s.last_updated_ts,'unixepoch','localtime')
+      FROM states s JOIN states_meta m ON s.metadata_id=m.metadata_id
+      WHERE m.entity_id=? ORDER BY s.last_updated_ts DESC LIMIT 1""",(e,))
+    print(e, cur.fetchone())
+con.close()
+PY
+```
+
+**„Frozen-since-restart"-Heuristik** (mächtigstes Waisen-Diagnose-Tool): Entities, deren `last_updated` exakt auf der letzten Boot-Zeit klebt und sich nie erholt, sind **Waisen** — ihr Producer (Integration / Template / REST-Sensor) wurde bei einem Refactor entfernt, aber Registry + Exposure + Dashboard-Refs blieben. So trennt man eine **lebende** Entity (`_2`, vor Minuten aktualisiert) von einer **toten Dublette** (eingefroren beim Boot). Real: 6 `light.*`-Template-Lights + 3 non-`_2`-Klima-Dubletten, alle `unavailable @ 01:38` = letzter Restart → Waisen.
+
+**🔴 Registry-Präsenz ≠ Laufzeit.** `core.entity_registry` listet auch tote/entfernte Entities; `core.restore_state` ist **partiell** (climate/light/switch persistieren dort oft nicht → Abwesenheit beweist NICHTS). Audit-Claims („Entity X existiert nicht / ist kaputt") IMMER gegen Recorder-DB oder REST `/api/states` verifizieren, NIE allein gegen Registry oder statisches YAML — sonst Falsch-Positive (live passiert: ein als „tot" gemeldeter Monats-Energiesensor lief in Wahrheit mit echtem Wert).
+
+**Caveat:** Sensoren in `recorder.exclude` haben absichtlich veraltete DB-Timestamps → für die ist die DB-Zeit KEIN Frische-Indikator (Live-Wert via REST holen).
+
+**`check_config`-Scope:** validiert `configuration.yaml` + `packages/`, aber **NICHT** YAML-Mode-Dashboards (`resource_mode`) — die nur per `yaml.safe_load` / Render prüfen. `configuration.yaml` selbst ist wegen `!include`/`!secret` nicht mit naive `yaml.safe_load` lintbar (Fehlalarm) — dafür ist `check_config` die Wahrheit.
 
 ## Webhook Patterns (Security-gehaertet)
 
