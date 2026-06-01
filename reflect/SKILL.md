@@ -609,3 +609,29 @@ SET LOCAL hnsw.ef_search = 100;
 
 **🔵 `gh auth login` Browser-Open wirft hier einen Node-Fehler — Auth läuft trotzdem durch**
 - `$BROWSER` zeigt auf einen kaputten Wrapper → `Cannot find module '.../@anthropic-ai/claude-code/cli.js'`. Device-Code-Flow läuft dennoch durch; Fehlerzeilen kosmetisch.
+
+### 2026-06-01 — Rebase-Konflikt an der Lektionen-Endregion + Auto-Push-Flow
+
+**🔴 Reflect-Commits kollidieren beim Rebase fast immer an der „Gelernte Lektionen"-Endregion**
+- Alle Instanzen (Yoga7/NAS/Clawbot/Windows) hängen neue Lektionen ans DATEI-ENDE → `git pull --rebase` erzeugt dort regelmäßig einen Konflikt. Das ist die Regel, nicht die Ausnahme.
+- Diese Session: lokale Commits `n8n` + `reflect` gegen fremdes `62715d9 reflect: Ontology-Batch` → Konflikt nur im Reflect-Commit (n8n-Commit lief sauber durch).
+- **Auflösung (beide Lektionen behalten, NIE eine verwerfen):**
+  - Konfliktstil ist `diff3` → vier Marker: `<<<<<<<`, `|||||||` (Basis), `=======`, `>>>>>>>`.
+  - Programmatisch per kleinem Python-Splice mergen (robuster als Edit bei großen Blöcken):
+    ```python
+    L=open(p).read().split("\n")
+    a=next(i for i,l in enumerate(L) if l.startswith("<<<<<<<"))
+    b=next(i for i,l in enumerate(L) if l.startswith("|||||||"))
+    c=next(i for i,l in enumerate(L) if l.startswith("======="))
+    d=next(i for i,l in enumerate(L) if l.startswith(">>>>>>>"))
+    head=L[a+1:b]                      # fremde Lektion behalten
+    mine=L[c+1:d]                      # eigene Lektion behalten
+    open(p,"w").write("\n".join(L[:a]+head+[""]+mine+L[d+1:]))
+    ```
+  - Danach: `git add <datei>` + **`GIT_EDITOR=true git rebase --continue`** (GIT_EDITOR=true verhindert das Hängen am Editor-Prompt im non-interaktiven Bash-Tool).
+- Verifikation: `grep -cE '^(<<<<<<<|=======|>>>>>>>)' <datei>` muss `0` ergeben, bevor weitergemacht wird.
+
+**🟡 Auto-Push ist jetzt Standard-Flow (User-Präferenz, gespeichert)**
+- User will NICHT mehr „pushen" bestätigen müssen → nach Commit direkt `git fetch` + `git pull --rebase` + `git push`, ohne Rückfrage.
+- Voraussetzung ist erfüllt: Token liegt in `~/.git-credentials` (`store`-Helper), Remote auf `https://jahcoozi92-collab@github.com/...` gepinnt, globaler `gh auth git-credential`-Helper **repo-lokal ausgehebelt** (`credential.helper ""` + `store`). → Push läuft prompt-frei, auch von Claude aus.
+- Der frühere „Frage-mit-Wort-pushen"-Schritt (2026-05-29) entfällt damit für dieses Repo — bleibt nur relevant, falls die Credentials mal fehlen.
