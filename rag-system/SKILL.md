@@ -1906,14 +1906,38 @@ Beispiel: [QM-Handbuch:S.45 §Bezugspflege]
 
 ## Supabase Free Plan Limits
 
-| Ressource | Limit | Aktuell (2026-02-11) |
+| Ressource | Limit | Aktuell (2026-05-31) |
 |-----------|-------|----------------------|
-| **Datenbank** | 500 MB | ~68 MB (13.6%) |
+| **Datenbank** | 500 MB / Projekt | ~63 MB nach Cleanup |
 | **Storage** | 1 GB | ~573 MB (Bilder_001) |
+| **Egress (Ausgang)** | 5 GB/Monat | <1% |
 | **Edge Functions** | 500K Aufrufe/Monat | OK |
 
-**Grace Period:** Bei Überschreitung gibt Supabase eine Nachfrist (typisch 2-4 Wochen).
+**Grace Period ist seit 1. März 2026 ABGELAUFEN** — bei Überschreitung jetzt Statuscode **402** (vorher 2-4 Wochen Nachfrist). Dashboard aktualisiert Größe nur stündlich.
 Regelmäßig prüfen unter: Supabase Dashboard → Settings → Usage
+
+**🔴 KRITISCH — Dashboard-"Datenbankgröße" = SUMME ALLER DBs auf der Instanz, nicht nur `postgres`:**
+`mcp__supabase__execute_sql` verbindet sich NUR mit der `postgres`-DB. `pg_database_size(current_database())` kann winzig sein, während das Dashboard das Limit sprengt. Quota-Diagnose IMMER zuerst über alle DBs:
+```sql
+SELECT datname, pg_size_pretty(pg_database_size(datname)) AS size
+FROM pg_database ORDER BY pg_database_size(datname) DESC;
+```
+**Realfall 2026-05-29:** Dashboard meldete 520 MB (402-Status), `postgres` war aber nur 49 MB. Ursache: zweite DB **`RAG_Masterclass` (457 MB)** = verwaiste LightRAG-Wissensbasis (Dienst gestoppt, 0 Verbindungen). Nach `DROP DATABASE` → Gesamt ~63 MB. Egress war NIE das Problem (war <1%) — Löschen behebt KEIN Egress-Limit, nur DB-Größe.
+
+**Verwaiste 2.-DB sicher identifizieren (vor DROP):**
+```sql
+-- Greift noch etwas darauf zu? (current_conns=0 + Live-Dienste hängen alle an postgres)
+SELECT datname, numbackends FROM pg_stat_database WHERE datname IN ('postgres','<andere>');
+SELECT datname, array_agg(DISTINCT application_name) FROM pg_stat_activity GROUP BY datname;
+```
+
+**2.-DB inspizieren trotz gesperrtem dblink:** `dblink`/`postgres_fdw` sind für die Nicht-Superuser-MCP-Rolle gesperrt ("Non-superusers may only connect using credentials they provide"). Der Direkt-Host `db.<ref>.supabase.co` ist zudem **IPv6-only** → Container ohne IPv6 scheitern ("Cannot assign requested address"). Lösung über das IPv6 des NAS-Hosts:
+```bash
+docker run --rm --network host -e PGPASSWORD='<db-pw>' -e PGCONNECT_TIMEOUT=15 \
+  ankane/pgvector:latest psql -h db.<ref>.supabase.co -p 5432 -U postgres -d <DBNAME> \
+  -c "SELECT relname, pg_size_pretty(pg_total_relation_size(relid)) FROM pg_stat_user_tables ORDER BY 2 DESC;"
+```
+(Pooler-Regionen-Raten bringt nichts → "Tenant or user not found".)
 
 ---
 
@@ -1942,8 +1966,34 @@ SELECT pg_size_pretty(pg_total_relation_size('documents')) AS total;
 ```
 
 **🔴 KRITISCH:** `VACUUM FULL` sperrt die Tabelle exklusiv — Chat ist währenddessen nicht erreichbar! Am besten nachts oder in Wartungsfenster ausführen.
+`VACUUM` (auch FULL) läuft NICHT in einer Transaktion — mehrere Tabellen einzeln aufrufen, nicht `VACUUM a; VACUUM b;` in einem Statement-Block (sonst "VACUUM cannot run inside a transaction block").
 
 **Erfahrungswert:** 363 MB → 46 MB nach VACUUM FULL (Faktor 8x Einsparung)
+
+### Redundante volle embedding-Spalte als Bloat-Quelle (2026-05-29)
+
+`rag_chunks` hatte ZWEI Embedding-Spalten: `embedding_half` (halfvec, ~11 MB, von ALLEN Suchfunktionen genutzt + HNSW-Index) und `embedding` (volle `vector` 3072d, **~22 MB + Großteil des TOAST**, KEIN Index, von keiner Funktion gelesen). Die volle Spalte ist reine Redundanz.
+
+**Fix ohne Qualitätsverlust** (Suche nutzt nur `embedding_half`):
+```sql
+-- 1. Sync-Trigger so umbauen, dass volle Präzision NICHT mehr persistiert wird:
+CREATE OR REPLACE FUNCTION sync_rag_chunks_embedding_half() RETURNS trigger AS $$
+BEGIN
+  IF NEW.embedding IS NOT NULL THEN
+    NEW.embedding_half := NEW.embedding::halfvec(3072);
+    NEW.embedding := NULL;  -- redundant zu embedding_half
+  END IF;
+  RETURN NEW;
+END; $$ LANGUAGE plpgsql;
+-- 2. Bestand leeren + Speicher freigeben:
+UPDATE rag_chunks SET embedding = NULL WHERE embedding IS NOT NULL;
+VACUUM (FULL, ANALYZE) rag_chunks;
+```
+Ingestion-Pipeline schreibt weiter in `embedding` → Trigger leitet `embedding_half` ab. Ergebnis: DB 89 → 49 MB. Vorher verifizieren, dass keine Funktion die volle Spalte liest:
+```sql
+SELECT proname, pg_get_functiondef(oid) ILIKE '%embedding_half%' AS uses_half
+FROM pg_proc WHERE pg_get_functiondef(oid) ILIKE '%rag_chunks%';
+```
 
 ---
 
@@ -2675,3 +2725,35 @@ Cron-Konvention: `/etc/cron.d/rag-*` mit User `Jahcoozi`. Templates persistent i
 | **Gesamt** | **~15–20 s** |
 
 Bei > 25 s ohne Streaming → erste Hypothese: Modell-Drift, zweite: Tool-Loop > 3 Calls, dritte: Edge-Function-Cold-Start.
+
+---
+
+### 2026-05-31 — Gap-Fill-Pattern, MediFox-PDF-Scrape, Quellen-Verifikation
+
+**🟡 Gap-Fill-Pattern: Abstain ≠ fehlender Inhalt (meist Retrieval-Lücke)**
+
+Wenn der Assistent eine Frage mit Abstain ablehnt, ist die Antwort oft schon in einem verified Chunk/Click-Path — nur der vom User benutzte Begriff ist nicht gemappt. Reihenfolge:
+1. Bestand prüfen: `SELECT id,content FROM rag_chunks WHERE content ILIKE '%begriff%'` + `click_paths` durchsuchen. Existiert die Antwort fachlich schon?
+2. Wenn ja → KEIN Großartikel. Stattdessen gezielt:
+   - **faq-Chunk** mit dem User-Wording im Titel (source_type `faq` → Boost **1.30**, verified=true → ×1.05). Rankt zuverlässig #1.
+   - **term_synonyms** anlegen: `user_term → canonical_term` (z.B. „Ereignisübersicht" → „Pflegejournal").
+   - **Tags** des bestehenden Click-Paths um die Synonyme anreichern.
+3. Embedding via Edge Function `embed-rag-chunks` (`{"ids":[<neue id>]}`).
+4. Live verifizieren über Edge Function `n8n-hybrid` (POST `{query, match_count}`) — neuer Chunk muss auf Platz 1 ranken.
+5. `knowledge_gaps`-Eintrag (auto-geloggt, tag `abstain`) auf `status='resolved'` + `resolution=...` setzen.
+
+`hybrid_search_v3` filtert intern NICHT nach `product`/`trust_level` (Parameter ungenutzt) — Boost kommt rein über `source_type` + `verified` + `needs_review`.
+
+**🟡 MediFox-Update-PDFs scrapen (WebFetch kann PDFs nicht parsen)**
+
+WebFetch liefert bei PDF-URLs nur Binär-Müll, SPEICHERT die Datei aber lokal im tool-results-Ordner (Pfad steht in der WebFetch-Antwort: `.../tool-results/webfetch-*.pdf`). Der NAS-Host hat KEIN pdftotext/Python-PDF-Lib → Extraktion per Wegwerf-Container:
+```bash
+docker run --rm -v "<tool-results-dir>":/d debian:stable-slim bash -c \
+  "apt-get update -qq && apt-get install -y -qq poppler-utils >/dev/null 2>&1 && pdftotext -raw /d/<file>.pdf /d/out.txt && echo OK"
+grep -n -i -A40 "Stichwort" "<tool-results-dir>/out.txt"
+```
+`pdftotext -raw` liest mehrspaltige MediFox-Update-Infos besser als `-layout`. Danach heruntergeladene PDFs + Extrakte wieder löschen (tool-results aufräumen). MediFox publiziert nur die letzte Patch-Version je Major als eigenes PDF: `wissen.medifoxdan.de/download/attachments/60784729/Updateinfo%20<major>.<minor>.<patch>.pdf`.
+
+**🔵 Quellen-URLs vor DB-Eintrag per WebFetch verifizieren**
+
+Geratene/aus dem Modellwissen rekonstruierte Doku-URLs sind oft 404 (Realfall: erfundene Blog-URL `…/ereignismanagement-in-der-stationaeren-pflege/` war tot, korrekt war `…/workflows-mit-dem-ereignismanager-standardisieren/`). Vor dem Schreiben einer Quellenangabe in einen Chunk: URL per WebFetch laden, Titel + Kerninhalt bestätigen. Inhaltlich autoritativ ist ohnehin die Update-Info-PDF, nicht der Blog.
