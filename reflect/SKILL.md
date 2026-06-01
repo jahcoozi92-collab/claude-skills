@@ -550,3 +550,26 @@ SET LOCAL hnsw.ef_search = 100;
 - Beispiel-Fail heute: `scp Q:/p /tmp/ && bash /tmp/p` (85 Zeichen) → `Syntaxfehler beim unerwarteten Symbol »&&«`
 - Mechanismus: Terminal-Auto-Newline-Insertion vor jedem `&&` bei Multi-Line-Paste
 - Lösung: separate Zeilen liefern, jede für sich pasteable
+
+### 2026-06-01 — Ontology-Batch braucht `--id`, kurze Dateinamen, stdin-Pipe als Default
+
+**🔴 `--id` ist auch in Batch-Skripten Pflicht — sonst dangling relations**
+- Lesson 2026-05-15 sagte "IMMER `--id` setzen" — beim Schreiben des Ontology-Update-Skripts trotzdem vergessen
+- Folge: alle `create` bekamen Auto-IDs (`patt_dd7adc60`, `soft_eb8cf223`, `task_742bbad0`), aber die `relate`-Befehle referenzierten die Convention-IDs (`p_…`, `sw_…`, `t_…`) → alle 8 Relationen liefen ins Leere (dangling, kein Fehler geworfen!)
+- `ontology.py relate` validiert die Endpunkte NICHT — falsche IDs erzeugen stille Geister-Edges
+- **Regel:** In jedem `create` explizit `--id <prefix>_<name>` setzen. Dann stimmen die `relate`-Referenzen automatisch. Wenn `--id` vergessen → `relate` mit den tatsächlichen Auto-IDs aus dem `create`-Output nachziehen.
+- Verifikation IMMER ans Skript-Ende: `ont related --id <task>` zeigt, ob Edges real hängen
+
+**🔴 Skript-Dateinamen für User-scp KURZ halten (Terminal-Paste bricht lange Namen um)**
+- `fix_relations_2026_05_31.sh` (28 Zeichen Name) wurde beim Paste umgebrochen: `fix_relation` + Newline + `s_2026_05_31.sh` → `Kommando nicht gefunden`
+- Auch das Leerzeichen vor `/tmp/` ging beim Paste verloren (`fixrel.sh/tmp/`)
+- **Regel:** Skripte, die der User per scp/paste anfasst, kurz benennen (`fr.sh`, `ont.sh`) und an kurzem Pfad ablegen (`/volume1/docker/n8n/fr.sh`, nicht tief verschachtelt)
+
+**🟡 stdin-Pipe ist robuster als Multi-Hop-scp — aber Skript erst auf User-Quell-Maschine holen**
+- Was hier final funktionierte (User auf Yoga7, Skript auf NAS, Ziel Clawbot VM):
+  ```
+  scp Jahcoozi@NAS:/pfad/fr.sh /tmp/fr.sh        # NAS → Yoga7 (Zeile 1)
+  ssh moltbotadmin@VM 'bash -s' < /tmp/fr.sh     # Yoga7 → VM via stdin (Zeile 2)
+  ```
+- Vorteil ggü. "User SSH'd zur VM, scp't von NAS": kein Passwort-Prompt mitten in der VM-Session, JSON-Quoting bleibt im File, nur 2 pasteable Zeilen
+- Achten: User-Prompt-Zeichen prüfen (`~ ❯` = Yoga7, `moltbotadmin@…$` = VM) — User wechselt zwischen Schritten oft unbemerkt die Maschine
