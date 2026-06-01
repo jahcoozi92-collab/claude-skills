@@ -573,3 +573,39 @@ SET LOCAL hnsw.ef_search = 100;
   ```
 - Vorteil ggü. "User SSH'd zur VM, scp't von NAS": kein Passwort-Prompt mitten in der VM-Session, JSON-Quoting bleibt im File, nur 2 pasteable Zeilen
 - Achten: User-Prompt-Zeichen prüfen (`~ ❯` = Yoga7, `moltbotadmin@…$` = VM) — User wechselt zwischen Schritten oft unbemerkt die Maschine
+
+### 2026-06-01 — Push-403 ist NICHT der Classifier: falsches GitHub-Konto
+
+**🔴 403 „Permission denied to <user>" ≠ Auto-Mode-Classifier-Block**
+- Bisherige Lessons (2026-05-20/29) drehten sich nur um den Classifier. Hier ein anderer Fall: Push lief bis zum Remote durch und kam mit echtem GitHub-`403`: `remote: Permission to jahcoozi92-collab/claude-skills.git denied to Jahcoozi92`.
+- Unterscheidung: Classifier-Block = Befehl wird gar nicht ausgeführt, KEIN Netzwerk-Roundtrip. GitHub-403 = `remote:`-Zeile + `The requested URL returned error: 403`.
+
+**🔴 Wahre Ursache: mit dem FALSCHEN Konto angemeldet (NICHT "Org-OAuth-Sperre")**
+- Diagnose-Befehle bei Push-403:
+  ```bash
+  gh api user --jq .login                       # wer bin ich gerade?
+  gh api repos/jahcoozi92-collab/claude-skills --jq '{owner:.owner.login,type:.owner.type,push:.permissions.push}'
+  ```
+- Ergebnis hier: eingeloggt als `Jahcoozi92`, aber das Repo gehört dem SEPARATEN Account `jahcoozi92-collab` (Typ `User`, KEINE Organisation!). `Jahcoozi92` hatte nur Lesezugriff (`push:false`, nicht mal Collaborator).
+- Merke: `jahcoozi92-collab` ist Dianas **zweites GitHub-Konto** (Repo-Owner), NICHT eine Org. Beim Web-Login landet gh leicht im falschen Konto.
+- Fix: als `jahcoozi92-collab` authentifizieren (Token dieses Kontos), ODER `Jahcoozi92` als Collaborator mit Write hinzufügen.
+
+**🔴 gh `--with-token` ist zickig — robuster: gh umgehen, Token direkt in git (store)**
+- gh lehnt Tokens mit `missing required scope 'read:org'` ab: fine-grained PATs haben keine klassischen Scopes; selbst klassische brauchen `repo`+`read:org` NUR wegen gh.
+- Für reinen `git push` reicht `repo` (classic) bzw. Contents:RW (fine-grained) — `read:org` NICHT nötig.
+- Funktionierender Workaround (gh-Helper repo-lokal aushebeln, Token via store):
+  ```bash
+  cd ~/.claude/skills
+  git config --local --replace-all credential.helper ""
+  git config --local --add credential.helper store
+  git remote set-url origin https://jahcoozi92-collab@github.com/jahcoozi92-collab/claude-skills.git
+  # User fuehrt EINMAL interaktiv aus, Token am Passwort-Prompt einfuegen (kein Echo):
+  git -C ~/.claude/skills push origin main
+  ```
+- Danach liegt der Token in ~/.git-credentials → künftige Pushes (auch von Claude) laufen ohne Prompt.
+
+**🟡 Vor jedem Push-Retry Konto + permissions.push verifizieren**
+- „push nochmal" ohne echten Fix trifft garantiert dasselbe 403 — erst `gh api user --jq .login` und `… --jq .permissions.push` prüfen.
+
+**🔵 `gh auth login` Browser-Open wirft hier einen Node-Fehler — Auth läuft trotzdem durch**
+- `$BROWSER` zeigt auf einen kaputten Wrapper → `Cannot find module '.../@anthropic-ai/claude-code/cli.js'`. Device-Code-Flow läuft dennoch durch; Fehlerzeilen kosmetisch.
