@@ -3070,3 +3070,37 @@ curl -s -H "X-N8N-API-KEY: $KEY" \
 **🔵 Chat-HTML-Dateien enthalten ein NUL/Binärzeichen → `grep` braucht `-a`**
 - `medifox-chat.html` triggert grep's „binary file"-Erkennung → normale `grep`/`grep -n` liefern **stille Null-Treffer** (kein Fehler, einfach keine Ausgabe).
 - Immer `grep -a` (`--text`) verwenden, wenn man `fetch(`, `CONFIG`, Endpoints o.ä. in diesen HTML-Dateien sucht. Ohne `-a` läuft man minutenlang gegen leere Resultate.
+
+---
+
+### 2026-06-03 — System-Prompt: Live-Node ist Source of Truth, .md-Referenz driftet
+
+**🔴 Die `.md`-Referenzdatei ist NICHT die Quelle der Wahrheit — der Live-Node ist es**
+- Symptom: User beklagt ein Verhalten (hier: Assistent verweist ständig auf MediFox-Support). Naiv editiert man `workflows/ENHANCED_SYSTEM_PROMPT_v5.md` — ändert aber NICHTS, weil der Agent die Datei nie liest.
+- Realität dieser Session: die `.md` zeigte einen alten v5-Stand, der live deployte `systemMessage` im Node **"Supabase KI-Agent"** war ein völlig anderer, viel größerer Stand (22.170 Zeichen, v5.5). Die beiden waren vor langer Zeit auseinandergelaufen.
+- **Regel:** Immer zuerst den Node-Prompt per API holen und DARAN arbeiten:
+  ```python
+  node = next(n for n in wf['nodes'] if n['name']=='Supabase KI-Agent')
+  prompt = node['parameters']['options']['systemMessage']
+  ```
+- Nach dem Deploy die `.md` 1:1 nachziehen (Sync), damit Datei & Node deckungsgleich bleiben, und einen Header reinschreiben „Quelle der Wahrheit = Node, nicht diese Datei".
+
+**🔴 Externe n8n-API gibt auch bei GET ein 403 (Cloudflare) — interne API für Reads nutzen**
+- Bekannt war: externe URL blockt PUT. Neu verifiziert: auch ein reiner **GET** zur Verifikation kam mit `HTTP Error 403: Forbidden` (Cloudflare, vermutlich Rate-/Bot-Filter).
+- `http://192.168.22.90:5678/api/v1/...` ist der zuverlässige Read-Pfad — für Reads UND Writes intern bleiben, nicht nur für PUT.
+
+**🟡 Prompt-Deploy-Pattern (verifiziert, reuse `deploy_no_support_spam_prompt.py` als Vorlage)**
+1. Live-Node per internem GET holen, `systemMessage` extrahieren.
+2. Backup nach `workflows/backups/prompt_before_<ts>.txt` (Verzeichnis ist gitignored, aber Recovery-Punkt).
+3. `systemMessage` im Node ersetzen.
+4. `settings` auf `{executionOrder, timezone, callerPolicy}` filtern (extra Felder → 400).
+5. deactivate → PUT (intern) → activate.
+6. `docker restart n8n-n8n-1` (Webhook-/Agent-Cache flushen) → `/healthz` pollen.
+7. **Byte-genaue Verifikation:** Node-`systemMessage` erneut holen und mit dem deployten Text vergleichen (`==` + Längen-Check), nicht „sieht gut aus".
+
+**🟡 Beim .md-Sync: 4-Backtick-Fence, weil der Prompt selbst Code-Blöcke enthält**
+- Der Prompt hat Template-Code-Blöcke mit dreifachem Backtick → ein normaler dreifacher Fence in der .md zerbricht.
+- Lösung: gesamten Prompt mit vier Backticks (`````text … `````) wrappen. Markdown erlaubt längere Fences, die kürzere enthalten.
+
+**🔵 RAG-Content-Philosophie (Querverweis Memory `feedback_no_support_spam`)**
+- Der Assistent IST das Selbsthilfe-Werkzeug — KEIN Routine-Verweis auf MediFox-Support. Verweis nur bei echten Software-Bugs, kundenspezifischer Konfig (Leistungskataloge/FiBu) und echten DAN-/ambulant-Funktionen. Im Prompt verankert als Block „SUPPORT-VERWEIS — RESTRIKTIV".
