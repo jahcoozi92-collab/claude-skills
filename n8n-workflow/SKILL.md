@@ -3044,3 +3044,29 @@ curl -s -H "X-N8N-API-KEY: $KEY" \
 ```
 - Bei „leeren"/falschen Werten in einem Node: erst die tatsächliche Eingangsstruktur ansehen — der Test-Input war hier schlicht `/start` statt eines Fotos.
 - Beispiel-Nodes anderer Workflows liefern korrekte Parameter-Shapes: `GET /workflows?limit=200` gibt VOLLE Nodes inkl. Parametern zurück → als Vorlage grep-bar.
+
+---
+
+### 2026-06-03 — Chat-Diagnose: Webhook-vs-UI-Endpoint, OpenRouter-Credits-Check
+
+**🟡 Ein genannter Webhook serviert oft die HTML-UI (GET), NICHT die Chat-API**
+- Symptom: User sagt „Webhook X gibt einen Fehler, wenn ich eine Frage stelle". Naiv POSTet man auf X → `{"code":404,"message":"This webhook is not registered for POST requests. Did you mean to make a GET request?"}`.
+- Ursache: Der genannte Webhook (z.B. `webhook/medifox-chat`) liefert auf **GET** die Chat-HTML-Oberfläche. Der echte Chat-API-Endpoint, an den das Frontend POSTet, steht im HTML unter `CONFIG.chatApi`.
+- **Diagnose-Reihenfolge:**
+  1. `curl -s <genannte-URL>` (GET) → wenn HTML zurückkommt: das ist die UI, nicht die API.
+  2. Echten Endpoint aus dem HTML ziehen: `grep -a -n "CONFIG\|chatApi\|fetch(" <chat>.html` → `CONFIG.chatApi` zeigt die wahre POST-URL.
+  3. Gegen diese URL testen: `curl -s -X POST <chatApi> -d '{"message":"...","sessionId":"test"}'`.
+- Konkret diese Session: genannt `webhook/medifox-chat` (=HTML-UI), echte API = `webhook/rag-chat-api`. Body-Shape: `{message, sessionId}`, Response-Felder `output`/`text`.
+
+**🟡 OpenRouter-Guthaben empirisch per API verifizieren (statt Dashboard-Login)**
+- Nach Decrypt des Credentials (`openRouterApi`, siehe Credential-Decrypt-Pattern 2026-05-07) den Key direkt gegen die Credits-Route prüfen:
+  ```bash
+  curl -s https://openrouter.ai/api/v1/credits -H "Authorization: Bearer $ORKEY"
+  # → {"data":{"total_credits":230,"total_usage":230.27}}  → usage ≥ credits = 402 erschöpft
+  ```
+- Bestätigt die `402 Payment required`-Hypothese in Sekunden, ohne sich ins OpenRouter-Dashboard einzuloggen.
+- **Dauerlösung gegen Wiederholung:** OpenRouter **Auto-Topup** (Diana 2026-06-03 aktiv: bei 2 $ Rest → +25 $ nachladen). Bei künftigem 402 NICHT sofort auf leeres Konto tippen — erst prüfen ob Auto-Topup aktiv/Zahlung hängt.
+
+**🔵 Chat-HTML-Dateien enthalten ein NUL/Binärzeichen → `grep` braucht `-a`**
+- `medifox-chat.html` triggert grep's „binary file"-Erkennung → normale `grep`/`grep -n` liefern **stille Null-Treffer** (kein Fehler, einfach keine Ausgabe).
+- Immer `grep -a` (`--text`) verwenden, wenn man `fetch(`, `CONFIG`, Endpoints o.ä. in diesen HTML-Dateien sucht. Ohne `-a` läuft man minutenlang gegen leere Resultate.
