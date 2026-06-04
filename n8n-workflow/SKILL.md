@@ -3104,3 +3104,42 @@ curl -s -H "X-N8N-API-KEY: $KEY" \
 
 **🔵 RAG-Content-Philosophie (Querverweis Memory `feedback_no_support_spam`)**
 - Der Assistent IST das Selbsthilfe-Werkzeug — KEIN Routine-Verweis auf MediFox-Support. Verweis nur bei echten Software-Bugs, kundenspezifischer Konfig (Leistungskataloge/FiBu) und echten DAN-/ambulant-Funktionen. Im Prompt verankert als Block „SUPPORT-VERWEIS — RESTRIKTIV".
+
+---
+
+### 2026-06-05 — Chat-UI-Features: n8n-Versionierung, Klassen-Kollision, LangChain-Memory
+
+**🔴 n8n versioniert Workflows: Entity-`nodes` ≠ `activeVersion` nach API-PUT**
+- Symptom: nach `PUT`+`activate` läuft der neue Webhook (gibt Daten zurück), aber `GET /api/v1/workflows/{id}` zeigt im top-level `nodes` die neuen Nodes NICHT, und `versionId != activeVersionId`. Ein UI-Edit oder Re-Deploy würde die neuen Nodes verlieren.
+- Die GET-Antwort enthält BEIDE Sätze: `nodes` (Entwurf/Entity) und **`activeVersion.nodes`** (laufende Version). Quelle der Wahrheit für die Ausführung = `activeVersion`.
+- **Reconcile ans Deploy-Ende hängen:**
+  ```python
+  wf2 = api("GET", f"/workflows/{ID}")
+  av = wf2.get("activeVersion") or {}
+  if av.get("nodes") and len(av["nodes"]) != len(wf2.get("nodes", [])):
+      api("POST", f"/workflows/{ID}/deactivate")
+      api("PUT", f"/workflows/{ID}", {"name":wf2["name"],"nodes":av["nodes"],
+          "connections":av["connections"],"settings":filtered})
+      api("POST", f"/workflows/{ID}/activate")   # -> versionId == activeVersionId
+  ```
+
+**🔴 Neue UI-Elemente NIE mit einer verhaltens-verdrahteten CSS-Klasse versehen**
+- Ich gab neuen Header-Buttons `class="theme-btn"` → der Theme-Switcher `querySelectorAll('.theme-btn').forEach(b => b.addEventListener('click', () => setTheme(b.dataset.theme)))` hängte einen Handler an → Klick rief `setTheme(undefined)` → `data-theme="undefined"` → KEINE Theme-Farben (liegen nur in `[data-theme=…]`-Blöcken) → Seite unlesbar; `localStorage['…-theme']="undefined"` vergiftet → bleibt kaputt.
+- **Regel:** Vor dem Wiederverwenden einer Klasse prüfen, ob ein `querySelectorAll('.klasse')` daran Verhalten knüpft. Sonst eigene Klasse nehmen ODER Selektor verengen (`.theme-btn[data-theme]`). Setter gegen Müll härten (`if (!['dark','medium','light'].includes(t)) t='dark'`) → heilt vergiftete Clients selbst.
+
+**🟡 LangChain Postgres Chat Memory (`n8n_chat_histories`) — Format & Filter**
+- Zeilen-Schema: `{type:'human'|'ai'|'tool', content, tool_calls?}` — `content` liegt **direkt** (NICHT `data.content`, anders als ältere LangChain-Versionen).
+- `ai`-Zeilen enthalten auch Tool-Call-Zwischenschritte (`content` beginnt mit `"Calling …"` bzw. `tool_calls` gefüllt) UND die finale Antwort; `tool`-Zeilen = Tool-Outputs.
+- Anzeige-Filter: nur `human` (führendes `=`-Artefakt strippen) + finale `ai` (kein `Calling `, leere `tool_calls`).
+- Echte Browser-Sessions: `session_<ms>_<rand>`. Test-/Regressions-Sessions haben andere IDs → SQL-Filter `session_id ~ '^session_[0-9]{10,16}_'` (Postgres-POSIX-Regex; `_` ist hier **literal**, anders als bei `LIKE`).
+- Lösch-Endpoint sicher: `DELETE … WHERE session_id = $1` parametrisiert; leerer Wert löscht 0 Zeilen (kein Massenlöschen).
+
+**🟡 Grounding/Verifier-Node darf Meta-Antworten nicht benoten**
+- Ein Verifier, der nach Quellen/Menüpfaden bewertet, stuft Begrüßungen/„womit kann ich helfen" als „nicht verifiziert / 55 % unsicher" ein (Fehlalarm). → Greeting/Meta per Regex erkennen und NICHT benoten (eigener `tier='meta'`, kein Banner).
+- **Policy-Lecks in ALLEN Nodes suchen, nicht nur im System-Prompt:** der entfernte „kontaktieren Sie den Support"-Verweis steckte zusätzlich im Verifier-**Code-Node**. Bei policy-weiten Änderungen alle `jsCode`/`responseBody` durchgreppen.
+
+**🟡 Webhook-Registrierung hinkt `/healthz` nach `docker restart` hinterher**
+- Direkt nach Restart liefert ein frischer Webhook `404`, obwohl `/healthz` schon `200` ist. → Den konkreten Webhook in einer Schleife pollen bis `200`, nicht nur healthz prüfen.
+
+**🔵 Root-Cause nicht vorschnell zuschreiben**
+- Ich erklärte den Light-Mode-Defekt zuerst als „pre-existing, nicht meine Änderung" (das Backup hatte das Light-Theme ja schon) — falsch. Ursache war meine `theme-btn`-Klassen-Kollision. Erst den **Mechanismus** verifizieren, dann Schuld zu-/absprechen.
