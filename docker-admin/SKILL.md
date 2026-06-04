@@ -1281,3 +1281,50 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 **🔵 OpenRouter-/SDK-kompatible Container ohne Auth-Vendor-Lock**
 
 OpenRouter ist `pip install openai` + custom base_url — kein Vendor-spezifisches SDK. Container braucht nur `OPENROUTER_API_KEY` ENV, nicht ANTHROPIC_API_KEY + OPENAI_API_KEY + GOOGLE_API_KEY parallel. Slim-Image bleibt slim.
+
+### 2026-06-04 — Stack SICHER entfernen + Quell-Ort via compose-Labels
+
+**🟡 Wiederverwendbares Pattern: einen ganzen Stack rückbauen (backup-first)**
+
+Reihenfolge ist wichtig — erst sichern, dann erst `down -v`. `docker compose down -v` löscht die benannten Volumes UNWIDERRUFLICH.
+
+```bash
+# 0. Quell-Ort + Volumes + Ports erfassen (siehe Discovery unten)
+# 1. Backup-Ziel auf NAS-Konvention: /volume1/docker/_archived/<stack>-removed-<datum>/
+BACKUP="/volume1/docker/_archived/<stack>-removed-$(date +%Y%m%d)"
+mkdir -p "$BACKUP"
+# 1a. DB-Dump (falls Postgres im Stack) — -Fc = komprimiertes custom format
+docker exec <db-container> pg_dump -U <user> -d <db> -Fc -f /tmp/dump.dump
+docker cp <db-container>:/tmp/dump.dump "$BACKUP/dump.dump"
+# 1b. Projektordner inkl. .env (n8n: enthält N8N_ENCRYPTION_KEY → ohne ihn sind
+#     Credentials im Volume später NICHT entschlüsselbar!) + compose + workflows
+tar -czf "$BACKUP/<stack>-files.tar.gz" -C <parent-dir> <projektordner>
+# 2. Stack abbauen: Container + Netzwerk + Volumes
+cd <projektordner> && docker compose down -v
+# 3. Verwaisten Quellordner aufräumen (liegt oft in ~, NICHT in /volume1/docker)
+rm -rf <projektordner>
+# 4. Kontrolle
+docker ps -a --filter "name=<prefix>"; docker volume ls | grep <prefix>; docker network ls | grep <net>
+```
+- **Wiederherstellung später:** tar auspacken → `docker compose up -d` → `pg_restore` des Dumps in die frische DB.
+- `_archived/` ist die richtige Ablage (CLAUDE.md: „do not delete") — Backups bleiben erhalten, Stack-Footprint (RAM/CPU/Disk) ist weg.
+- Diana bestätigt Entfernung in zwei Stufen: erst der laufende Stack, dann separat der verwaiste Quellordner — Backup deckt beides ab, also vor Stufe 1 schon alles sichern.
+
+**🟡 Quell-Ort eines fremden/vergessenen Containers via compose-Labels finden**
+
+Wenn unklar ist, wo ein Container herkommt (welcher Ordner, welche compose-Datei):
+```bash
+docker inspect <container> --format '{{range $k,$v := .Config.Labels}}{{$k}}={{$v}}{{"\n"}}{{end}}' | grep -i compose
+```
+Liefert direkt:
+- `com.docker.compose.project.config_files` → exakter Pfad der docker-compose.yml
+- `com.docker.compose.project.working_dir` → Projektordner
+- `com.docker.compose.project` → Compose-Projektname (für `docker ps --filter label=com.docker.compose.project=<name>`)
+
+So fand ich `rag-mc-n8n` → `/home/Jahcoozi/rag-masterclass-deploy/` (lag NICHT in `/volume1/docker/`, sondern im Home-Verzeichnis — Quellordner liegen nicht immer im Standard-Docker-Pfad).
+
+**🔵 Log: rag-mc-n8n / rag-masterclass-deploy entfernt (2026-06-04)**
+- Zweiter, eigenständiger n8n-Stack (n8n 1.73.1 + eigenes pgvector `rag-mc-postgres`), Port `127.0.0.1:5679`, Projekt `rag-masterclass-deploy` im Home-Verzeichnis — getrennt vom produktiven n8n (5678).
+- „RAG Masterclass Kit" — Demo-/Übungs-Baukasten. Ungenutzt: 0 Executions, leerer Chat-Verlauf, nur 2 Test-Dokumente / 9 Chunks.
+- Entfernt: 2 Container + 2 Volumes (`rag-mc-n8n-data`, `rag-mc-postgres-data`) + Netzwerk `rag-masterclass-net` + Quellordner. Backup in `/volume1/docker/_archived/rag-masterclass-deploy-removed-20260603/`.
+- Produktives n8n (5678) lief getrennt → nicht betroffen.
