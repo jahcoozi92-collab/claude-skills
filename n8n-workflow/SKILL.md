@@ -3143,3 +3143,16 @@ curl -s -H "X-N8N-API-KEY: $KEY" \
 
 **🔵 Root-Cause nicht vorschnell zuschreiben**
 - Ich erklärte den Light-Mode-Defekt zuerst als „pre-existing, nicht meine Änderung" (das Backup hatte das Light-Theme ja schon) — falsch. Ursache war meine `theme-btn`-Klassen-Kollision. Erst den **Mechanismus** verifizieren, dann Schuld zu-/absprechen.
+
+---
+
+### 2026-06-05 — Light-Theme-Design: gedämpfte Schichten statt Reinweiß
+
+**🔵 Design-Präferenz (User): Light Mode NICHT pur-weiß**
+- Der Default-Light-Mode war fast überall reines Weiß (`#fff`/`#f8fafc`) ohne Tiefenkontrast → wirkt grell („viel zu hell").
+- User-Präferenz: **geschichtete neutrale Hierarchie** (dunkel → hell): gedämpftes Grau als Seitenhintergrund (`--bg-base ~#e6e8ee`), Off-White fürs Panel (`--bg-card ~#edeff4`), helleres Off-White für Header/Drawer (`~#f6f7fb`), nahe-Weiß für Bubble/Input (`~#fafbfe`), Ränder etwas kräftiger (`rgba(0,0,0,0.11)`) zur Abgrenzung. Für künftige helle UIs gleich so anlegen, nicht pur-weiß.
+
+**🟡 Theme-Anpassung = nur CSS-Variablen-Werte im `[data-theme=…]`-Block**
+- Token-basiertes Design ändert man über die ~11 Surface/Border/Bubble-Variablen, NICHT an einzelnen Elementen.
+- Patch-Vorteil: jede light-spezifische Deklaration (`--bg-base: #f8fafc;`) ist im File **eindeutig** (light-Werte ≠ dark/medium) → ganze Deklaration als Anker per `str.replace` sicher (assert count==1).
+- **Achtung Doppelwerte:** innerhalb des Light-Blocks können zwei Variablen denselben Wert haben (z. B. `--bg-elevated` und `--bg-input` beide `rgba(255,255,255,0.98)`) → IMMER die vollständige `--var: …;`-Zeile matchen, nie nur den Farbwert.
