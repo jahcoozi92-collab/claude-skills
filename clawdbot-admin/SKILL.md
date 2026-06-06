@@ -2715,3 +2715,43 @@ journalctl --user -u openclaw-gateway.service -n 20 --no-pager  # Erfolg pruefen
   - `~/.claude/projects/-home-moltbotadmin/memory/feedback_bundled_discovery_allowlist_audit.md`
 - Backups vom 2026-05-17: `~/.openclaw/openclaw.json.pre-runtime-envrename-20260517-162808` u.a.
 - Codex Stop-Time-Review-Vorfall: blockierte `plugins.bundledDiscovery="allowlist"` ohne Bundled-Inventur
+
+---
+
+### 2026-06-06 — stdio-MCP-Server hinzufügen + Diana-Präferenz + OSS-MCP-Pattern
+
+**🔴 How-To: lokalen stdio-MCP-Server zu OpenClaw hinzufügen**
+
+Ablauf (am Beispiel CapCutAPI, gilt generisch für Python/Node-MCP-Server):
+1. **`command` = venv-Python, NIEMALS system-`python3`** — sonst fehlen die Dependencies des Servers.
+   - Falsch: `"command": "python3"` → Server importiert seine Module nicht.
+   - Richtig: `"command": "/home/moltbotadmin/<repo>/.venv/bin/python3"`, `"args": ["/home/moltbotadmin/<repo>/mcp_server.py"]`
+2. **`cwd` meist unnötig** — wenn das Skript seine Config skript-relativ lädt (`os.path.dirname(__file__)`), nicht cwd-relativ. Vorher im Repo prüfen: `grep -rn "__file__\|getcwd" settings/ util.py`. CapCutAPI: `settings/local.py` nutzt `__file__` → kein `cwd` nötig.
+3. **Merge sicher, nicht direkt editieren** — Hot-Reload triggert auf `openclaw.json`-Schreibzugriff. Erst Backup, dann per Python mergen + re-validieren:
+   ```bash
+   cd ~/.openclaw && cp openclaw.json "openclaw.json.bak-$(date +%Y%m%d-%H%M%S)"
+   python3 - <<'PY'
+   import json
+   cfg = json.load(open("openclaw.json"))
+   cfg.setdefault("mcp",{}).setdefault("servers",{})["<name>"] = {
+     "command": "<venv-python>", "args": ["<mcp_server.py>"],
+     "connectionTimeoutMs": 30000, "retries": 3 }
+   json.dump(cfg, open("openclaw.json","w"), indent=2, ensure_ascii=False)
+   json.load(open("openclaw.json"))  # re-validate
+   PY
+   ```
+4. **`connectionTimeoutMs` großzügig** bei schweren Imports (numpy/pillow): 30000 statt der üblichen 15000.
+5. **Verify mit `openclaw mcp doctor`, NICHT mit Logs.** stdio-MCP verbindet lazy (vgl. Zeile ~2132) → der Gateway loggt beim Reload nur `config hot reload applied (mcp.servers.<name>)`, KEINE "connected"-Zeile. `openclaw mcp doctor` erzwingt eine echte Probe und zeigt `<name>: ok`. Weitere CLI: `openclaw mcp list`, `openclaw mcp add` (mit Probe-vor-Save), `openclaw mcp configure`.
+6. **Smoke-Test vor dem Merge** (optional, isoliert): `printf '%s\n%s\n' '{...initialize...}' '{...tools/list...}' | timeout 20 .venv/bin/python3 mcp_server.py` → muss die Tool-Liste auf stdout liefern (Emoji-Logs gehen nach stderr, das ist korrekt).
+
+**🔴 Diana-Präferenz (Kommunikation) — fertige Lösung statt Learn-by-Doing**
+
+Bei aktivem "Learning"-Output-Style (Learn-by-Doing / TODO(human)) hat Diana diese Session **zweimal** zurückgesteuert: erst "erklär das so, dass es eine 12-Jährige versteht", dann "zeig mir den Code komplett bearbeitet, copy-&-paste-ready".
+- **Regel:** Diana will **die fertige, copy-&-paste-fertige Lösung + eine einfache Erklärung** — keine Aufgaben, die sie selbst ausfüllen soll. Learn-by-Doing-Reibung nur anbieten, wenn sie explizit lernen/selbst-machen will.
+- Ergänzt die bestehende Terminal-Regel (Zeile ~710 "Befehle KURZ halten, Copy-Paste"): nicht nur kurz, sondern **vollständig & direkt anwendbar**.
+
+**🟡 Pattern: Drittanbieter-App → OpenClaw via Open-Source-MCP-Bridge**
+
+Wenn eine App (z.B. CapCut) **keine offizielle Automatisierungs-API** hat, ist der Linux-native Weg für OpenClaw-Zugriff ein **Open-Source-MCP-Server**, nicht die GUI-App.
+- CapCut konkret: keine offizielle API (nur In-Editor-Plugins + AI-Einzelfeatures) → `github.com/sun-guannan/CapCutAPI` (headless, Python 3.10+/FFmpeg, 11 Tools, baut lokale CapCut-Drafts, KEIN Cloud-Render). Setup-Details: Memory `project_capcut_mcp.md`.
+- Generisch: App ohne API → erst nach OSS-MCP/HTTP-API-Projekt suchen, dann als stdio-MCP einbinden (How-To oben). Drittanbieter-Code isoliert in venv + `is_upload_draft:false`-äquivalent (keine ungewollten Cloud-Uploads/Keys).
