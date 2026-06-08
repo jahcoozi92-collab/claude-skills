@@ -2755,3 +2755,34 @@ Bei aktivem "Learning"-Output-Style (Learn-by-Doing / TODO(human)) hat Diana die
 Wenn eine App (z.B. CapCut) **keine offizielle Automatisierungs-API** hat, ist der Linux-native Weg für OpenClaw-Zugriff ein **Open-Source-MCP-Server**, nicht die GUI-App.
 - CapCut konkret: keine offizielle API (nur In-Editor-Plugins + AI-Einzelfeatures) → `github.com/sun-guannan/CapCutAPI` (headless, Python 3.10+/FFmpeg, 11 Tools, baut lokale CapCut-Drafts, KEIN Cloud-Render). Setup-Details: Memory `project_capcut_mcp.md`.
 - Generisch: App ohne API → erst nach OSS-MCP/HTTP-API-Projekt suchen, dann als stdio-MCP einbinden (How-To oben). Drittanbieter-Code isoliert in venv + `is_upload_draft:false`-äquivalent (keine ungewollten Cloud-Uploads/Keys).
+
+### 2026-06-09 — Claude Code (CLI) Update: nativ ≠ npm, Cleanup-Schutzmuster
+
+Betrifft das **Claude-Code-CLI-Tool** auf der Clawbot VM — NICHT das OpenClaw-Gateway-Update (npm/systemd/04:00-Cron, Zeile ~319/262). Zwei getrennte Update-Pfade auf derselben Maschine, beide heißen „Update" → leicht zu verwechseln.
+
+**🔴 Claude Code ist NATIV installiert — Update via `claude update`, nicht npm**
+- `~/.local/bin/claude` ist ein **Symlink** auf `~/.local/share/claude/versions/<version>` (native Installation, der neue Installer).
+- `npm view @anthropic-ai/claude-code version` zeigt zufällig dieselbe Version, ist aber der falsche Kanal. `npm ls -g` / `npm root -g` (`~/.local/lib/node_modules`) ist **leer** — es gibt keine npm-Installation.
+- Update-Check immer: `claude update` (zieht von den GCS-Release-Kanälen). Versionscheck: `claude --version`.
+
+**🔴 `claude update` Falsch-Positiv: „Multiple installations / Leftover npm global" — NICHT uninstall ausführen**
+- Voller Warntext: `Warning: Multiple installations found … Leftover npm global installation … Fix: Run: npm -g uninstall @anthropic-ai/claude-code`.
+- Das ist ein **Falsch-Positiv**: Der Updater ordnet den nativen Symlink in `~/.local/bin` heuristisch als „npm-global" ein. `npm root -g` ist leer → kein echtes npm-Paket.
+- `npm -g uninstall …` würde nichts finden und nur den funktionierenden Symlink gefährden. **Ignorieren**, nicht ausführen.
+- Diagnose-Bestätigung: `npm root -g` zeigt leeres `node_modules`, `ls $(npm root -g)/@anthropic-ai/claude-code` → fehlt.
+
+**🟡 Cleanup-Schutzmuster — versions/ rotiert NICHT automatisch (~245 MB/Build, Disk-Falle)**
+- Der native Updater löscht alte Builds nicht. Beobachtet: 5 Builds = 1,2 GB; nach Cleanup auf den aktiven Build 235 MB (~980 MB frei).
+- Relevant für den Disk-Watchdog der VM. Aufräumen, aber **niemals die aktive Version** über einen hartkodierten Namen bestimmen — Symlink-Ziel zur Laufzeit auflösen und dagegen vergleichen:
+  ```bash
+  cd ~/.local/share/claude/versions/
+  TARGET=$(readlink -f ~/.local/bin/claude)          # aktives Ziel auflösen
+  for v in 2.1.162 2.1.163 2.1.165 2.1.166; do       # Löschkandidaten
+    [ "$(readlink -f "$v")" = "$TARGET" ] && { echo "SKIP $v (aktiv)"; continue; }
+    rm -f "$v" && echo "gelöscht: $v"
+  done
+  ```
+- Danach Funktionscheck: `claude --version` muss die aktive Version zeigen.
+
+**🔵 Auto-Updater deckt die tägliche Prüfung ab**
+- Kein `DISABLE_AUTOUPDATER` o.ä. in der Env → Default = aktiv. Claude Code prüft bei jedem Start auf Updates und installiert sie. Bei täglicher Nutzung ist „mindestens einmal täglich prüfen" damit erfüllt — kein separater Timer/Cron nötig (vom User 2026-06-08 so gewählt).
