@@ -1768,3 +1768,48 @@ curl -s -H "Authorization: Bearer $HA_TOKEN" \
 - Pattern: `cp climate.py climate.py.bak-$(date +%Y%m%d-%H%M%S)` vor jeder Änderung
 - HACS-Updates überschreiben sonst eigene Fixes ohne Vorwarnung
 - Alternative für längere Lifetime: Fix als PR upstream einreichen (`Andre0512/hon`)
+
+---
+
+### 2026-06-12 — model-viewer/GLB-Dashboard: Default-Kamera, Cache, Chrom, Interieur, Framing
+
+Session: VW-Tiguan-3D-Viewer (lokales GLB + model-viewer) im „Fahrzeug"-Dashboard, viele Iterationen.
+
+**🔴 model-viewer braucht sinnvolle Default-`camera-orbit` als Fallback (sonst „kein Modell sichtbar")**
+- Symptom: Modell verschwindet komplett (nur HUD/Hintergrund), intermittierend nach Deploy.
+- Ursache: `camera-orbit="38deg 73deg 8.8m"` (oder `auto`) ist für ein ~110-Einheiten-Modell viel zu nah → Kamera sitzt IM Modell. Normalerweise korrigiert `fitCamera()` das beim `load`-Event auf ~fitDist. Greift `fitCamera` aber mal nicht rechtzeitig (Timing, größeres GLB, Race) → die zu-nahe Default-Kamera bleibt → nichts sichtbar.
+- Fix: **Default-Distanz im Tag ≈ realer Fit-Distanz** setzen, nicht 8.8m: z.B. `camera-orbit="38deg 74deg 66m"` (= fitDist*0.6 für dieses Modell), `min-camera-orbit="auto auto 30m"`, `max="auto auto 200m"`. Dann ist das Auto auch ohne/bei verzögertem `fitCamera` sichtbar.
+- Merke: der harness-Test (mit `camera-orbit ... 200m` als Default) zeigte IMMER das Auto, der Viewer (8.8m) nicht — genau das war der Unterschied.
+
+**🔴 HA `/local/` = 31-Tage-Cache → Cache-Buster greifen nur bei Lovelace-Reload**
+- HA liefert `/local/`-Statics mit `Cache-Control: public, max-age=2678400` (31 Tage).
+- `?v=`/`?r=`-Query-Buster funktionieren NUR, wenn die Lovelace-Config selbst neu geladen wird (sie enthält die iframe-URL). Datei-Änderungen ohne URL-Wechsel (z.B. GLB überschreiben) bleiben 31 Tage gecacht.
+- **Lovelace-Config-Änderungen** (Karte hinzufügen/entfernen, aspect_ratio) brauchen einen **echten Frontend-Reload**: Desktop `Strg+Shift+R`; Mobile-App „Profil → Frontend-Cache zurücksetzen" oder App-Neustart. Ein normaler Refresh reicht oft nicht.
+- **Diagnose was HA WIRKLICH ausliefert** (vs. Browser-Cache): `curl -s 'http://127.0.0.1:8123/local/Tiguan/viewer.html?nocache=$(date +%s)' | grep <marker>` direkt auf dem HA-Host. Plus `curl -sI` zeigt den `Cache-Control`-Header.
+- Mehrere „ich sehe keinen Unterschied" in dieser Session = ausschließlich Cache, Server war immer korrekt.
+
+**🔴 „Verchromt"/silbern bei dunklem Material = Glanz + Umgebungsspiegelung, NICHT helle Farbe**
+- Schwarze Trim-Materialien (Fensterrahmen, Spiegelkappen) sahen unter `environment-image="neutral"` verchromt aus, obwohl Basisfarbe dunkel.
+- Ursache: metallic ~0.9 / roughness ~0.1 = Spiegelfläche → reflektiert das helle neutral-Environment → wirkt chrom. (raw-Render im dunklen Studio täuscht „schwarz" vor!)
+- Fix: nicht die Basisfarbe, sondern die **Reflektivität** senken — `metallic ~0.1, roughness ~0.6` (matt). Betroffen waren DREI Materialien (refl_black = Fensterrahmen, mirror = Spiegel/Front-Trim, glass_black) — alle einzeln matt setzen, in JS-Override UND GLB-Bake.
+
+**🟡 Interieur in der LIVE-model-viewer-Ansicht zeigen (eine Karte, kein Cutaway)**
+- Von außen durch normales Glas sieht man das Interieur kaum (neutral-env spiegelt auf der Scheibe).
+- Lösung: Glas-Material **fast unsichtbar** machen — `baseColor alpha ~0.025` + `roughness 0.30` (matt, keine scharfe Spiegelung). Dann blickt man durch die „offenen" Fenster direkt ins beleuchtete Interieur, Karosserie/Dach bleiben intakt. Ambient/Displays als Emissive hochziehen.
+- Vordere + hintere Scheibe sind oft separate Materialien (`glasss` vs `glasss_rear`) → vorne offen (Cockpit zeigen), hinten dunkel/Privacy (`alpha 0.85`) getrennt steuerbar.
+
+**🟡 Framing eines 3/4-Fahrzeugs: nicht auf maxDim rahmen**
+- `fitCamera` rahmt auf `maxDim = Fahrzeuglänge` → aus dem 3/4-Blick füllt das Auto nur ~40 % der Bildhöhe = wirkt klein und sitzt tief (User muss hochziehen/zoomen).
+- Auf einer **quadratischen** Karte unlösbar (Länge muss in die Breite passen). Lösung: Karten-`aspect_ratio: "16:9"` (breit, passt zur Auto-Silhouette) + näher zoomen (`distance = fitDist * 0.60`) + unteres CSS-Padding minimieren.
+
+**🟡 Headless-Chrome-Render-Pipeline (zur Viewer-Verifikation) — Fallen**
+- `pkill -9 -f chrome` **killt die eigene Shell** (deren Kommandozeile „chrome" enthält) → „Exit 1, kein Output". Stattdessen `killall -9 chrome google-chrome` (Name-Match, trifft die eigene bash nicht).
+- `python3` kann auf einen kaputten linuxbrew-Build zeigen → http.server startet nicht → Chrome bekommt Connection-Refused. Im Render-Script hart `/usr/bin/python3 -m http.server` verdrahten.
+- Das Bash-Tool **verschluckt stdout bei Nicht-Null-Exit** → Diagnose-Befehle mit `; true` abschließen.
+- Black-Frames: `--virtual-time-budget` hochsetzen (22000), bewährte Winkel statt Raten; bestimmte theta/phi clippen reproduzierbar.
+- Die **volle viewer.html rendert headless unzuverlässig** (`fitCamera` läuft im Headless nicht → Default-Kamera → leer). Für Material-/Look-Verifikation besser: minimaler „harness" mit explizitem `camera-orbit` (Default 200m), oder gleich Blender.
+
+**🔵 Blender-Eevee als zuverlässiger Fallback-Renderer (wenn model-viewer-Headless zickt)**
+- Karosserie/Glas via `obj.hide_render=True` ausblenden = sauberer Interieur-Cutaway.
+- Area-Light-Power kalibrieren: bei Modell-Maßstab ~Dutzende Einheiten ist `5e6 W` total ausgebrannt (reinweiß), `~7e4 W` Key / `~1.3e5` Rim sinnvoll.
+- `view_settings.view_transform='AgX'` + Compositor-`Glare` (FOG_GLOW) für Bloom; dunkle Welt (`background strength ~0.35`) lässt Emissives schön durch transparentes Glas glühen (anders als model-viewers helles neutral-env).
