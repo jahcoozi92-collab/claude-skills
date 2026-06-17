@@ -497,6 +497,11 @@ Performance-Hinweis: `backdrop-filter: blur(...)` kostet GPU — bei >15 gleichz
 
 ## hOn / Haier Custom Integration (HA 2026.x-Patches)
 
+> **🔴 ÜBERHOLT seit 2026-06-17: `Andre0512/hon` ist tot, auf `gvigroux/hon` wechseln.**
+> Die unten dokumentierten Andre0512-Patches sind nur noch Referenz für Alt-Installationen.
+> Symptom des toten Forks: Integration `state: loaded`, aber `appliances: []` (App zeigt Geräte!).
+> Migration + neues Entity-Naming → siehe Session-Block `### 2026-06-17 — hOn-Fork-Wechsel` am Dateiende.
+
 `Andre0512/hon` (Custom Component für Haier hOn-Klima/Geräte) ist seit Aug 2024 inaktiv. v0.14.0 bricht in HA 2026.x mit zwei Breaking-Changes der HA-Core-API:
 
 ### Patch 1: `HomeAssistantType` entfernt → `HomeAssistant`
@@ -1889,3 +1894,49 @@ Session: VW-Tiguan-3D-Viewer (lokales GLB + model-viewer) im „Fahrzeug"-Dashbo
 **🟡 matter-server-Restart als 1. nicht-destruktiver Fix bei eingefrorenem Node**
 - `docker restart matter-server` (nicht nur HA) kann eine hängende Interview-Schleife stoppen → Sensoren werden wieder live. Climate-/Thermostat-Cluster brauchen evtl. zusätzlich ein UI-„Gerät neu interviewen".
 - Doppel-Pairing-Symptom: 2 Nodes gespeichert, aber nur einer auf mDNS gefunden → der andere ist toter Waise, entfernen. Diagnose: `docker logs matter-server | grep -iE 'node|interview|subscription'`.
+
+### 2026-06-17 — hOn-Fork-Wechsel Andre0512 → gvigroux (toter Fork, Account leer, Entity-Remap)
+
+Session: User-Report „Entität wird nicht mehr von hon-Integration bereitgestellt" bei den zwei Haier-Klimas (Flur + SZ). Ursache war NICHT HA, sondern der tote `Andre0512/hon`.
+
+**🔴 Toter `Andre0512/hon` v0.14.0: `state: loaded` aber `appliances: []`**
+- Symptom: hon-Integration meldet `state: loaded` (REST `…/config_entries/entry?domain=hon`), liefert aber 0 Entities; in der Haier-App sind die Geräte sichtbar.
+- Falsche Fährten ausgeschlossen: nicht „falscher Account" (gleiche E-Mail in App + HA), nicht Parsing.
+- Ground-Truth-Diagnose (pyhon-Live-Pull aus dem hon-Config-Entry): roher Call `GET https://api-iot.he.services/commands/v1/appliance` → `HTTP 200 {"payload":{"appliances":[]},"authInfo":{}}`. Leeres `authInfo` = Token wird von Haier nicht an die Nutzer-Identität gebunden → alter Auth-Flow tot. Andere Endpoints (`/config/v1/program-list-rules`) antworten normal → API/Key ok, nur der Login-Flow ist veraltet.
+- **Fix = Fork wechseln, nicht patchen.** `gvigroux/hon` ist der aktiv gepflegte Nachfolger (Release-Cadence täglich; bringt eigenen API-Client mit, `requirements: None`, kein externes pyhОn).
+
+**🔴 Migration Andre0512 → gvigroux (Schritte)**
+1. `custom_components/hon` sichern (`/config/_attic/hon_Andre0512_<ts>`), Inhalt leeren, Release-Zip extrahieren:
+   `https://github.com/gvigroux/hon/releases/download/<tag>/hon_integration.zip` (Dateien liegen im Zip-Root → direkt nach `custom_components/hon/` entpacken). Internet aus dem HA-Container via `urllib` geht.
+2. `docker restart homeassistant` (Integrations-Code-Wechsel braucht Full-Restart).
+3. **NICHT den alten Config-Entry blind löschen!** gvigroux lädt mit den alten Account-Daten und findet die Geräte sofort (Beweis im Log: `custom_components.hon.device Update_command: …windDirectionVertical…`, eine Zeile pro AC). Ich hatte trotzdem gelöscht, um „sauber" neu zu verbinden → **Passwort war nur im Entry + im verschlüsselten Backup** → nicht rekonstruierbar → User musste in der UI neu verbinden. Lehre: Entry NUR löschen, wenn das hОn-Passwort vorliegt; sonst gvigroux den bestehenden Entry adoptieren lassen oder Passwort vorher sichern.
+4. Neu verbinden (UI: Einstellungen → Geräte & Dienste → Integration „hOn", E-Mail + Passwort). Passwörter NIE im Chat/Shell — UI-Flow nutzen.
+
+**🔴 HA-Backups: zstd + securetar-verschlüsselt → nicht für Credential-Recovery nutzbar**
+- `Automatic_backup_*.tar` enthält `homeassistant.tar.gz`, das ist **zstd**-komprimiert (Pythons stdlib hat kein zstd → `pip install zstandard`; busybox-`tar` im HA-Container kann kein `--zstd`).
+- Selbst nach zstd-Dekomp: `ZstdError: Unknown frame descriptor` bzw. nicht-tar → der innere Stream ist **securetar-AES-verschlüsselt**, wenn ein Backup-Encryption-Key gesetzt ist. Ohne Key kein Auslesen von `core.config_entries`. Also kein Passwort-Recovery aus Backups.
+
+**🔴 gvigroux ≠ Andre0512: komplett anderes Entity-Modell**
+- `unique_id`-Schema: gvigroux nutzt **MAC** (climate: `f"{mac}"`, Sub-Entities `mac_<funktion>`); Andre0512 nutzte Nickname-Slugs. → Beim Wechsel bekommen ALLE Entities **neue entity_ids** (z. B. `climate.klimaanlage_flur` statt `climate.klimaanlage_flur_klimaanlage`).
+- **entity_ids zurückbenennen** auf die alten Namen via WebSocket `config/entity_registry/update` (`entity_id` → `new_entity_id`) → Scripts/Dashboards bleiben heil. Geht atomar bei laufender HA (aiohttp-WS im Container, kein extra pip nötig).
+- Namens-/Funktions-Mapping (englisch ← deutsch, eindeutig): `sleep_mode`←`nachtmodus`, `silent_mode`←`silent_modus`, `rapid_mode`←`schnellmodus`, `10deg_heating`←`10degc_heizfunktion`. Identisch: `health_mode`, `echo`, `screen_display`, `indoor/outdoor_temperature`.
+- **gvigroux hat KEINE `preset_modes`** (`preset_modes: None`). Der alte Andre0512-`iot_uv*`-Preset existiert nicht mehr. Sonderfunktionen laufen über **eigene Services**: `hon.climate_set_sleep_mode/echo_mode/screen_display/rapid_mode/silent_mode/eco_pilot_mode`, `hon.climate_set_wind_direction_vertical/horizontal`, `hon.climate_turn_health_mode_on/off`, plus Escape-Hatch `hon.send_custom_request`. Vane/Eco/Health liegen zusätzlich als climate-**Attribute** an (`swing_modes`, `wind_direction_*`, `eco_pilot_mode`, `health_mode`). `fan_modes` = `['high','medium','low','auto']` ✓.
+- **UV → Health-Mode**: gvigroux hat kein UV-Entity/Preset, aber `switch.klimaanlage_<raum>_health_mode` (Konst. `HEALTH_LOW="3"`/`HEALTH_HIGH="1"`). Bei diesen Haier-Geräten ist „Health" die UV-/Sterilisationsfunktion (vom User bestätigt). Die alten `script.haier_uv_*` (basierten auf `climate.set_preset_mode: iot_uv*`) auf `switch.turn_on/off/toggle` von `…_health_mode` umgebaut.
+- **Nicht mehr vorhanden** (Andre0512 hatte sie, gvigroux 0.8.3 nicht): `select.*_programm/_eco_pilot/_richtung_des_geblases_*`, `switch.*_self_clean/_steri_clean_56degc`, `sensor.*_machine_status/_coiler_temperature_*/_defrost_temperature_*/_in_air_temperature_*`, `number.*_zieltemperatur`, `button.*_create_data_archive/_show_device_info`. Teil-Ersatz: `sensor.*_selected_temperature` (~zieltemperatur), `sensor.*_mode`/`_program_name`, `binary_sensor.*_defrost_status`, `swing_mode` (Vane).
+
+**🟡 Script-Audit-Ergebnis (24 `script.haier_*`)**
+- 18 liefen nach reinen entity_id-Renames unverändert (zentrales `haier_setzen` + Presets/Schnellaktionen nutzen nur `climate.set_hvac_mode/set_temperature/set_fan_mode` + `switch.*_nachtmodus`).
+- 6 UV-Scripts auf Health-Mode-Switch umgebaut. YAML-Validate + `script.reload` (kein Restart nötig).
+- `dashboards/haier_klima.yaml` (YAML-Mode `lovelace-haier`) komplett remappt: Zieltemp→`selected_temperature`, Vane-Selects→Climate-**Swing**-Tile + Attribut `wind_direction_*`, `programm`→`sensor.*_program_name` (readonly), `machine_status`→`sensor.*_mode`+`binary_sensor.*_status`, Service-Buttons→`get_settings/programs_details`; `self_clean`/`steri_clean`/`ch2o`/`filteraustausch`/`eco_pilot` raus. YAML-Mode-Dashboard braucht `docker restart`.
+
+**🔴 gvigroux switch.py Bug: Enum-Switches (z.B. `healthMode`) werfen 500 (int statt str)**
+- Real-Device-Funktionstest (alle Modi/Temp/Fan/Swing/7 Switches × 2 Geräte) deckte auf: `switch.*_health_mode` ON/OFF → `500 Internal Server Error`.
+- Traceback `switch.py:181/200`: `ValueError: ParameterEnum [healthMode] Invalid value: 1 Allowed values: ['0','1']`. Ursache: `async_turn_on/off` setzt `setting.value = … else 1` (**int**), die `HonParameterEnum` validiert aber gegen **String**-Liste `['0','1']` → `1 in ['0','1']` ist False. Range-Switches (min/max) sind nicht betroffen, nur Enum-Switches.
+- **Fix:** in `switch.py` die 4 `else 0`/`else 1` → `else "0"`/`else "1"` (Strings). Backup `switch.py.bak-*`, danach `docker restart`. Re-Test: health_mode PASS auf beiden.
+- **Test-Loop-Lehre:** STATE-LAG ≠ Fehler — hОn-Cloud-Sync braucht 10–35s, Readback nach 5s zeigt oft noch alten Wert. Erfolgskriterium: HTTP 200 + kein Log-ERROR; State-Konvergenz mit ≥30s Wait prüfen. Restores zwischen Befehlen brauchen ebenfalls ausreichend Sleep, sonst driftet der Zustand.
+
+**🟡 „Klima kühlt nicht / kein Lüfter" ist meist KEIN Bug — Ziel ≥ Raumtemperatur**
+- User-Report „cool ausgewählt, kühlt nicht; Turbo, kein Lüfter hörbar". Diagnose ergab: `onOffStatus=on`, `machMode=1` (cool), aber **Ziel 22 °C ≥ Innen 21,5 °C** → im Kühlmodus nichts zu tun → Kompressor UND Lüfter idle. Viele Haier-Modelle schalten den Lüfter dann komplett ab (kein „nur belüften") → fühlt sich „tot" an, ist normal.
+- Diagnose-Reihenfolge bei „reagiert nicht": (1) `binary_sensor.*_status` (onOffStatus) — ist es überhaupt an? (2) `sensor.*_mode` (machMode: COOL=1, HEAT=4) — Modus gesetzt? (3) **Ziel vs. Innentemperatur** vergleichen. (4) Aktiv testen: `cool` + Ziel deutlich < Raum (z. B. 18°) + fan high, 40s warten, dann physisch prüfen. Erst wenn es DANN still bleibt → physisches/Konnektivitäts-Problem (per IR-Fernbedienung aus, Strom, Cloud-Desync), außerhalb HA.
+- gvigroux sendet echte `startProgram`-Kommandos (`start_command('iot_cool'/'iot_heat'/'iot_dry'/'iot_auto'/'iot_fan')`, `stop_command()` für off) — kein optimistischer State. `hvac_action` liefert der Fork NICHT (immer None) → „kühlt aktiv vs. idle" ist aus HA nicht ablesbar, nur über Ziel/Innen-Vergleich. Reines Belüften = Modus `fan_only`.
+- `windDirectionVertical=0 → Fallback 5`-WARNING bei JEDEM Kommando ist benigne (gvigroux ersetzt ungültige 0 durch gültige 5), kein Fehler.
