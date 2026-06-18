@@ -1940,3 +1940,48 @@ Session: User-Report „Entität wird nicht mehr von hon-Integration bereitgeste
 - Diagnose-Reihenfolge bei „reagiert nicht": (1) `binary_sensor.*_status` (onOffStatus) — ist es überhaupt an? (2) `sensor.*_mode` (machMode: COOL=1, HEAT=4) — Modus gesetzt? (3) **Ziel vs. Innentemperatur** vergleichen. (4) Aktiv testen: `cool` + Ziel deutlich < Raum (z. B. 18°) + fan high, 40s warten, dann physisch prüfen. Erst wenn es DANN still bleibt → physisches/Konnektivitäts-Problem (per IR-Fernbedienung aus, Strom, Cloud-Desync), außerhalb HA.
 - gvigroux sendet echte `startProgram`-Kommandos (`start_command('iot_cool'/'iot_heat'/'iot_dry'/'iot_auto'/'iot_fan')`, `stop_command()` für off) — kein optimistischer State. `hvac_action` liefert der Fork NICHT (immer None) → „kühlt aktiv vs. idle" ist aus HA nicht ablesbar, nur über Ziel/Innen-Vergleich. Reines Belüften = Modus `fan_only`.
 - `windDirectionVertical=0 → Fallback 5`-WARNING bei JEDEM Kommando ist benigne (gvigroux ersetzt ungültige 0 durch gültige 5), kein Fehler.
+
+### 2026-06-18 — gvigroux `__init__.py`-Versionsdrift (MOBILE_ID-ImportError), Lamellen-Richtung physisch
+
+**🔴 „Beide Klimas plötzlich `unavailable` nach Restart" = `MOBILE_ID`-ImportError durch `__init__.py`-Versionsdrift**
+- Symptom: nach `docker restart homeassistant` beide `climate.klimaanlage_*` = `unavailable`, hon-Config-Entry `state: not_loaded` (reason `None`), `script.reload`/entry-reload heilt NICHT.
+- Log (`homeassistant.setup`): `Setup failed for custom integration 'hon': cannot import name 'MOBILE_ID' from 'custom_components.hon.const'`, Trace endet in `__init__.py:13 from .const import DOMAIN, PLATFORMS, MOBILE_ID, CONF_REFRESH_TOKEN` + `__init__.py:11 from pyhon import Hon`.
+- **Ursache: inkonsistenter Datei-Mix.** `const.py`/`hon.py`/`manifest.json` waren gvigroux 0.8.3 (Owner-eigener Client `HonConnection`, KEIN pyhon, KEIN `MOBILE_ID`), aber `__init__.py` war eine ALTE Andre0512/pyhon-Version (`from pyhon import Hon`, `mobile_id=MOBILE_ID`, `subscribe_updates`). Vermutlich hat ein HACS-Update/Restore nur diese eine Datei zurückgesetzt.
+- **Heimtücke „läuft bis zum Neustart":** Bis zum Restart lief noch das kompilierte `.pyc` der korrekten gvigroux-`__init__`. Erst die Neukompilierung beim Restart trifft den kaputten Source → Ausfall fällt verzögert auf. → Bei „lief gestern noch, heute weg nach Restart" IMMER auf File-Drift prüfen.
+- **Fix (chirurgisch, eigene Patches behalten):**
+  1. Release-Zip im Container laden: `https://github.com/gvigroux/hon/releases/download/<version>/hon_integration.zip` (Version aus `manifest.json` lesen!). Container hat Internet via `urllib` (ggf. `ssl` unverified).
+  2. **Drift lokalisieren statt blind überschreiben:** `for f in *.py manifest.json; do diff -q /tmp/zip/$f /config/custom_components/hon/$f; done` → zeigte hier NUR `__init__.py` (kaputt) + `switch.py` (= mein health_mode-Fix). Alle anderen identisch.
+  3. NUR `__init__.py` aus dem Zip kopieren, `switch.py` (eigener Fix) NICHT anfassen. Backup der kaputten Datei daneben.
+  4. `rm -rf __pycache__` (erzwingt Neukompilierung), dann `docker restart homeassistant`.
+  5. Verify: hon-Entry `state: loaded` + beide climates ≠ `unavailable`.
+- **🟡 Classifier-Block beachten:** Extern geladenen Integrations-Code (GitHub-Release, ggf. TLS-unverified) in den Container kopieren + ausführen wird vom Auto-Mode geblockt → dem User transparent machen (Quelle = dieselbe gvigroux-Version, die ohnehin installiert ist) und entscheiden lassen. Reine Lese-Diagnose (states/logs) ist nicht betroffen.
+- **🟡 Wiederholungs-Warnung:** Drift kann durch HACS erneut auftreten (gleiche Datei zurückgesetzt) → gleiches Symptom, gleicher Fix. Dauerhaft: Fix als PR upstream oder `__init__.py`-Version nach HACS-Updates prüfen.
+
+**🔴 Lamellen-Richtung: Befehl kommt an, aber physischer Vane-Motor fährt nicht (Geräte-/Firmware-Limit)**
+- Vom Gerät gemeldete gültige Werte (aus `load_commands`-Debug, `enumValues`): **`windDirectionVertical` [2,4,5,6,7,8]** (8=Auto/Swing, 4=oben, 5=mitte, 6=unten, 7=ganz unten, 2=ganz oben), **`windDirectionHorizontal` [0,3,4,5,6,7]** (7=Auto/Swing, 0=mitte, 3=ganz links, 4=links, 5=rechts, 6=ganz rechts). `defaultValue` H=0, V=5.
+- Beobachtung: Dashboard→Script→hon-Service laufen (HTTP 200, Logbook „started", keine Fehler), die Telemetrie-Werte ändern sich (z. B. 7→3), **Zieltemperatur greift physisch** (`sensor.*_selected_temperature` springt nach Befehl real auf den neuen Wert) — **nur der Lamellen-Motor bewegt sich nicht** (weder vertikal noch horizontal, auch bei laufendem Lüfter). → Der Befehlskanal Gerät↔Cloud ist intakt; die Vane-Position wird auf DIESER Einheit physisch nicht aktuiert (Firmware/Hardware-Limit, oft manuelle Horizontal-Lamellen). Kein Dashboard-/Script-/Integrations-Bug.
+- **Ground-Truth-Trennung optimistisch vs. real:** `climate.*`-Attribute (`temperature`, `wind_direction_*`) sind teils OPTIMISTISCH (zeigen den gesendeten Wert). Echte Geräte-Werte: device-reported Sensoren (`sensor.*_selected_temperature`, `sensor.*_mode`) + deren `last_changed`-Frische. Wenn `climate`-Attr sich ändert, der device-reported Sensor aber stale bleibt → Befehl wurde (physisch) nicht angewandt.
+- Vor „funktioniert nicht"-Schluss beim User abklären, ob die **offizielle hОn-App** die Lamelle physisch bewegt: nein → Hardware-/Firmware-Limit (Richtungsauswahl im Dashboard sinnlos); ja → Integration sendet das Vane-Kommando anders als die App (gezielt nachbaubar).
+
+**🟡 Diagnose-Werkzeug: gvigroux-Parameter live auslesen ohne Re-Auth**
+- Debug an + Entry reloaden → `load_commands` loggt die kompletten Command-Defs inkl. `enumValues`/`defaultValue` und den Geräte-Shadow (`parNewVal` + `lastUpdate`):
+  ```bash
+  curl -X POST .../api/services/logger/set_level -d '{"custom_components.hon":"debug"}'
+  curl -X POST .../api/config/config_entries/entry/<ENTRY_ID>/reload
+  docker logs homeassistant --since 40s | grep -oE "windDirectionHorizontal[^}]*\}"
+  curl -X POST .../api/services/logger/set_level -d '{"custom_components.hon":"warning"}'  # wieder aus
+  ```
+- `parNewVal`-Timestamps der hОn-Cloud sind oft alt/zeitzonen-schief → NICHT als Frische-Beweis nehmen; der VALUE zählt, Frische lieber über den HA-Sensor `last_changed` messen.
+
+**🟡 Dashboard-Pattern Lamellen: Bewegung (Swing) und Richtung (Position) sauber trennen**
+- `script.haier_lamelle` (zentral, `target`/`axis`/`value`) setzt NUR die Position (`hon.climate_set_wind_direction_*`), KEINE Swing-Manipulation. Bewegung läuft separat über `climate.set_swing_mode` (Zeile „Bewegung": Aus/Vertikal/Horizontal/Beide).
+- Grund: würde das Richtungs-Script den Swing abschalten, verschwände bei aktiver „hide bei swing=off"-Sichtbarkeit die gerade getroffene Auswahl sofort wieder (Selbst-Versteck-Konflikt).
+- Sichtbarkeit „Richtung nur wenn Bewegung ≠ Aus" via Card-`visibility` (HA ≥2024.7) auf das `swing_mode`-Attribut:
+  ```yaml
+  visibility:
+    - condition: state
+      entity: climate.klimaanlage_flur_klimaanlage
+      attribute: swing_mode
+      state: [vertical, horizontal, both]
+  ```
+- Interaktive Buttons IMMER `custom:mushroom-template-card` (button-card v6 feuert hier keine Service-Calls). YAML-Mode-Dashboard → nach Edit `docker restart homeassistant`.
