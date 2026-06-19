@@ -1985,3 +1985,37 @@ Session: User-Report „Entität wird nicht mehr von hon-Integration bereitgeste
       state: [vertical, horizontal, both]
   ```
 - Interaktive Buttons IMMER `custom:mushroom-template-card` (button-card v6 feuert hier keine Service-Calls). YAML-Mode-Dashboard → nach Edit `docker restart homeassistant`.
+
+### 2026-06-19 — Self-Clean via start_program, MOBILE_ID-Drift erneut, Wartungsplaner, „AUS-zuerst"-Regel
+
+**🔴 MOBILE_ID-Drift kam ERNEUT zurück (3. Mal) — Fix-Source liegt LOKAL, kein Download nötig**
+- Symptom wie 2026-06-18: `custom_components/hon/__init__.py` war wieder die Andre0512/pyhon-Variante (`from pyhon import Hon`, `from .const import …, MOBILE_ID`), aber `const.py` hat **kein** `MOBILE_ID` → nächster Restart = `ImportError` → beide Klimas `unavailable`.
+- **Tückisch:** Lief weiter, weil das `.pyc` vom letzten Boot noch die gute gvigroux-`__init__` war. Diagnose: `stat -c '%y' __init__.py __pycache__/__init__.cpython-314.pyc` → Source-mtime (2026-05-26) ≠ pyc-Boot-mtime → CPython recompiliert beim nächsten Import den kaputten Source. `grep -c MOBILE_ID __init__.py` + `grep -c 'HonConnection(hass, entry)'` trennt kaputt/gut schnell.
+- **Korrekte gvigroux-Source liegt host-seitig schon da:** `/volume1/docker/home-assistant/config/_backup/hon-migration-staging-2026-06-01/gvigroux-hon-0.8.2/__init__.py` (HonConnection-basiert, registriert `start_program`). Externer GitHub-Download wird vom Classifier geblockt — dieses lokale Backup nutzen.
+- **0.8.2-`__init__` ist API-kompatibel mit den installierten 0.8.3-Dateien:** `diff -q` Staging vs. installiert → nur `const.py`+`hon.py` DIFFER (Rest identisch). 0.8.2-`__init__` importiert nur `DOMAIN, PLATFORMS` (const) + `HonConnection, get_hOn_mac` (hon) + `HonDevice` (device) — alle in 0.8.3 vorhanden. Die 2 fehlenden Methoden (`async_get_state`, `async_set_parameter`) liegen in ungenutzten/auskommentierten Pfaden (Waschmaschine). Fix = `\cp -f` (cp ist `-i`-aliased!) + `rm __pycache__/__init__.cpython-314.pyc` + Restart. Backups vorher. **Überschreiben von custom_components braucht User-Freigabe (Classifier blockt autonom).**
+- Dauerhaft: gvigroux-`__init__.py` als PR upstream oder nach jedem HACS-Update prüfen. Drift kehrt sonst wieder.
+
+**🔴 Self-Clean / Steri-Clean SIND machbar — via `hon.start_program` (nicht als Entity)**
+- gvigroux 0.8.x hat KEINE `switch.*_self_clean`-Entity (deshalb bei Migration entfernt), ABER der `__init__.py` registriert `hon.start_program` (`handle_start_program`). Programme: **`iot_self_clean`** (Self-Clean, Verdampfer trocknen) + **`iot_self_clean_56`** (Steri-Clean 56°C).
+- `services.yaml` listet viele Services, die der installierte Code NICHT registriert — `grep async_register *.py` ist irreführend; **Wahrheit = `GET /api/services` (domain hon)** mit Token. start_program/turn_light/send_custom_request/update_settings/climate_turn_health_mode_* werden vom gvigroux-`__init__` via `hass.services.async_register` registriert (im `.pyc`, nicht in climate.py).
+- **Erlaubte Programme abfragen (non-destruktiv):** `hon.start_program` mit ungültigem Programm → `HomeAssistantError "Invalid [Program] value, allowed values [iot_simple_start, iot_heat, …, iot_self_clean, iot_self_clean_56, …]"` (HTTP **500**, Liste steht im `docker logs`).
+
+**🔴 `device_id` MUSS Liste sein (sonst `set(string)` → Zeichen-Explosion → Crash)**
+- `get_device_ids` macht `set(call.data['device_id'])`. Ein STRING `"e46e…"` wird zu einem Set einzelner Zeichen → `get_hOn_mac(char)` → `dr.async_get(char)`=None → `AttributeError: 'NoneType' … identifiers`.
+- REST: `{"device_id":["e46e…"]}` (Liste). Dashboard: `target: { device_id: <id> }` — HA verpackt target-device_id automatisch zur Liste → **Dashboard-Buttons funktionieren**, roher String-Data-Call nicht.
+
+**🔴 Self-Clean startet NUR aus dem AUS-Zustand zuverlässig**
+- Befehl an laufendes Gerät: Cloud gibt `resultCode 0`, aber `selfCleaningStatus` bleibt **0** (Gerät ignoriert), nur das Programm-**Label** `programName` bleibt sticky stehen → täuscht „läuft" vor.
+- Aus dem AUS-Zustand: Gerät übernimmt, `selfCleaningStatus → 1`, schaltet sich für den Zyklus selbst wieder ein.
+- **Robustes Start-Script:** `climate.set_hvac_mode off` → `delay 00:00:22` → `hon.start_program` (target device_id). Dashboard-Reinigungs-Buttons darauf zeigen lassen, nicht direkt auf start_program.
+- **Ground Truth = Cloud-Shadow `selfCleaningStatus`/`selfCleaning56Status`** (hon-Debug, `grep "Context for mac[<MAC>]"`), NICHT der sticky `sensor.*_program_name`. Welche MAC zu welchem Raum: `core.device_registry` identifiers (`['hon','<mac>','AC']`) — NICHT aus alten Logs raten (dort tauchte fälschlich eine gemeinsame MAC auf). Real: SZ=`08-a6-f7-84-6b-8c`, Flur=`5c-01-3b-56-f2-14`.
+
+**🔴 `turn_light_on/off` (gvigroux) defekt auf diesem Setup**
+- `handle_light_on` → `get_hOn_mac` NoneType (erwartet anderes Param/Auflösung), HTTP 500, `lightStatus` bleibt 0. `lightStatus` ≠ `screenDisplayStatus` (Display = Temp-Anzeige), aber „Licht" ist hier nicht sinnvoll steuerbar → Licht-Buttons NICHT ins Dashboard.
+
+**🟡 Wartungsplaner-Pattern (Fälligkeit pro Gerät, Package `haier_wartung.yaml`)**
+- `input_number` Intervalle (Self-Clean 21 T, Steri-Clean 90 T) + `input_datetime` (has_date) je Gerät+Programm „zuletzt" + Template-Sensoren `*_resttage` (state=Resttage, attrs `next_due/last_run/status`).
+- **`input_datetime` ohne `initial:` defaultet auf HEUTE, NICHT `unknown`** → „nie gelaufen" nicht über unknown-Check erkennbar. Lösung: Sentinel-Datum `2000-01-01` setzen + Template `{% if l < '2001-01-02' %}` (String-Vergleich auf `YYYY-MM-DD`).
+- Auto-Erfassung „zuletzt": Automation-Trigger `state … to: iot_self_clean` / `to: iot_self_clean_56` auf `sensor.klimaanlage_<raum>_program_name` → `input_datetime.set_datetime` heute (fängt Dashboard-, App- und Fernbedienungs-Läufe).
+- Push-Erinnerung: `notify.mobile_app_samsung_galaxy_s25_ultra_diana` (Dianas S25 Ultra), täglich 10:00, condition = mind. 1 Tracker `<= 0`.
+- Deploy ohne Restart: `input_number/input_datetime/template/script/automation.reload`. Nur YAML-Mode-Dashboard-Änderung braucht `docker restart`.
