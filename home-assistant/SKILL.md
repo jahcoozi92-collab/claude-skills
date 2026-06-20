@@ -2010,8 +2010,10 @@ Session: User-Report „Entität wird nicht mehr von hon-Integration bereitgeste
 - **Robustes Start-Script:** `climate.set_hvac_mode off` → `delay 00:00:22` → `hon.start_program` (target device_id). Dashboard-Reinigungs-Buttons darauf zeigen lassen, nicht direkt auf start_program.
 - **Ground Truth = Cloud-Shadow `selfCleaningStatus`/`selfCleaning56Status`** (hon-Debug, `grep "Context for mac[<MAC>]"`), NICHT der sticky `sensor.*_program_name`. Welche MAC zu welchem Raum: `core.device_registry` identifiers (`['hon','<mac>','AC']`) — NICHT aus alten Logs raten (dort tauchte fälschlich eine gemeinsame MAC auf). Real: SZ=`08-a6-f7-84-6b-8c`, Flur=`5c-01-3b-56-f2-14`.
 
-**🔴 `turn_light_on/off` (gvigroux) defekt auf diesem Setup**
-- `handle_light_on` → `get_hOn_mac` NoneType (erwartet anderes Param/Auflösung), HTTP 500, `lightStatus` bleibt 0. `lightStatus` ≠ `screenDisplayStatus` (Display = Temp-Anzeige), aber „Licht" ist hier nicht sinnvoll steuerbar → Licht-Buttons NICHT ins Dashboard.
+**🔴 `turn_light_on/off` (gvigroux) — auf diesem Setup NICHT bestätigt nutzbar → Licht-Buttons NICHT ins Dashboard**
+- `handle_light_on` → `get_hOn_mac` NoneType, HTTP 500, `lightStatus` bleibt 0. `lightStatus` ≠ `screenDisplayStatus` (Display = Temp-Anzeige).
+- **Aufruf-Form (2026-06-20 nachgelesen):** `handle_light_on` nutzt `call.data.get("device")` (SINGULAR-String) → `get_hOn_mac(device_id)` → `dr.async_get("<id-str>")`. Das ist die GEGEN-Konvention zu `start_program` (das braucht `device_id` als LISTE). Der historische 500 kam vermutlich von einem Listen-/`target`-Aufruf. Ein Toggle-Script mit `data: {device: "<id-string>"}` ist also theoretisch korrekt geformt — **aber 2026-06-20 NICHT live verifizierbar** (kein Token, User-Tap blieb aus; eine LED am AUS-Gerät kann ohnehin nicht angehen).
+- **Regel bis ein echter Tap an einem EINGESCHALTETEN Gerät `binary_sensor.*_light → on` zeigt: keine Licht-Buttons.** Toter Button widerspricht der Profi-Look-Doktrin → lieber read-only Anzeige.
 
 **🟡 Wartungsplaner-Pattern (Fälligkeit pro Gerät, Package `haier_wartung.yaml`)**
 - `input_number` Intervalle (Self-Clean 21 T, Steri-Clean 90 T) + `input_datetime` (has_date) je Gerät+Programm „zuletzt" + Template-Sensoren `*_resttage` (state=Resttage, attrs `next_due/last_run/status`).
@@ -2019,3 +2021,23 @@ Session: User-Report „Entität wird nicht mehr von hon-Integration bereitgeste
 - Auto-Erfassung „zuletzt": Automation-Trigger `state … to: iot_self_clean` / `to: iot_self_clean_56` auf `sensor.klimaanlage_<raum>_program_name` → `input_datetime.set_datetime` heute (fängt Dashboard-, App- und Fernbedienungs-Läufe).
 - Push-Erinnerung: `notify.mobile_app_samsung_galaxy_s25_ultra_diana` (Dianas S25 Ultra), täglich 10:00, condition = mind. 1 Tracker `<= 0`.
 - Deploy ohne Restart: `input_number/input_datetime/template/script/automation.reload`. Nur YAML-Mode-Dashboard-Änderung braucht `docker restart`.
+
+### 2026-06-20 — hon-Setter brauchen STRINGS (Eco-Pilot stiller Fallback), Echo=Eco, __init__-Drift erneut
+
+**🔴 ALLE hon-Parameter-Setter müssen Strings senden — ein `int` fällt STILL auf den Default zurück (kein Fehler)**
+- Symptom: Eco-Pilot „Vermeiden/Folgen" am Dashboard wirkungslos — sprang immer auf „Aus".
+- Ursache-Kette: `climate.py async_set_eco_pilot_mode` schickte `{"humanSensingStatus": value}` als **int**. `humanSensingStatus` ist ein **RANGE-Parameter** (typology `range`, min 0 / max 3). Der Range-Setter in `parameter.py` macht `int(float(value.replace(",",".")))` → bei einem `int` wirft `value.replace` `AttributeError`. `device.py update_command` fängt JEDE Exception ab und setzt **stillschweigend den Default** (`humanSensingStatus`-Default = 0 = Aus). Dem User wird KEIN Fehler angezeigt — nur falsches Verhalten.
+- **Fix:** `{"humanSensingStatus": str(value)}` → `int(float("1"))` = 1, korrekt. Alle anderen Setter in `climate.py` senden bereits Strings (`"1" if x else "0"`, `str(value)`); Eco-Pilot war der einzige int-Ausreißer.
+- **Generelle Regel:** Werte für `settings_command({...})`/Service-Parameter IMMER als String übergeben. Auch Enum-Setter (`HonParameterEnum`) vergleichen gegen `sorted([str(v)...])` → `1 in ['0','1','2']` ist False → ebenfalls stiller Default-Fallback. Bei „Schalter tut nichts, aber kein Log-Error" zuerst `docker logs | grep -i "Use Fallback"` prüfen (`update_command` loggt den Fallback als WARNING).
+- **Verifikation (token-frei):** input_select-Tap → Automation `hon.climate_set_eco_pilot_mode` → Geräte-Poll alle ~2 min → `eco_pilot_mode`-Attribut in der Recorder-DB liest den vom Gerät zurückgemeldeten `humanSensingStatus`. Live bestätigt: Tap „Folgen" → nächster Poll meldet `eco_pilot_mode=2` (mit altem Bug wäre es 0).
+
+**🟡 „Echo"-Schalter = Haiers ECO-Sparmodus (`echoStatus`), nicht „Echo"**
+- `echoStatus` ist eine API-Transliteration von „Eco" in Haiers hOn-Cloud; `switch.py` reicht das Roh-Label `name="Echo"` durch. Funktion = Energiesparmodus (sanfterer Kompressor). Getrennt von Eco-Pilot (`humanSensingStatus`, anwesenheitsabhängig) und `energySavingStatus`.
+- Logik invertiert (`climate.py:241`): Schalter AN → `echoStatus="0"`, AUS → `"1"`. Intern wieder geradegezogen (`echo_mode = echoStatus=="0"`).
+- Dashboard-Klarheit: Label „Echo"→**„Eco"** + Icon `mdi:waveform`→`mdi:leaf` (alle 5 Stellen: SZ/Flur/kombiniert). Entity-IDs (`switch.*_echo`) NICHT umbenennen.
+
+**🔴 `__init__.py`-Lineage-Drift kann RESTART-FATAL latent lauern (erneut aufgetreten 2026-06-20)**
+- On-Disk `__init__.py` war wieder die FALSCHE Lineage (pyhon/„andre": `from pyhon import Hon` + `MOBILE_ID`, das `const.py` nicht definiert) → `ImportError` → ganze hon-Integration lädt nicht → ALLE Haier-Entities weg. Lief nur, weil die korrekte Lineage noch im RAM hing (HA seit Tagen nicht neugestartet); der Restart deckte es auf.
+- **Aktive Lineage = gvigroux lokaler Connector:** Platforms erwarten `hass.data[DOMAIN][entry.unique_id]` = `HonConnection`-Objekt + `await hon.async_get_coordinator(appliance)`. Die pyhon-`__init__` legt dort einen Dict ab → inkompatibel. `__init__.py` muss `from .hon import HonConnection, get_hOn_mac` + `from .device import HonDevice` importieren.
+- **Recovery-Quelle zusätzlich zum Migration-Staging: das Daily-Backup** — `/mnt/@usb/sdc2/NAS_Daily_Backups/backup_<YYYY-MM-DD>_030001/docker/home-assistant/config/custom_components/hon/__init__.py` (3-Uhr-Snapshot, hier 503-Zeilen-Lineage-B). `diff` gegen Backup zeigt sofort, welche Datei gedriftet ist. Restore mit `\cp -f` (cp ist `-i`-aliased). Danach `check_config` + Restart + `docker logs | grep -E "MOBILE_ID|ImportError"`.
+- Faustregel: hon-Dateien NIE einzeln tauschen — `__init__.py`/`hon.py`/`device.py`/platform-Files müssen zur selben Lineage gehören. Der threadsafe-Patch (`call_soon_threadsafe`) galt nur der pyhon-MQTT-Push-Lineage; die aktive gvigroux-Lineage pollt → 0 Thread-Errors, Patch gegenstandslos.
