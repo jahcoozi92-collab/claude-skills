@@ -2077,8 +2077,24 @@ Session: User-Report „Entität wird nicht mehr von hon-Integration bereitgeste
 **🔴 Vane physisch tot lag (auch) an `windDirectionVerticalPositionSequence`, nicht nur an HW**
 - Korrektur zur 2026-06-20-„HW-Limit"-Lektion: Die vertikale Lamelle hat ZWEI Parameter — `windDirectionVertical` (Telemetrie/Anzeige) und ancillary `windDirectionVerticalPositionSequence` (enumValues `[2,4,5,6,7,8]` = der eigentliche Stell-Befehl). gvigroux setzt nur ersteres → Anzeige ändert sich, Stell-Befehl bleibt `0` → Motor bekommt kein Ziel. Andre0512/pyhon setzte ihn automatisch über sein Rules-System; gvigroux wendet Rules nicht an. (Nur vertikal hat den Sequence-Param; horizontal nicht → horizontale Lamelle ist mechanisch/manuell.)
 - **Fix in `climate.py` `async_set_wind_direction_vertical`:** `command = self._device.settings_command({'windDirectionVertical': str(value)})`, dann `command._ancillary_parameters['windDirectionVerticalPositionSequence'].value = str(value)`, dann `await command.send()`. Im Log verifiziert: `PositionSequence` geht jetzt mit Zielwert (7) statt `0` raus.
-- **Status offen:** Trotz korrektem Befehl bewegt sich die Lamelle im **Dry-Modus** physisch nicht (Gerät parkt sie dort). Kühl-Modus + laufender Lüfter ist die letzte ungetestete Variable. Patch bleibt (macht Kommando objektiv korrekter, identisch zur hOn-App, schadet nie). Geht bei hon-Update verloren → wieder anwenden.
+- **✅ STATUS BESTÄTIGT (2026-06-21):** Der Patch wirkt — vertikale Lamelle fährt im **Kühl-Modus** physisch („Perfekt jetzt geht es"). KEIN HW-Limit. Patch BEHALTEN (geht bei hon-Update verloren → wieder anwenden). Details siehe 2026-06-21-Abschluss-Lektion unten.
 - **Methodik-Lehre:** Bei „Befehl kommt an (Telemetrie ändert sich, Gerät piept), wirkt aber physisch nicht" NICHT vorschnell HW-Limit schließen — erst die ECHTE Command-Payload (`logger: custom_components.hon: debug` temporär an → `Command sent`) gegen den alten funktionierenden Fork / die App vergleichen. Oft fehlt ein abhängiger ancillary-/Sequence-Parameter, den das Rules-System des alten Forks mitsetzte.
 
 **🟡 hon-Debug-Logging temporär ein-/ausschalten ist restart-pflichtig**
 - `Command sent (send_command)` ist DEBUG; mit `logger: default: warning` unsichtbar. Für Payload-Inspektion temporär `custom_components.hon: debug` in `configuration.yaml` `logger:` + Restart; nach Test Zeile wieder entfernen + Restart (sonst Log-/Recorder-Spam).
+
+### 2026-06-21 (Abschluss) — Vane-Fix BESTÄTIGT; eigentliche Ursache war die DRY-MODUS-SPERRE
+
+**✅ Vane-PositionSequence-Patch wirkt — vertikale Lamelle fährt physisch (Kühl-Modus)**
+- User-Bestätigung „Perfekt jetzt geht es" nach Wechsel in den Kühl-Modus. Der climate.py-Patch (`windDirectionVerticalPositionSequence` = Zielposition) ist damit end-to-end verifiziert, NICHT nur am Log. Die gestrige „HW-Limit/unbestätigt"-Einordnung ist widerlegt → oben auf BESTÄTIGT korrigiert.
+
+**🔴 Die WAHRE Ursache des „bewegt sich nicht" war der Betriebsmodus, nicht die Hardware**
+- Haier-Firmware **verriegelt BEIDE Lamellen im „Dry"-(Entfeuchten-)Modus** in einer Fixposition und ignoriert Positions-Befehle physisch — obwohl Befehl, Telemetrie (`wind_direction_*` folgt) und Dashboard alle korrekt sind. Im **Kühlen-/Heizen-/Nur-Lüften-Modus** reagieren die Lamellen normal.
+- Diese Modus-Sperre maskierte sich über VIELE Testrunden als „Hardware-Limit" — alle Tests liefen versehentlich im Dry-Modus (Gerät stand auf Entfeuchten).
+- **Operative Merkregel (für User + künftige Diagnose):** Lamellen-Position nur im Kühl-/Heiz-/Lüften-Modus testen/verstellen. „Lamelle reagiert nicht" IMMER zuerst den `hvac_mode` prüfen (`climate.*` state ≠ `dry`), BEVOR Software/Hardware verdächtigt wird.
+
+**🟡 Horizontal funktioniert OHNE eigenen Fix (bestätigt)**
+- Horizontal hat KEINEN `…PositionSequence`-Parameter (nur vertikal). Der horizontale Befehl `windDirectionHorizontal` (enumValues 0,3,4,5,6,7) war immer vollständig → die horizontale Lamelle fährt bereits ohne Eingriff (User: „ja, es scheint auch zu funktionieren"). Also: für Horizontal nichts zu patchen.
+
+**🔴 Meta-Lehre: kein „HW-Limit"-Schluss, solange eine steuerbare Variable (Betriebsmodus) ungetestet ist**
+- Vorschnelle „Hardware/Firmware"-Diagnosen kosteten hier gestern eine ganze Lektion (musste korrigiert werden). Vor so einem Schluss ALLE billig steuerbaren Zustände durchspielen: Betriebsmodus (cool/heat/fan/dry), Lüfter an/aus, Gerät ein/aus. Erst wenn die Funktion in JEDEM plausiblen Zustand ausbleibt → Hardware. Dry-Modus parkt bei Haier u.a. auch Lüfterstufe/Lamelle — generell ein „Sonderzustand", der manuelle Steuerung übersteuert.
