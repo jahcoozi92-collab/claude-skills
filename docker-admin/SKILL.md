@@ -1328,3 +1328,38 @@ So fand ich `rag-mc-n8n` → `/home/Jahcoozi/rag-masterclass-deploy/` (lag NICHT
 - „RAG Masterclass Kit" — Demo-/Übungs-Baukasten. Ungenutzt: 0 Executions, leerer Chat-Verlauf, nur 2 Test-Dokumente / 9 Chunks.
 - Entfernt: 2 Container + 2 Volumes (`rag-mc-n8n-data`, `rag-mc-postgres-data`) + Netzwerk `rag-masterclass-net` + Quellordner. Backup in `/volume1/docker/_archived/rag-masterclass-deploy-removed-20260603/`.
 - Produktives n8n (5678) lief getrennt → nicht betroffen.
+
+### 2026-06-27 — Remotion-Studio Crash = Browser-Übersetzung + node_modules-Patch-Strategie
+
+**🔴 `NotFoundError: Failed to execute 'removeChild' on 'Node'` im Remotion-Studio = Browser-Auto-Übersetzung, KEIN Remotion-Bug**
+- Symptom in den Container-Logs: `An error occurred in the Studio` + `NotFoundError: ... removeChild ... not a child of this node` mit Stacktrace in `react-dom.development.js`.
+- Ursache: Chrome/Edge übersetzt die englische Studio-UI automatisch (Diana ist `de_DE`), fügt dabei Text-Nodes ein/entfernt sie → kollidiert mit Reacts Reconciler → Crash. Passiert im **gerendeten UI im Browser**, nicht in der Composition (`HelloWorld.tsx` etc. unbeteiligt).
+- **Falsche Fährte:** Downgrade auf eine ältere Remotion-Version. Bringt nichts (Server-seitig läuft v4 sauber: `Server ready`, `Built in …ms`) und holt alte Vulnerabilities/APIs zurück.
+- **Quick-Fix (browserseitig):** Übersetzen-Symbol in der Adressleiste → „Diese Seite nie übersetzen" / Inkognito / Auto-Translate für `192.168.22.90`+`localhost` aus.
+- **Dauerhafter Fix (server-seitig):** `translate="no"` am `<html>` + `<meta name="google" content="notranslate">` in die Studio-HTML-Shell injizieren. Template liegt in `node_modules/@remotion/studio-shared/dist/studio-html.js` (Generator `studioHtml`, aufgerufen via `BundlerInternals.indexHtml`). Nach Patch: Studio-Tab hart neu laden (Strg+Shift+R).
+
+**🔴 Patches an `node_modules` gehören in den Dockerfile (Build-Zeit), NICHT in den laufenden Container**
+- Bei Images, die Deps per `RUN npm install` bauen, liegt `node_modules` **im Image** — ein `docker exec ... sed -i` im laufenden Container überlebt zwar `restart`, aber **keinen Rebuild / kein recreate**.
+- Sauberes Pattern: kleines idempotentes Patch-Script ins Projekt legen, im Dockerfile nach `npm install` per `COPY` + `RUN bash patch.sh` ausführen → jeder Rebuild re-appliziert automatisch. Script bricht laut ab, wenn der erwartete Marker fehlt (fängt Upstream-Versionsänderungen ab).
+  ```dockerfile
+  RUN npm install
+  COPY patch-studio-html.sh ./
+  RUN bash patch-studio-html.sh   # idempotent, exit 1 wenn Marker fehlt
+  ```
+- Deploy danach: `docker compose build` → `docker compose up -d` (recreate). Verifikation, dass der Patch im neuen Container UND im ausgelieferten HTML steckt:
+  ```bash
+  docker exec <c> grep -n 'translate=' /app/node_modules/@remotion/studio-shared/dist/studio-html.js
+  curl -s http://localhost:<port>/ | grep -o '<html[^>]*>'
+  ```
+
+**🟡 Mount-Diagnose: liegt eine Datei im Image oder im Bind-Mount?**
+- Host-`npm ls` zeigte `(empty)` + `node_modules`-Count 0, obwohl das Studio lief → Deps stecken im Image, nicht auf dem Host.
+- Schnell-Check, was tatsächlich vom Host gemountet ist (hier nur `./src` + `./out`, der Rest im Image):
+  ```bash
+  docker inspect <c> --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}'
+  docker inspect <c> --format '{{.Config.WorkingDir}}'
+  ```
+- Merke: Was NICHT im Bind-Mount liegt, kann nur über Image-Rebuild dauerhaft geändert werden.
+
+**🟡 Auto-Mode-Classifier blockt `sed -i` auf vorbestehende `node_modules`-Dateien im Container — zu Recht**
+- Reasoning: „Irreversible Local Destruction … patch should go in the project's own source tree." Deckt sich exakt mit der Build-Zeit-Strategie oben. Nicht umgehen — stattdessen Dockerfile-Patch.
