@@ -524,3 +524,33 @@ Admin Settings → External Tools → + (Add Server)
 
 **SAFE_MODE vs Functions:**
 - `SAFE_MODE=true` deaktiviert die Ausführung von Pipe/Filter-Functions. Hier unkritisch, weil alle 4 Functions ohnehin `is_active=0` sind. Wenn Functions genutzt werden sollen → `SAFE_MODE=false`.
+
+---
+
+### 2026-06-29 — n8n-Pipe als Modell, RBAC (access_grant), Provider-Health (v0.9.6)
+
+**Function/Pipe aktivieren — `SAFE_MODE` ist der erste Blocker:**
+- `SAFE_MODE=true` (Compose) deaktiviert beim Start **ALLE** Functions/Pipes (Banner „SAFE MODE ENABLED", setzt `function.is_active=0`). Für n8n-Pipe/AutoTool zwingend `SAFE_MODE=false`. Vertretbar nur bei Single-Admin + Signup aus.
+
+**n8n-Pipe (owndev v2.0.0) als Chat-Modell anbinden — die 4 Stolpersteine:**
+1. SAFE_MODE (s.o.).
+2. Valves zeigten auf **Test-Webhook** (`/webhook-test/<id>`, feuert nur 1× pro Listen-Klick) → auf **Production** `/webhook/<path>` umstellen. Workflow muss in n8n `active` sein.
+3. Single-Pipe (keine `pipes()`-Methode) → Modell-ID = **Function-ID** (`n8n_pipeline`), Name = Function-Name. Wird in `get_function_models()` mit `owned_by:'openai'` gebaut.
+4. **KRITISCH & nicht offensichtlich:** existiert in der `model`-Tabelle eine Zeile mit derselben ID auf `is_active=0` (z.B. Altlast aus Modell-Bereinigung), wird das Pipe-Modell **unterdrückt** und taucht NICHT in `/api/models` auf — trotz aktiver Function. Fix: `UPDATE model SET is_active=1, name='…' WHERE id='<function_id>'`.
+- Contract-Check des n8n-Webhooks ist Pflicht: `responseMode=responseNode` + Respond-Node der `{output}` liefert + liest `chatInput`/`message`. Nur dann passt das Pipe-Default (`INPUT_FIELD=chatInput`, `RESPONSE_FIELD=output`). HTML- oder `lastNode`-Workflows sind NICHT chat-förmig.
+- Medifox-Chat-Endpoint: `https://n8n.forensikzentrum.com/webhook/rag-chat-api` (Guard-Key `x-rag-key` leer = offen). End-to-end via `/api/chat/completions` mit `model=n8n_pipeline` testen.
+
+**RBAC in v0.9.6 = Tabelle `access_grant` (NICHT mehr `model.access_control`!):**
+- Spalten: `resource_type, resource_id, principal_type, principal_id, permission`. `principal_type='user', principal_id='*'` = alle User (öffentlich). Kein Grant + nicht Owner/Admin = unsichtbar.
+- Gruppen: Tabelle `"group"` (kein `user_ids`-Feld!) + Mitgliedschaft in `group_member` (group_id/user_id).
+- **Achtung:** Berechtigungs-/Grant-Änderungen werden vom Auto-Mode-Klassifizierer geblockt → vorher explizit freigeben lassen.
+
+**Provider-Health & Default-Modell:**
+- `ui.default_models` in der DB-`config` **überschreibt** das ENV `DEFAULT_MODELS` (Drift). Default war `qwen2.5:7b` (nicht mal gepullt). Echten Default in der DB setzen.
+- Key-Status live prüfen (im Container, Secrets aus `/run/secrets/...`): OpenAI `/v1/models` listet auch ohne Guthaben — echter Quota-Test nur über `/v1/embeddings` oder `/v1/chat/completions` (Fehler `insufficient_quota`).
+- Claude-Modelle laufen hier über **OpenRouter** (`openrouter.anthropic/claude-*`), nicht über die native Anthropic-Function (die ist inaktiv). OpenRouter-Test-ID: `anthropic/claude-sonnet-4.6`.
+
+**Document Extraction:**
+- `content_extraction` stand bereits auf **`mistral_ocr`** (nicht Default-pypdf!) — für gescannte Pflege-Docs besser als Tika. NICHT blind auf Tika wechseln. Mistral-Key-Health separat prüfen.
+
+**num_ctx-Falle:** lokale Ollama-Modell-Cards hatten leere `params` → Default-Kontext 2048 schneidet RAG/Websuche lautlos ab. `params.num_ctx=8192` pro Modell setzen.
