@@ -8,9 +8,11 @@
 
 - **URL extern:** https://chat.forensikzentrum.com
 - **URL intern:** http://192.168.22.90:8080
-- **Version:** v0.8.12 (April 2026)
+- **Version:** v0.9.6 (Juni 2026, Image gepinnt)
 - **Datenbank:** SQLite (`/app/backend/data/webui.db`)
 - **Tools-Verzeichnis:** `/volume1/docker/open-webui/tools/`
+- **Compose (aktiv!):** `/volume1/docker/open-webui/docker-compose.yml` (NICHT die `docker-compose.production.yml` im Home-Verzeichnis)
+- **Host-Datenpfad:** `/volume1/docker/open-webui/` = `/app/backend/data` (komplettes data-dir gemountet)
 
 ---
 
@@ -485,3 +487,40 @@ Admin Settings → External Tools → + (Add Server)
   URL:  http://192.168.22.90:PORT
   Auth: None
 ```
+
+---
+
+### 2026-06-29 — Full-Config-Review: Reboot-Port-Leak, DB-Cleanup, Modernisierung (v0.9.6)
+
+**Reboot-Port-Leak (KRITISCH, wiederkehrend):**
+- Nach NAS-Reboot hingen `ollama` (`created`) und `searxng` (`exited 255`) → `Bind for 0.0.0.0:PORT failed: port is already allocated`.
+- Folge: RAG-Embeddings (bge-m3), lokale Modelle UND Websuche komplett tot — OWUI selbst war `healthy`, Fehler nur in den Backends.
+- Diagnose: `docker inspect <c> --format '{{.State.Error}}'`; `sudo ss -tlnp | grep :PORT` zeigt verwaisten `docker-proxy`.
+- Fix: verwaisten Proxy `sudo kill <pid>` + `docker start <c>`. Hält der Daemon die Allokation trotz freiem Port (überlebt `compose down/up`!) → Host-Port im Compose ummappen (searxng 8081→8087) ODER Daemon-Neustart.
+- **Wichtig:** OWUI erreicht ollama/searxng nur über das Docker-Netz (`ollama:11434`, `searxng:8080`), NICHT über den Host-Port → Host-Port-Remap bricht die Funktion nicht.
+
+**DB-Bloat-Quelle = Chat-Verlauf mit Inline-Bildern:**
+- `webui.db` war 198 MB; `dbstat` zeigte: `chat` 76 MB + `chat_message` 38 MB (base64-DALL-E-Bilder inline), NICHT `model` (473 Zeilen = nur 0,2 MB, davon 19 aktiv → UI bleibt sauber, kein Cleanup nötig).
+- VACUUM (Container stoppen!) → 198 → 122 MB. WAL vorher checkpointen: `PRAGMA wal_checkpoint(TRUNCATE)`.
+- Tabellen-Größen messen: `SELECT name, SUM(pgsize) FROM dbstat GROUP BY name ORDER BY 2 DESC`.
+
+**Backup-Müll im Live-data-dir:**
+- `/app/backend/data/backups/` hatte 2,4 GB alte DB-Snapshots + 3 alte `webui.db.backup.*/.bak` (387 MB) im Root. Insgesamt ~2,8 GB. Vor dem Löschen 1 frische Kopie AUSSERHALB des data-dir ablegen (sonst scannt OWUI sie wieder mit).
+
+**Tote OpenAI-Connections entfernen (Index-Reindex beachten!):**
+- `zai` (open.bigmodel.cn — geht aus DE nicht) und `kimi-local` (8011, Container down) entfernt.
+- Beim Löschen aus `config.data.openai`: `api_base_urls`, `api_keys` UND `api_configs` (dict mit String-Keys) parallel neu aufbauen und durchnummerieren — sonst zeigen die `api_configs`-Indizes auf falsche URLs. Script: scratchpad `owui_dbfix.py`-Muster.
+
+**Modernisierung Juni 2026 (Keys können es):**
+- OpenAI-Key: bis `gpt-5.4` (März 2026). Anthropic-Key: `claude-opus-4-8`, `claude-sonnet-4-6`, `claude-haiku-4-5`, `claude-fable-5`.
+- Verfügbare Modelle prüfen: `curl -s https://api.openai.com/v1/models -H "Authorization: Bearer $(cat /run/secrets/openai_api_key)"` (im Container).
+- Compose angepasst: `DEFAULT_MODELS` gpt-4.1→`gpt-5`, `TASK_MODEL_EXTERNAL` gpt-4.1-mini→`gpt-5-nano`, `TASK_MODEL` qwen2.5:14b→`qwen3:4b`, `ENABLE_FOLLOW_UP_GENERATION=true`.
+- **Image pinnen:** `:latest`→`:v0.9.6` (kein Auto-Pull-Risiko).
+- `DEFAULT_MODELS` muss auf ein **aktives** Modell zeigen (sonst keine Vorauswahl).
+
+**ENV vs DB — Drift-Falle:**
+- Nach dem ersten Boot gewinnt die DB-Config, ENV-Werte werden ignoriert → ENV kann irreführend sein (`WEB_SEARCH_RESULT_COUNT=8` in ENV, aber DB=3 aktiv). Echte Werte immer in der `config`-Tabelle prüfen, nicht im `env`.
+- Veraltete Leftover-ENV entfernt: `USER_AGENT=OpenWebUI/0.8.2`. `SEARXNG_QUERY_URL` braucht `&format=json`.
+
+**SAFE_MODE vs Functions:**
+- `SAFE_MODE=true` deaktiviert die Ausführung von Pipe/Filter-Functions. Hier unkritisch, weil alle 4 Functions ohnehin `is_active=0` sind. Wenn Functions genutzt werden sollen → `SAFE_MODE=false`.
