@@ -2144,3 +2144,29 @@ Session: User-Report „Entität wird nicht mehr von hon-Integration bereitgeste
 - **„Sind Dashboards überflüssig?"**: `navigation_path`-Link-Graph (welche `/lovelace-X` werden angesteuert → versteckte erreichbar?) + Sidebar-Sichtbarkeit + Views/Größe + nicht-registrierte Dateien (nur in Kommentaren erwähnt = Waise). Niemals funktionierende Dashboards eigenmächtig „überflüssig" nennen — Geräte-offline (Auto) ist eine User-Entscheidung, kein Müll.
 
 **🔵 `cp` ist auf dem NAS `-i`-aliased (Backups vor `.storage`/Dashboard-Edits)** → `\cp -f` nutzen; Archivieren statt löschen nach `config/_attic/`. YAML-Mode-Dashboards brauchen `docker restart homeassistant`, nicht nur Refresh.
+
+### 2026-06-29 — Gruppen-Cover „überall raus": Restart + 3-Store-Waisen-Cleanup, expose_entity-Persistenz-Falle
+
+Session: virtuelle `cover:`-Gruppen (`cover.rollos_alle/schlafzimmer/gastezimmer`, `platform: group`) komplett aus dem Rollo-Package entfernen + Automationen auf die 5 echten Rollos umstellen.
+
+**🔴 `cover:`-Gruppen-Plattform entfernen braucht RESTART (nicht Reload) — und hinterlässt Waisen in DREI Stores**
+- Group-Cover sind eine YAML-Plattform-Integration. `automation/template/input_*.reload` greift NICHT auf die `cover:`-Plattform → die Gruppen-Entities verschwinden erst nach `docker restart homeassistant`.
+- Nach dem Restart sind sie NICHT weg, sondern `state: unavailable` + `attributes.restored: true` → **Registry-Waisen** (`core.entity_registry` hält den Eintrag wegen `unique_id`, `platform: group`, `config_entry_id: None`). REST `/api/states/<e>` liefert dann noch HTTP 200 (nicht 404!).
+- Für echtes „überall raus" müssen DREI Stores mit: (1) `core.entity_registry`, (2) `homeassistant.exposed_entities` (Voice/conversation — sonst Dangling-Exposure), (3) `core.restore_state` (self-purgt, unkritisch).
+- **Sauberster Weg ohne Stop für die Registry:** WebSocket `config/entity_registry/remove` je Entity — kein Re-Create, weil kein YAML mehr existiert. Danach liefert REST 404. (WS-Auth-Pattern siehe oben.)
+- Verifikations-Reihenfolge: REST 404 + `core.entity_registry` ohne Eintrag + `exposed_entities` ohne Key.
+
+**🔴 `homeassistant/expose_entity` `should_expose:false` persistiert NICHT zuverlässig auf Disk**
+- WS-Command kam mit `success:true` zurück, aber `homeassistant.exposed_entities` auf Disk zeigte weiter `should_expose: True` (vermutlich `.storage`-Write-Debounce ODER weil der Registry-Eintrag direkt danach schon entfernt war).
+- Folge harmlos (Voice kann eine 404-Entity nicht ansprechen), aber für sauberes „raus": **definitiv via `docker stop homeassistant` → `exposed_entities`-JSON editieren (Key löschen) → `docker start`** (Live-Edit überschreibt HA). Backup `\cp -f` vorher.
+- `core.restore_state` ist root-owned → der Bash-User (uid 1000) bekommt beim Schreiben `PermissionError [Errno 13]`. Kein Drama: ohne Registry-Eintrag + ohne `cover:`-Plattform wird daraus nichts restored, der Eintrag purgt sich selbst.
+
+**🟡 Gruppen-Cover-Refactor: Service-Targets → echte Listen, Positions-Templates → Inline-Durchschnitt**
+- Service-Calls auf eine Gruppe == auf eine Liste: `target: { entity_id: cover.rollos_alle }` → `target: { entity_id: [cover.schlafzimmer_..._links, ..._rechts, cover.gastezimmer_..._links, ..._rechts, cover.badezimmer_badezimmer] }`. Gilt für `set_cover_position`/`open_cover`/`close_cover`.
+- Die `current_position` einer Group-Cover ist der **Durchschnitt** der Mitglieder. Lese-Templates 1:1 ersetzen: `state_attr('cover.rollos_schlafzimmer','current_position')` → `((state_attr('cover.schlafzimmer_..._links','current_position')|int(0) + state_attr('cover.schlafzimmer_..._rechts','current_position')|int(0)) / 2)`. Erhält die „nur weiter schließen, nie öffnen"-Guards exakt.
+- State-Trigger auf `attribute: current_position` der Gruppe → Liste der echten Cover (Trigger feuert bei jeder Mitglieds-Änderung).
+- `check_config` validiert das Package, fängt aber keine logischen Cover-Listen-Fehler — vorher `python3 -c "import yaml; yaml.safe_load(...)"` (Package hat hier kein `!secret`/`!include`).
+
+**🔵 `~/.config/homeassistant/env` ist nicht blind `source`-bar**
+- Datei hatte führende Leerzeichen vor `HA_URL=`/`HA_LONG_LIVED_TOKEN=` UND eine Notiz-Zeile (`dann ! chmod …`) → `source` scheitert/exit≠0. Robust parsen statt sourcen:
+  `TOK=$(grep -oE 'HA_LONG_LIVED_TOKEN=[^ ]+' ~/.config/homeassistant/env | head -1 | cut -d= -f2-)`. `~/.ha_token` ist hier KEIN shell-env-Format. Für reine Lese-/Service-REST-Calls genügt der Token aus dieser einen dokumentierten Quelle (kein Multi-Source-Credential-Scan).
