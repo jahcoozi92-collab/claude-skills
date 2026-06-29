@@ -2219,3 +2219,18 @@ User-Wunsch: „Verstelle ICH ein Rollo, soll der Hitzeschutz nicht gleich wiede
 **🔵 Automation-`entity_id` ≠ `id`** — die `entity_id` wird aus dem **`alias`** (slugified) gebildet, nicht aus dem `id:`-Feld. `id: rollos_manuell_erkennen` + `alias: "Rollos – Manuelle Bedienung erkennen (Automatik pausieren)"` → `automation.rollos_manuelle_bedienung_erkennen_automatik_pausieren`. Beim State-Lookup nach Alias-Slug suchen oder `last_triggered`-Attribut prüfen, nicht nach der id raten.
 
 **🔵 Dashboard-Status für aktive Pausen** — mushroom-template-card: `primary`/`secondary` zählen `['timer...'] | select('is_state','active') | list`, `tap_action: perform-action: timer.cancel` mit allen Raum-Timern als `target.entity_id` (interaktiv → mushroom-template, nicht button-card v6).
+
+### 2026-06-29 — Zwei Folgefehler der Rollo-Automatik: unzuverlässiger Philips-screen-Sensor + Manual-Pause muss AUCH Nacht/Morgen gaten
+
+User-Report kurz nach Deploy: „Ambilight ging an obwohl TV lief" + „manuell geschlossene Rollos fuhren wieder hoch". Beide via Recorder-History (`/api/history/period/<start>?filter_entity_id=…&minimal_response`) diagnostiziert, NICHT aus dem entity-gefilterten Logbuch (`/api/logbook/<start>?entity=…` lieferte hier leere/lückenhafte Treffer — unzuverlässig; Voll-Logbuch + `last_changed`/`last_triggered` + Recorder-History sind verlässlich).
+
+**🔴 `binary_sensor.55oled855_12_screen` (Philips) meldet `off`, obwohl der TV läuft → als „TV aus"-Guard untauglich**
+- Recorder-Beweis: gleichzeitig `binary_sensor.._screen = off` ABER `media_player.55oled855_12_3 = on`, `_4 = playing`, `remote.. = on`. Der screen-Sensor spiegelt nicht zuverlässig Power/Nutzung (Cast/Bildschirm-Aus-Modi). Eine Ambilight-als-Raumlicht-Automatik, die nur `_screen` prüfte, schaltete bei laufendem TV ein.
+- **Zuverlässiges TV-Power-Signal: `media_player.55oled855_12_3`** — über 14 h NUR `off`/`on` (sauberes Power-Flag, Cast = `on`). `_4` = Cast-Stream (playing/paused/buffering/idle/off). `_2`/`remote.._12` ebenfalls off/on.
+- **Regel:** „Läuft der Philips-TV?" über `media_player.*_3` (off/on) gaten, NICHT über `binary_sensor.*_screen`. Trigger `screen→off/on` analog auf `media_player._3→off/on`. Vor Verdrahtung eines „TV aus"-Guards per Recorder-History prüfen, welches Entity das Power-Flag verlässlich trägt (über Stunden die vorkommenden States via `Counter` zählen).
+
+**🔴 Manual-Override-Pause muss AUCH die täglichen Rhythmus-Automatiken (Nacht/Morgen/Dämmerung) gaten — nicht nur die reaktiven**
+- Designfehler der ersten Umsetzung: nur sonnen-/temperaturgetriebene Automatiken bekamen den `timer …, state: idle`-Guard. Nacht (#3), Morgen (#4), Dämmerungs-Absenkung (#6) liefen ungated → die **08:00-Morgen-Automatik öffnete das um 07:04 manuell geschlossene Dachfenster wieder**, obwohl der Raum-Timer aktiv war.
+- User-Erwartung „was ICH einstelle bleibt": die Pause muss ALLE automatischen Bewegungen des Raums aussetzen, auch den Tagesrhythmus. → `timer.rollo_manuell_<raum>` `idle`-Bedingung zusätzlich in #3/#4/#6 (Bulk-Open #4 via dynamischer Target-Liste pro Raum, Nacht-#3 pro Raum-`if`, #6 als Automations-`condition`).
+- NUR ungated bleiben: die Erkennungs-Automatik selbst + explizite User-Aktionen (Sprach-/KI-Skripte). Nach Timer-Ablauf greift der nächste reguläre Trigger wieder.
+- **Lehre:** Bei „manuell hat Vorrang" KONSEQUENT jede Automatik prüfen, die das Gerät bewegt — eine vergessene (hier die zeitgetriggerte Morgen-Automatik) hebelt das ganze Override-Konzept aus. `restore: true`-Timer überstehen den Restart und schützen die Handeinstellung weiter.
