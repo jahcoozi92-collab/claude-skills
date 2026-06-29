@@ -554,3 +554,37 @@ Admin Settings → External Tools → + (Add Server)
 - `content_extraction` stand bereits auf **`mistral_ocr`** (nicht Default-pypdf!) — für gescannte Pflege-Docs besser als Tika. NICHT blind auf Tika wechseln. Mistral-Key-Health separat prüfen.
 
 **num_ctx-Falle:** lokale Ollama-Modell-Cards hatten leere `params` → Default-Kontext 2048 schneidet RAG/Websuche lautlos ab. `params.num_ctx=8192` pro Modell setzen.
+
+---
+
+### 2026-06-29 — STT/TTS komplett lokal (speaches :8007) + RBAC-Pending (v0.9.6)
+
+**`speaches`-Server auf :8007 ist OpenAI-kompatibel für BEIDES (STT *und* TTS):**
+- Ein einziger Base-URL deckt alles: `http://192.168.22.90:8007/v1` (von OWUI-Container aus erreichbar via Host-IP — getestet, NICHT über Docker-Netz nötig).
+- STT: `POST /v1/audio/transcriptions` (Modell `Systran/faster-whisper-large-v3`, geladen). TTS: `POST /v1/audio/speech` (OpenAI-Schema `{model,input,voice,response_format}`).
+- Modelle on-demand laden: `POST /v1/models/{model_id}` — **Slash im model_id URL-encoden** (`%2F`). Liste: `GET /v1/registry?task=text-to-speech` (146 TTS-Einträge), geladene Stimmen: `GET /v1/audio/voices`.
+- **Deutsche TTS = Piper**, nicht Kokoro (Kokoro kann KEIN Deutsch — nur en/es/fr/it/pt/ja/zh/hi). Installiert: `speaches-ai/piper-de_DE-thorsten-medium` → Stimme `thorsten`. Weitere DE: thorsten-high, `ufozone/piper-de_DE-jarvis-high`, eva_k, kerstin, ramona.
+- `openapi-speechreader` :8006 hat zwar exzellente Edge-TTS-DE-Stimmen (Katja/Conrad…), ist aber NICHT OpenAI-kompatibel (`/api/v2/...`, kein `/audio/speech`) → von OWUIs `openai`-Engine nicht direkt nutzbar.
+
+**OWUI-Audio-Config (DB `config.data.audio`) für lokal:**
+```
+stt: engine='openai', model='Systran/faster-whisper-large-v3',
+     openai.api_base_url='http://192.168.22.90:8007/v1', openai.api_key='local'
+tts: engine='openai', model='speaches-ai/piper-de_DE-thorsten-medium', voice='thorsten',
+     openai.api_base_url='http://192.168.22.90:8007/v1', openai.api_key='local'
+```
+- OWUI hängt bei `openai`-Engine selbst `/audio/transcriptions` bzw. `/audio/speech` an die Base-URL an → Base muss auf `…/v1` enden.
+- **Klartext-OpenAI-Key lag in `audio.stt/tts.openai.api_key`** (DB) — beim Umstieg durch `'local'` ersetzen.
+- End-to-End-Test durch OWUI: API-Key aus Tabelle `api_key` holen, `POST /api/v1/audio/speech` (TTS) + `POST /api/v1/audio/transcriptions` (STT, multipart `file=@…;type=audio/mpeg`).
+
+**DB-Edit-Race (KRITISCH, kostet sonst Stunden):**
+- `webui.db` editieren während der Container LÄUFT → OWUI flusht beim Neustart seine In-Memory-`PersistentConfig` ZURÜCK über den Edit → Änderung weg.
+- Richtiger Ablauf IMMER: `docker stop open-webui` → `PRAGMA wal_checkpoint(TRUNCATE)` + Edit der Host-DB (`/volume1/docker/open-webui/webui.db`) → `docker start`. Host-DB ist chmod 777, direkt mit Host-`python3` editierbar.
+
+**Heredoc-Falle in dieser Umgebung:**
+- `docker exec open-webui python3 - <<'EOF'` schluckt den **stdout** (kein Output, obwohl Script läuft). Für Diagnose `docker exec open-webui python3 -c "…"` nutzen; für Host-Edits `python3 - <<PY` (Host, nicht via docker exec) funktioniert.
+
+**RBAC-Pending — exakter Key:**
+- Pending-Freigabe = `ui.enable_signup=true` + **`ui.default_user_role='pending'`** (NICHT `user.default_role` — das ist leer/irreführend). Neue Signups landen in Rolle `pending`, sehen nichts bis Admin sie auf `user` hebt.
+- Pending-User-Begrüßung: `ui.pending_user_overlay_title` / `ui.pending_user_overlay_content` — standardmäßig LEER → neu Registrierte sehen blanken Screen. Mit Text füllen.
+- Modell-Sichtbarkeit = Tabelle `access_grant` (`model/user/*/read` = öffentlich); hier bewusst für alle gelassen (6 lokal + 14 paid Cloud). Grant-Änderungen brauchen explizite Freigabe (Auto-Mode blockt).
