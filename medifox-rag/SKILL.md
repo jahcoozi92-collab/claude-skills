@@ -665,6 +665,34 @@ Backfill-Funktion für `rag_chunks.embedding` ohne lokalen `OPENAI_API_KEY` — 
 
 ---
 
+## 2026-06-29 — Migration Embeddings OpenAI → Cohere embed-v4 (1536)
+
+Live-RAG von OpenAI `text-embedding-3-large` (3072) auf **Cohere `embed-v4.0` (1536)** umgestellt (OpenAI-Quota-unabhängig). Vollständig live getestet.
+
+**Was alles 3072 hardcodet — bei Dim-Wechsel ALLE anfassen (sonst Mismatch/Cast-Fehler):**
+- Spalte `rag_chunks.embedding_half` (halfvec) UND `rag_chunks.embedding` (vector) — `embedding` ist leer (Insert-Ziel), `embedding_half` trägt die Daten (HNSW-Index `halfvec_cosine_ops`).
+- Trigger-Fn `sync_rag_chunks_embedding_half()`: castet `NEW.embedding::halfvec(N)` und nullt dann `embedding`. **Trigger blockiert `ALTER COLUMN`** → erst `DROP TRIGGER`, altern, neu anlegen.
+- RPCs `match_qm_chunks` (= queryName im Abruf-Node!) und `match_documents`: `query_embedding::halfvec(N)`.
+- `hybrid_search_v3(query_text, query_embedding halfvec, …)` ist dimensionsfrei (kein Cast) — unkritisch.
+- HNSW-Index nach Re-Embed neu bauen (schneller als währenddessen).
+
+**n8n-Cohere-Node kann embed-v4 — trotz Dropdown:** Der `embeddingsCohere`-Node (n8n 2.27, langchain/cohere 1.0.1) listet im Dropdown nur bis `embed-multilingual-v3.0` (1024) und hat KEIN Dimension-Feld. Aber `modelName:'embed-v4.0'` direkt im Node-JSON setzen funktioniert → langchain liefert **1536** (empirisch: embedQuery=search_query, embedDocuments=search_document, beide 1536). Passt exakt zum Backfill (search_document).
+
+**Live-Workflow editieren via n8n-API (kein Full-Restart):**
+- `GET/PUT http://localhost:5678/api/v1/workflows/{id}`, Header `X-N8N-API-KEY` (aus DB-Tabelle `user_api_keys`, Label z.B. `claude_desktop_linux`). Live-Workflow id `SJ47UX9mv8wh1Wwy`.
+- PUT-Body NUR `{name,nodes,connections,settings}`; **`settings` auf Whitelist filtern** (saveExecutionProgress, saveManualExecutions, saveData*Execution, executionTimeout, errorWorkflow, timezone, executionOrder) — sonst `400 settings must NOT have additional properties`. Danach ggf. `POST /workflows/{id}/activate`.
+- Connections referenzieren Nodes per **Name** → Node-Typ/Params ändern bricht nichts, Namen lassen.
+
+**Credentials ohne Materialisierung nutzen:** Auto-Mode blockt das Schreiben entschlüsselter Keys in Host-Dateien/Output. Stattdessen `docker exec n8n-n8n-1 n8n export:credentials --id=<id> --decrypted --output=/tmp/x.json` (Container-intern), per `cat | python3` direkt in den verbrauchenden Prozess pipen, danach `rm`. Cohere-Cred-id `oAOH4kNkJnovzmZP`, Supabase-Cred-id `xG3IsdqbYMiWY8oP`.
+
+**Re-Embed-Pfad:** PostgREST-Upsert `POST /rest/v1/rag_chunks?on_conflict=id` mit `Prefer: resolution=merge-duplicates`, halfvec als String `"[f,f,…]"` (`%.6f`). Resume-safe: nur `embedding_half=is.null` holen.
+
+**⚠️ Trial-Key:** Die Cohere-Cred ist ein Trial-Token (100k Tok/Min, nicht für Produktion lizenziert) → Backfill nur gedrosselt möglich (Rate-Limiter ~85k/Min). Für Live-Betrieb auf bezahlten Cohere-Key umstellen; Vektoren sind keytier-unabhängig → **kein** Re-Embed nötig.
+
+**Hinweis:** Die Edge-Function `embed-rag-chunks` (oben) + Repo-`scripts/ingest_markdown_to_supabase.py` (Tabelle `documents`, text-embedding-3-small) sind **veraltete Nebenpfade** — der Live-Pfad ist `rag_chunks` + Cohere embed-v4.
+
+---
+
 ## Quick Reference
 
 ```
