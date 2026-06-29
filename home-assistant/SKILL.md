@@ -2196,3 +2196,26 @@ Session: das verwaiste „Dachfenster (Solar)" (`cover.all_house_rollladen`, Som
 
 **🔵 Verwaistes, bereits gepairtes Gerät finden**
 - `/api/states` nach `cover.` filtern + `grep -rln "<entity_id>" config/ --include=*.yaml` (ohne `.bak`) → zeigt sofort, ob ein in der Integration vorhandenes Gerät nirgends in der Config eingebunden ist. Device-Bereich/Modell/Hersteller über `core.device_registry` (hier: Somfy, Modell „Shutter", Bereich „All House" = generisch, keine Raum-Fassade → in die ALLGEMEINE Sonnen-/Nacht-/Morgen-Logik, nicht in fassaden-spezifische).
+
+### 2026-06-29 — Manuelle Übersteuerung von Beschattungs-Automatik (context.user_id + Raum-Timer)
+
+User-Wunsch: „Verstelle ICH ein Rollo, soll der Hitzeschutz nicht gleich wieder verstellen — im Alltag aber schon greifen." Klassisches Manual-Override-mit-Timeout in `packages/rollos.yaml`.
+
+**🔴 Hand- vs. Automatik-Bedienung via `context.user_id` unterscheiden**
+- Bewegt ein MENSCH ein Cover (Dashboard/App/Sprach-Assist), trägt der State-Wechsel `trigger.to_state.context.user_id` (echter Benutzer). Eine **Automatik** bewegt mit `context.user_id = None`.
+- Erkennungs-Automatik triggert auf alle Cover-State-Wechsel, Bedingung `{{ trigger.to_state.context.user_id is not none }}` → nur dann Pause starten. Kein Self-Trigger-Loop, weil die eigenen Automatik-Moves user_id None haben.
+- **REST-Service-Calls mit Long-Lived-Token tragen die user_id des Token-Besitzers** → eignen sich zum End-to-End-Test der Erkennung ohne UI (Cover via REST bewegen → Timer muss `active` werden).
+- **Grenze:** physische Somfy-RTS/io-Fernbedienung kommt nur über Overkiz-Polling rein → `user_id = None`, NICHT von der Automatik unterscheidbar. Für UI/App/Sprache deckt der user_id-Weg alles ab; physische Fernbedienung bräuchte eine zweite Heuristik (kommandierte vs. tatsächliche Position vergleichen).
+
+**🔴 Pause-Mechanik: `timer` pro Raum (nicht pro Cover) + `restore: true`**
+- Pro Raum ein `timer.rollo_manuell_<raum>`; Handbedienung startet ihn via `timer.start` mit `duration` aus einem `input_number`-Slider (Minuten → `'%02d:%02d:00' % (m//60, m%60)`).
+- Reaktive Beschattungs-Automatiken bekommen pro Raum die Zusatzbedingung `condition: state, entity_id: timer.rollo_manuell_<raum>, state: idle` (idle = nicht laufend). Betrifft hier: Sonnenschutz-absenken, Sonnenschutz-Ende, West-Abendsonne, Klimahilfe, Bad-folgt-SZ.
+- **Bewusst NICHT gesperrt:** Nacht-/Morgen-Automatik (Tagesrhythmus/Reset) und explizite Sprach-/KI-Aktionen (= der User handelt ja selbst). So „funktioniert es im Alltag" weiter, die Pause endet spätestens beim nächsten Phasenwechsel.
+- `timer`-Domain ist in Packages valide; `restore: true` lässt eine laufende Pause den Neustart überleben.
+
+**🟡 Bulk-Öffnen pro Raum sperrbar via dynamischer Target-Liste**
+- Eine „alle wieder öffnen"-Automatik, die sonst alle Cover in EINEM `set_cover_position` anfasst, respektiert die Pause über eine getemplatete Liste: `{{ (['cover.a','cover.b'] if is_state('timer.rollo_manuell_x','idle') else []) + ... }}`, dann `if liste|count > 0` → `set_cover_position target: "{{ liste }}"`. So bleiben pausierte Räume außen vor, ohne die Automatik in Pro-Raum-Blöcke zu zerlegen.
+
+**🔵 Automation-`entity_id` ≠ `id`** — die `entity_id` wird aus dem **`alias`** (slugified) gebildet, nicht aus dem `id:`-Feld. `id: rollos_manuell_erkennen` + `alias: "Rollos – Manuelle Bedienung erkennen (Automatik pausieren)"` → `automation.rollos_manuelle_bedienung_erkennen_automatik_pausieren`. Beim State-Lookup nach Alias-Slug suchen oder `last_triggered`-Attribut prüfen, nicht nach der id raten.
+
+**🔵 Dashboard-Status für aktive Pausen** — mushroom-template-card: `primary`/`secondary` zählen `['timer...'] | select('is_state','active') | list`, `tap_action: perform-action: timer.cancel` mit allen Raum-Timern als `target.entity_id` (interaktiv → mushroom-template, nicht button-card v6).
