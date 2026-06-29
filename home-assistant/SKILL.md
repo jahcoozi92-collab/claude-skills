@@ -2234,3 +2234,31 @@ User-Report kurz nach Deploy: „Ambilight ging an obwohl TV lief" + „manuell 
 - User-Erwartung „was ICH einstelle bleibt": die Pause muss ALLE automatischen Bewegungen des Raums aussetzen, auch den Tagesrhythmus. → `timer.rollo_manuell_<raum>` `idle`-Bedingung zusätzlich in #3/#4/#6 (Bulk-Open #4 via dynamischer Target-Liste pro Raum, Nacht-#3 pro Raum-`if`, #6 als Automations-`condition`).
 - NUR ungated bleiben: die Erkennungs-Automatik selbst + explizite User-Aktionen (Sprach-/KI-Skripte). Nach Timer-Ablauf greift der nächste reguläre Trigger wieder.
 - **Lehre:** Bei „manuell hat Vorrang" KONSEQUENT jede Automatik prüfen, die das Gerät bewegt — eine vergessene (hier die zeitgetriggerte Morgen-Automatik) hebelt das ganze Override-Konzept aus. `restore: true`-Timer überstehen den Restart und schützen die Handeinstellung weiter.
+
+### 2026-06-29 — Helfer-first-Steuerung desynct still: Resync-Automatik + Dashboard muss Geräte-Attribut lesen (Eco-Pilot „Luftstrom vermeiden")
+
+Session: User-Report „Luftstrom-Vermeiden-Funktion (Eco-Pilot) geht bei beiden Klimas nicht". Befund: der Befehlspfad funktioniert — die Helfer-first-Architektur hatte ein Desync-Loch.
+
+**🔴 Helfer-first-Steuerung LÜGT am Dashboard, sobald das Gerät den Wert verliert**
+- Symptom: `input_select.haier_<raum>_eco_pilot` stand auf „Vermeiden"/„Folgen", die Dashboard-Buttons leuchteten entsprechend — aber BEIDE Geräte meldeten real `eco_pilot_mode = 0` (Aus). Die Klima vermied also gar nichts, obwohl das Dashboard „Vermeiden" anzeigte.
+- Ursache: Die Apply-Automatik (`haier_eco_pilot_anwenden`) triggert NUR auf `state`-Wechsel des Helfers. Verliert das Gerät den Wert (Aus→Ein über Nacht, Reconnect, Cloud-Reset), bleibt der Helfer auf „Vermeiden" stehen, aber NICHTS sendet den Wert erneut → Helfer und Gerät driften auseinander, dauerhaft.
+- Generell: **Jede `input_*`-Helfer-first-Steuerung, die ein Gerät spiegelt, das seinen Zustand verlieren kann, braucht (a) eine Resync-Automatik und (b) ein Dashboard, das die GROUND TRUTH des Geräts hervorhebt — nicht den Helfer.** Sonst „unsichtbar kaputt": UI grün, Gerät tot.
+
+**🔴 Befehlspfad war NICHT der Fehler — erst verifizieren, bevor man am Setter dreht**
+- Der `str()`-Fix in `climate.py` (`humanSensingStatus` ist Range-Param, int → stiller Default-Fallback, s. 2026-06-20-Lektion) war intakt. Live-Test bewies: Befehl geht mit `humanSensingStatus: 1` raus, Cloud quittiert `resultCode: 0`, Gerät meldet nach Poll `eco_pilot_mode=1` zurück — auf beiden Geräten. Auch eine Temperaturänderung überschreibt den Wert NICHT (kein Full-Payload-Wipe).
+- **Token-freier Live-Test (kein Restart):** Debug-Logger per REST an (`POST /api/services/logger/set_level {"custom_components.hon":"debug"}`) → Befehl auslösen → `docker logs homeassistant --since 25s | grep -iE "humanSensing|Command sent|resultCode"` zeigt die echte Payload + Cloud-Antwort → danach Logger auf `warning` zurück. Anschließend `eco_pilot_mode`-Attribut über mehrere Polls (~40s Takt) lesen, bis das Gerät den neuen Wert zurückmeldet.
+- Lehre: Bei „Funktion X geht nicht" ERST den Befehlspfad messen (Payload + resultCode + Geräte-Rückmeldung), bevor man Setter/Code verdächtigt. Hier lag der Fehler in der Steuerungs-Architektur (Desync), nicht im Setter.
+
+**🔴 Fix Teil 1 — Resync-Automatik (Desync-Schutz)**
+- Re-applied den Helferwert automatisch, wenn ein Gerät wieder an/online ist oder vom Helfer abweicht. Trigger: `homeassistant`-`start` + `state`-Wechsel der `climate.*`-Entities (fängt Aus→Ein/Reconnect, da `state`-Trigger nur auf Zustand, nicht Attribute feuert) + `time_pattern` `minutes: "/30"` als Sicherheitsnetz.
+- Pro Raum `repeat.for_each` + `if`: nur senden, wenn Gerät an (`state not in ['off','unavailable','unknown','none']`) UND Wunsch ≠ „Aus" (`want > 0`) UND `want != have` (echte Abweichung). So kein Motor-/Command-Spam und kein Fighten mit App-Eingaben. `mode: queued`. Mapping `{'Aus':0,'Vermeiden':1,'Folgen':2}`, `have = state_attr(climate, 'eco_pilot_mode')|int(-1)`.
+
+**🔴 Fix Teil 2 — Dashboard-Highlight auf Geräte-Attribut statt Helfer**
+- Vorher: `icon_color: {{ 'purple' if is_state('input_select.haier_<raum>_eco_pilot','Vermeiden') else 'disabled' }}` → spiegelt den Helfer, lügt bei Desync.
+- Nachher: `{{ 'purple' if (state_attr('climate.klimaanlage_<raum>_klimaanlage','eco_pilot_mode') | int(-1)) == 1 else 'disabled' }}` (0=Aus, 1=Vermeiden, 2=Folgen). Der **Tap** setzt weiter den Helfer (Apply-Automatik + Resync übernehmen) — nur die Farbe liest jetzt die Geräte-Wahrheit. Damit kann die Anzeige selbst bei kurzem Drift nie wieder lügen.
+- Generalisiert die „Mehrquellen-State-Check"-Regel: Statusanzeigen IMMER an die verlässlichste Quelle (device-reported Attribut) hängen, Helfer nur als Sollwert-Eingabe behandeln.
+
+**🟡 Deploy-Mechanik (bestätigt)**
+- Package-Automatik (`packages/haier_wartung.yaml`): `python3 -c "import yaml; yaml.safe_load(...)"` (kein `!secret`/`!include` im Package) + `check_config` via REST → `automation.reload` reicht, KEIN Restart.
+- YAML-Mode-Dashboard (`dashboards/haier_klima.yaml`, `lovelace-haier`): braucht `docker restart homeassistant`. Nach Restart Resync-Automatik feuerte am `homeassistant`-`start`-Trigger und beide Geräte standen konsistent auf `eco_pilot_mode=1`.
+- Backups vor Edit mit `\cp -f` (cp ist `-i`-aliased). Automation-`entity_id` aus dem `alias`-Slug: `automation.haier_eco_pilot_nachfuhren_desync_schutz`.
