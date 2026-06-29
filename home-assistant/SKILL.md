@@ -2170,3 +2170,29 @@ Session: virtuelle `cover:`-Gruppen (`cover.rollos_alle/schlafzimmer/gastezimmer
 **🔵 `~/.config/homeassistant/env` ist nicht blind `source`-bar**
 - Datei hatte führende Leerzeichen vor `HA_URL=`/`HA_LONG_LIVED_TOKEN=` UND eine Notiz-Zeile (`dann ! chmod …`) → `source` scheitert/exit≠0. Robust parsen statt sourcen:
   `TOK=$(grep -oE 'HA_LONG_LIVED_TOKEN=[^ ]+' ~/.config/homeassistant/env | head -1 | cut -d= -f2-)`. `~/.ha_token` ist hier KEIN shell-env-Format. Für reine Lese-/Service-REST-Calls genügt der Token aus dieser einen dokumentierten Quelle (kein Multi-Source-Credential-Scan).
+
+### 2026-06-29 — Positionsloser Somfy-io-Cover (Solar-Dachfenster): kein State-Feedback → Merker-Idempotenz
+
+Session: das verwaiste „Dachfenster (Solar)" (`cover.all_house_rollladen`, Somfy-Solar-Rollladen via Overkiz, Bereich „All House") in die bestehende Rollo-Automatik (`packages/rollos.yaml` + `dashboards/rollos.yaml`) integriert.
+
+**🔴 Manche Overkiz/Somfy-io-Cover melden KEINEN stabilen Endzustand — `state` bleibt dauerhaft `unknown`**
+- Das Gerät führt Befehle physisch aus, meldet aber keine Position/keinen Ruhe-State zurück. Beweis im **Logbuch** (`/api/logbook/<start>?entity=cover.X`): nach `open_cover`/`close_cover` erscheint ~2 s lang `opening`/`closing`, dann zurück auf `unknown`.
+- **Bewegung NUR übers Logbuch verifizieren**, nie über den Ruhe-State. `GET /api/states/cover.X` zeigt direkt nach dem Befehl wieder `unknown` — das ist KEIN Fehlschlag.
+- Token-frei alternativ: Recorder-DB (`states` + `states_meta`) auf die transienten `opening/closing`-Einträge prüfen.
+
+**🔴 Konsequenz: State-basierte Idempotenz-Guards sind IMMER wahr → Motor-Spam**
+- `{{ not is_state('cover.X','closed') }}` ist bei `unknown` permanent `True` → eine `time_pattern: /15`-Automatik (Sonnenschutz) feuert den io-Motor alle 15 min erneut (Funk-Last, Nachfahr-Geräusch).
+- **Lösung: internes `input_boolean` als Merker** (`rollo_dachfenster_zu`, on=zu/off=auf), das den von der Automatik kommandierten Zustand spiegelt. JEDER close setzt ihn `on`, jeder open `off`; der periodische Guard prüft den Merker statt den (toten) Cover-State. Merker muss in ALLEN Pfaden gepflegt werden, die den Cover bewegen (Sonnenschutz/Nacht/Morgen/Sprachbefehl/KI-Skript), sonst läuft die Idempotenz auseinander.
+
+**🔴 `supported_features` bestimmt die steuerbare Domäne — vor dem Verdrahten prüfen**
+- `11` = OPEN(1)+CLOSE(2)+STOP(8), **keine** Position (SET_POSITION=4 fehlt). Die 5 io-Rollos haben dagegen `15` (mit Position).
+- Positionslose Cover NIE in gemeinsame `set_cover_position`-Listen mit Positions-Rollos packen (der Call schlägt für sie fehl) → ausschließlich `open_cover`/`close_cover`/`stop_cover`.
+- Gemischte Beschattungs-/Nacht-Logik: Positions-Cover auf Schutz-/Nacht-Position (`set_cover_position`), positionslosen Cover in einem separaten `if`-Block voll zufahren. Dachflächenfenster = höchster Wärmeeintrag → volle Beschattung ist sinnvoll, „kann kein 25 %" → bei Hitze morgens zu lassen statt teil-öffnen.
+- `open_cover`/`close_cover`-Sprachbefehle/Smart-Listen sind kompatibel → dort einfach die Entity in die Liste aufnehmen.
+
+**🟡 button-card-Fenster-Template (`current_position`-basiert) zeigt positionslose Cover immer als „offen"**
+- `var c = (p==null) ? 0 : 100-p` → bei null-Position immer 0 % = „komplett offen", auch wenn zu. Fix: `var c = (p==null) ? (entity.state==='closed'?100:0) : Math.round(100-p)` — und dieselbe Fallback-Logik im `fill`-Höhenberechner. Eigene Akzentfarbe via `e.indexOf('<slug>')>=0?'#farbe':...` (hier Solar-Gold `#f0a830`).
+- Raumkachel für positionslosen Cover: nur Hoch/Stop/Runter, KEINE Nudge-/Preset-Buttons (die brauchen Position).
+
+**🔵 Verwaistes, bereits gepairtes Gerät finden**
+- `/api/states` nach `cover.` filtern + `grep -rln "<entity_id>" config/ --include=*.yaml` (ohne `.bak`) → zeigt sofort, ob ein in der Integration vorhandenes Gerät nirgends in der Config eingebunden ist. Device-Bereich/Modell/Hersteller über `core.device_registry` (hier: Somfy, Modell „Shutter", Bereich „All House" = generisch, keine Raum-Fassade → in die ALLGEMEINE Sonnen-/Nacht-/Morgen-Logik, nicht in fassaden-spezifische).
