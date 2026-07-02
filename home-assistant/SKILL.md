@@ -2262,3 +2262,18 @@ Session: User-Report „Luftstrom-Vermeiden-Funktion (Eco-Pilot) geht bei beiden
 - Package-Automatik (`packages/haier_wartung.yaml`): `python3 -c "import yaml; yaml.safe_load(...)"` (kein `!secret`/`!include` im Package) + `check_config` via REST → `automation.reload` reicht, KEIN Restart.
 - YAML-Mode-Dashboard (`dashboards/haier_klima.yaml`, `lovelace-haier`): braucht `docker restart homeassistant`. Nach Restart Resync-Automatik feuerte am `homeassistant`-`start`-Trigger und beide Geräte standen konsistent auf `eco_pilot_mode=1`.
 - Backups vor Edit mit `\cp -f` (cp ist `-i`-aliased). Automation-`entity_id` aus dem `alias`-Slug: `automation.haier_eco_pilot_nachfuhren_desync_schutz`.
+
+### 2026-07-02 — Beschattung fuhr bei Regen runter: Wetter-Zustand fehlte im Sonnen-Gate
+
+User-Report „heute regnerisch, trotzdem fahren Rollos zur Beschattung runter". Befund: echter Logikfehler im zentralen Beschattungs-Gate.
+
+**🔴 `cloud_coverage` allein ist KEIN Regen-Schutz — Wetter-Zustand extra prüfen**
+- Der Gate-Sensor `binary_sensor.rollo_sonne_scheint` (`packages/rollos.yaml`) entschied „Sonne scheint" NUR über `state_attr('weather.forecast_home','cloud_coverage') <= rollo_max_bewoelkung` (Default 70 %).
+- Live bei Regen: `weather.forecast_home = rainy`, aber `cloud_coverage = 46.9 %` → 47 ≤ 70 → Sensor **on** → alle 3 Beschattungen (Sonnenschutz #1, West-Abendsonne #2b, Klimahilfe #7) hielten das für Sonne und fuhren runter. Met.no meldet bei Regen regelmäßig niedrige `cloud_coverage` (Regen aus teils aufgelockerter Wolke) — Bewölkung ist also NICHT die Regen-Wahrheit.
+- Fix an EINER Stelle (Chokepoint): im `state`-Template des Sensors zuerst den Wetter-Zustand short-circuiten. `nass = cond in ['rainy','pouring','lightning','lightning-rainy','snowy','snowy-rainy','hail','exceptional']` → dann `false`, sonst die bisherige cloud/Fallback-Logik. Weil ALLE Beschattungen `condition: state, rollo_sonne_scheint, on` als Pflichtbedingung haben, blockt der eine Fix alle; und weil #2 „Sonnenschutz beenden" auf `to: off for 10min` triggert, fahren aktiv beschattete Rollos automatisch wieder hoch.
+- Nacht-/Morgen-/Lüften-Logik bleibt unberührt (die hängen NICHT an `rollo_sonne_scheint`) — Regen soll nur die Sonnen-Beschattung aussetzen, nicht den Tagesrhythmus.
+
+**🟡 Deploy (bestätigt, kein Restart)**
+- Template-Sensor in Package: `check_config` (valid) → `POST /api/services/template/reload` (HTTP 200) reicht, KEIN Restart. Danach Sensor-State über REST verifizieren (`rollo_sonne_scheint` flippte sofort auf `off`, `bewoelkung`-Attribut = 47 %).
+- Live-Diagnose ohne Rätselraten: `weather.forecast_home`-State + `cloud_coverage`-Attribut + `binary_sensor.rollo_sonne_scheint` + `input_boolean.rollo_sonnenschutz_aktiv` in einem Rutsch pollen zeigt den Widerspruch (rainy bei 47 % → Sensor on) direkt.
+- Merke generell: Beschattungs-Gates immer gegen den **Wetter-Zustandstext** absichern, nicht nur gegen numerische Bewölkung/Helligkeit — Regen/Schnee sind eigene Conditions, die niedrige Bewölkung haben können.
