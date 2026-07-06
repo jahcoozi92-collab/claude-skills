@@ -2277,3 +2277,40 @@ User-Report „heute regnerisch, trotzdem fahren Rollos zur Beschattung runter".
 - Template-Sensor in Package: `check_config` (valid) → `POST /api/services/template/reload` (HTTP 200) reicht, KEIN Restart. Danach Sensor-State über REST verifizieren (`rollo_sonne_scheint` flippte sofort auf `off`, `bewoelkung`-Attribut = 47 %).
 - Live-Diagnose ohne Rätselraten: `weather.forecast_home`-State + `cloud_coverage`-Attribut + `binary_sensor.rollo_sonne_scheint` + `input_boolean.rollo_sonnenschutz_aktiv` in einem Rutsch pollen zeigt den Widerspruch (rainy bei 47 % → Sensor on) direkt.
 - Merke generell: Beschattungs-Gates immer gegen den **Wetter-Zustandstext** absichern, nicht nur gegen numerische Bewölkung/Helligkeit — Regen/Schnee sind eigene Conditions, die niedrige Bewölkung haben können.
+
+### 2026-07-07 — Kopplungs-Packages, jarvis_say_smart-Guard-Bypass, Matter-Waisen-Purge (67), Watchdog-Slugify
+
+**🔴 jarvis_say_smart-Guard-Bypass = Wurzel der stündlichen `media_player.kein`-Warnungen + Briefing-Crash**
+- `jarvis_say` hat einen kein-Guard — aber ein **expliziter `speaker`-Param umgeht ihn** (`{% if speaker is defined and speaker %}` ist für JEDEN String truthy). `jarvis_say_smart` baute in der else-Branch `media_player.{{ states('input_select.jarvis_default_speaker') }}` OHNE Guard → `media_player.kein` → stündliche `Referenced entities … missing`-Warnungen + Skript-Crash (Briefing 08:04).
+- **Regel:** JEDER Aufrufer, der `media_player.<input_select>` konkateniert, braucht den `!= 'kein'`-Guard. Zusätzlich zentral gehärtet: Stop-Guard in `jarvis_say` fängt jetzt `target_speaker == 'none' or states(target_speaker) in ['unavailable','unknown']` (nicht existent ⇒ 'unknown'; ausgeschalteter Player 'off' läuft durch) + `notification_id`-Dedupe im Fallback (externe stündliche Aufrufe fluten sonst die Notification-Liste).
+- **Diagnose-Weg:** Warn-Timestamps (Muster: 2 gleiche Sekunde + 1 zwei Sekunden später = play_media→tts-Ablauf) → Logbuch-Zeitfenster-Query `/api/logbook/<start>?end_time=…` um den Zeitpunkt (API-Zeiten sind **UTC**!) → zeigte `Jarvis: Sprich (Auto-Speaker)` als Läufer → Quelltext des Skripts lesen. Externe Caller (n8n/Brain via REST) tauchen in keiner HA-Automation-Suche auf.
+- Briefing-Speaker (`input_select.jarvis_briefing_speaker`) stand zusätzlich auf totem `magentatv` → auf `55oled855_12_2` (TV-Cast) umgestellt. Briefing-Text-Sensor: tote Refs (`wetter_temperatur_heute_min`, `wetter_regen_wahrscheinlichkeit` → in `11_wetter.yaml` aus demselben `get_forecasts`-Trigger wiederbelebt: `templow`, `precipitation_probability`) + `sensor.offene_fenster` existierte nirgends mehr → inline aus den 3 `*_tur_2`-Kontakten zählen (`| select('eq','on') | list | count`). Sätze nur sprechen wenn Daten da (`float(none)` + `is not none`-Gates).
+
+**🔴 Matter-Waisen-Purge-Kriterium: `platform == 'matter'` AND state in (`unavailable` | None) — 67 entfernt, 0 Fehler**
+- `None` = Entity gar nicht in der State-Machine = reiner Registry-Geist (fand 23 zusätzliche, die keine unavailable-Zählung je zeigt — u.a. Bridge-Diagnose-Dubletten `*_2` und non-`_2`-climates).
+- Ablauf: `sudo cp .storage/core.entity_registry backups/…` → WS `config/entity_registry/list` → Kandidaten filtern (Kriterium schützt alles Lebende automatisch) → **DRY-RUN ausgeben lassen** → `config/entity_registry/remove` je Entity bei LAUFENDER HA. Explizite Waisen (tote Automationen aus entferntem YAML, `script.haier_licht_toggle`, `sensor.offene_fenster`, Wetter-Waisen) in derselben Runde.
+- **Reihenfolge-Regel bestätigt:** Waisen-Registry-Einträge VOR `template/reload` entfernen → die wiederbelebten Template-Sensoren übernehmen die kanonischen entity_ids (keine `_2`-Dubletten — live verifiziert).
+- Ergebnis: unavailable 130 → 78 (Rest = VW-tot + Waschmaschine/TV-aus = normal). VW-Entities bewusst NICHT entfernt (Re-Auth erweckt sie mit gleichen IDs).
+
+**🔴 Slugify-Konkretfall Watchdog: Template-Sensor „Geräte Watchdog Offline" → `sensor.gerate_watchdog_offline` (ä→a, NICHT ae)**
+- Automationen referenzierten `geraete_…` → Trigger-Init-Warning `unknown entity`, Automation lief nie. Fix: Referenzen auf echten Slug, **Anzeigename darf Umlaute behalten** (`unique_id` bleibt beliebig).
+- Regel verschärft: nach JEDEM neuen Template-Sensor mit Umlaut im Namen die echte entity_id via `/api/states` holen, BEVOR Automationen verdrahtet werden.
+
+**🔴 Neue Kopplungs-Packages (Geräte-übergreifende Schicht, alle reload-only deploybar):**
+- `klima_fenster_schutz.yaml` — SZ-Klima pausiert bei Fenster >2 min offen (Modus in `input_text`-Merker), Restore bei Fenster-zu + `homeassistant: start` (übersteht Neustart); manuelles Einschalten bei offenem Fenster ⇒ NUR Hinweis + Merker verwerfen (User-Übernahme respektieren). Flur-Klima hat keinen Fensterkontakt → nicht absicherbar.
+- `geraete_watchdog.yaml` — kuratierte 16er-Liste kritischer Geräte (Fensterkontakte, Klimas, Rollos, Shellys, `wetter_temperatur_lokal`, `bosch_heizung_status`); Zählung nur `== 'unavailable'` via namespace-Loop (kein `select('is_state')`-Risiko); Sofort-Push nach `for: 30min` (schluckt Neustarts) + Tages-Digest 10:00 solange >0. Bewusst NICHT drin: VW (bekannt tot), ThermoBeacon (Batterie), TV/Waschmaschine (aus ≠ offline). Anlass: ThermoBeacon war wochenlang still tot.
+- `tv_benachrichtigungen.yaml` — `script.tv_hinweis` (fields: `titel`, `nachricht`, `auch_handy`): TV an (`media_player.55oled855_12_3 == 'on'`, das verlässliche Power-Signal) ⇒ Overlay via `notify.mobile_app_55oled855_12`; sonst/zusätzlich Handy. Waschmaschine-fertig: Trigger `sensor.waschmaschine_betriebszustand` `to: finished` + Fallback `run→ready`, Dedupe via `this.attributes.last_triggered > 600s`.
+- `vordach_licht.yaml` — Ankunftslicht: frühestes Signal ist **LAN-Presence** (`diana_lan_anwesend`, Handy bucht sich ~20–30 m vor der Tür ein) + `person.diana` + `bianca_zuhause`; nur `below_horizon`; `timer` + Auto-Merker (Ambilight-Ownership-Muster: nur selbst Eingeschaltetes wird ausgeschaltet, Hand-Aus cancelt Timer); erneute Ankunft verlängert (mode restart + „Licht aus ODER Merker an"-Condition). Stufe B (Shelly BLU Motion via vorhandene BT-Proxies) als auskommentierter Trigger-Platzhalter.
+- Rollos-Update: `rollo_dach_azimut_max` (210°) — Dachfenster-Beschattung nur solange Sonne < Azimut; neue Automation öffnet nachmittags wieder (Sonne Richtung West/Straßenseite), sonst Dachgeschoss dunkel. SZ **rechts** beschattet tags nur noch bei Außentemp ≥ `rollo_hitze_temp` ODER SZ-Klima kühlt (Rausschau-Fenster); links + Bad normal.
+
+**🔴 Notify-SERVICES ≠ notify-Entities**
+- Services (für `action:`): `notify.mobile_app_samsung_galaxy_s25_ultra_diana` (Diana Handy), `notify.mobile_app_55oled855_12` (TV), `notify.mobile_app_s25_ultra_bianca`. Die `notify.*`-**Entities** aus `/api/states` (`notify.sm_s938b`, `notify.55oled855_12`) sind NICHT die Service-Namen — vor Verdrahtung `/api/services` (domain notify) prüfen.
+
+**🟡 Trigger-Template-Sensoren nach `template/reload`: `unknown` bis zum ersten Trigger-Tick**
+- `time_pattern /30` feuert erst zur nächsten :00/:30; der `homeassistant: start`-Trigger feuert bei **reload NICHT**. Bei Verifikation einplanen (Availability-Gates in abhängigen Templates nötig).
+
+**🟡 heim_modi „Auto Ankommen" zeigte auf gelöschtes `light.flur_eg`** (echtes Licht: `switch.eg_flur_licht`) — weiterer flur_eg-Dangling-Fall zusätzlich zur Voice-Exposure-Lektion. Bei Refactor-Audits `grep -rn "light.flur_eg"` über packages/ + automations.yaml.
+
+**🔵 Yoga7-Edit-Workflow:** PostToolUse-Formatter-Hook verbiegt YAML-Flow-Mappings im Scratchpad (`target: { … }` → mehrzeilig mit Trailing-Commas). Packages daher via bash-heredoc schreiben oder Python-Patch-Skript auf `.txt`-Kopie (count==1-Asserts je Ersetzung), Original per `ssh cat` ziehen/pushen.
+
+**🔵 Classifier-Grenzen (NAS-Hygiene):** kombiniertes `sudo mv … && sudo rm backups/*.tar` blockt komplett; reines `sudo mv` nach `_attic/` (reversibel) läuft. Backup-Löschung als Einzeiler dem User geben.
