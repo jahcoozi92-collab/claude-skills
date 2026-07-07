@@ -31,10 +31,12 @@ Stell dir vor, du hast einen geheimen Tunnel zwischen all deinen Geräten - egal
 
 | Gerät | Tailscale IP | Tag | Beschreibung |
 |-------|--------------|-----|--------------|
-| **NAS (ugreen)** | `100.90.233.16` | `tag:server` | Synology/UGREEN DXP4800, Docker Host |
-| **ws44** | `100.115.38.98` | `tag:desktop` | Windows Arbeits-PC |
-| **yoga7** | `100.98.252.44` | `tag:desktop` | Linux Laptop (Fedora/Ubuntu) |
-| **Samsung** | `100.126.122.31` | `tag:mobile` | Samsung Galaxy S24 Ultra |
+| **NAS (ugreen)** | `100.90.233.16` | tagged | UGREEN DXP4800, Docker-Host — Container `tailscale` (v1.98.8 gepinnt) |
+| **ws44** | `100.115.38.98` | user | Windows 11 Arbeits-PC — **ANDERES NETZ (192.168.2.x)!** Zugriff via Tailscale: RDP 3389 ✓, SMB 445 ✓, KEIN SSH (Port 22 zu) |
+| **yoga7-1** | `100.98.252.44` | tagged | Linux Laptop (Kali) — Tailnet-Name ist `yoga7-1`, nicht `yoga7` |
+| **moltbot-vm** | `100.111.159.120` | tagged | Clawbot VM (192.168.22.206) |
+| **lenovo-t450s** | `100.92.109.104` | user | Windows Laptop |
+| **samsung-sm-s938b** | `100.126.122.31` | user | Samsung Galaxy S25 Ultra (Diana) |
 
 ### Tailnet-Details
 
@@ -255,3 +257,23 @@ sudo journalctl -xeu tailscaled.service --no-pager | tail -50
 - **DNS auf Linux:** GNOME/systemd-resolved kollidiert oft mit Tailscale DNS → `--accept-dns=false`
 - **ACL-Syntax:** `"dst": ["*"]` ist ungültig, muss `"dst": ["*:*"]` sein
 - **Tags:** Werden via separatem API-Endpoint gesetzt, nicht beim Gerät direkt
+
+### 2026-07-07 — Container-Wiederherstellung: State schlägt Auth-Key, Image-Pin, WS44-Zugriff verifiziert
+
+**🔴 State-Persistenz schlägt Auth-Key — Container-Neuanlage braucht meist KEIN Re-Auth**
+- Der NAS-Tailscale-Container war seit 1. Mai gelöscht (66 Tage offline), der `TS_AUTHKEY` in `.env` längst abgelaufen — trotzdem loggte sich der neu erstellte Container **sofort als `ugreen` (100.90.233.16) wieder ein**: das `./state`-Volume (`tailscaled.state`) hält die Node-Identität, und der Node war nie aus dem Tailnet gelöscht. Abgelaufener Auth-Key wird bei vorhandenem State ignoriert.
+- **Vor-Check ohne API-Key:** `tailscale status` auf einem BELIEBIGEN anderen Tailnet-Gerät (z. B. Yoga7) zeigt auch offline-Nodes inkl. `last seen` → verrät sofort, ob der Node noch registriert ist (dann reicht `docker compose up -d`) oder gelöscht wurde (dann neuer Auth-Key/Interactive-Login nötig).
+
+**🔴 NAS-Container-Setup (Referenz)**
+- Pfad: `/volume1/docker/tailscale/` — hat eine **eigene CLAUDE.md** mit allen Befehlen. Compose: `network_mode: host`, `privileged`, `--ssh`-Flag (Tailscale-SSH aufs NAS), State-Volume `./state:/var/lib/tailscale`, `.env` hält `TS_AUTHKEY`.
+- Compose-`hostname: nas-jahcoozi` + `--hostname=nas-jahcoozi` sind für den Tailnet-Namen WIRKUNGSLOS, solange State existiert — der Admin-Console-Machine-Name `ugreen` persistiert.
+
+**🟡 Image gepinnt: `tailscale/tailscale:v1.98.8` (statt `:latest`, Diana-Regel)**
+- Version des laufenden Containers ermitteln: `docker exec tailscale tailscale version` → als `vX.Y.Z`-Tag in die Compose. Update künftig: Version in Compose ändern → `sudo docker compose up -d`. Backup: `docker-compose.yml.bak-20260707`.
+
+**🟡 WS44-Zugriff (Windows 11 Arbeitsrechner, ANDERES Netz 192.168.2.x) — live verifiziert 2026-07-07**
+- Kanonischer Weg: **Tailscale-IP `100.115.38.98`** — funktioniert von überall (auch wenn WS44 unterwegs/im Arbeitsnetz ist).
+- Offene Zugriffswege via Tailscale: **RDP 3389 ✓** (mstsc/Remmina), **SMB 445 ✓** (Dateifreigaben: `smb://100.115.38.98/`). **KEIN SSH** (Port 22 zu — kein OpenSSH-Server auf WS44; Tailscale-SSH-Server gibt es unter Windows ohnehin nicht).
+- Nebenfund: Es existiert eine Route zwischen 192.168.22.x und 192.168.2.x (192.168.2.38 pingbar, sogar RDP 3389 direkt offen von Yoga7) — für Automationen trotzdem IMMER die Tailscale-IP nutzen (funktioniert standortunabhängig, Route ist nicht garantiert).
+
+**🔵 Geräte-Tabelle oben aktualisiert** (moltbot-vm + lenovo-t450s ergänzt, `yoga7-1`-Name korrigiert, Samsung = SM-S938B/S25 Ultra).
