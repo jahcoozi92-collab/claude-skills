@@ -1884,3 +1884,21 @@ Anker-Pflicht in Premium-Detail: jede wiederverwendete `card_mod`-Style oben in 
 **🔵 Backup-Retention-Check VOR Empfehlung**
 
 Diese Session vorgeschlagen: Backup-Retention auf 5 setzen. Realität nach Check: Retention war schon auf **3 Kopien** (sogar strikter). Lesson: bei „Empfehlung XY setzen" **erst aktuellen Zustand abfragen** (`python3 -c "import json; print(json.load(open('.storage/backup'))['data']['config']['retention'])"`), dann Vorschlag anpassen oder als bereits-erledigt deklarieren.
+
+### 2026-07-06 — Claude Code „authentication failed" = Dateirechte-Kaskade (NICHT OAuth)
+
+**🔴 Symptom:** `claude` auf dem NAS verlangt Login, Browser-Link nicht kopierbar, nach manuellem Login „authentication failed" — wirkt wie kaputter OAuth-Flow, ist es aber NICHT.
+
+**🔴 Wahre Ursache: root-owned Dateirechte in ZWEI Schichten**
+1. **SSH-Ebene:** `/home/Jahcoozi` + `~/.ssh` waren `root:root` und world-writable (`drwxrwxrwx`) → `sshd` mit `StrictModes yes` verweigert Pubkey-Login, obwohl `ssh-copy-id` „Number of key(s) added" meldet. Fix (einmalig, sudo): `chown Jahcoozi ~ ~/.ssh ~/.ssh/authorized_keys`, `chmod go-w ~`, `.ssh` 700, `authorized_keys` 600.
+2. **Claude-Ebene:** `~/.claude/` komplett `root`-owned, `.credentials.json` = `root:700` → der User-Prozess kann das Token weder LESEN noch nach dem Refresh SPEICHERN → Login „verschwindet" bei jedem Start. Fix: `sudo chown -R Jahcoozi ~/.claude && sudo chmod 600 ~/.claude/.credentials.json`.
+
+**🔴 Nach dem Rechte-Fix heilt sich der Login SELBST**
+- Abgelaufener `accessToken` + gültiger `refreshToken` → erster `claude -p "test"` refresht automatisch und speichert. KEIN Browser-Flow, KEIN Link-Kopieren, KEIN neuer OAuth nötig.
+- Ein-Zeilen-Reparatur für Wiederholungsfall: `sudo chown -R Jahcoozi ~/.claude && sudo chmod 600 ~/.claude/.credentials.json`
+
+**🔴 Regel: `claude` auf dem NAS NIE mit sudo/als root starten** — genau dadurch wurden die Dateien ursprünglich root-owned. Gilt für alle Instanzen.
+
+**🟡 Diagnose-Reihenfolge bei Auth-Problemen:** (1) Systemuhr (`date` — Clock-Skew ist die andere Klassiker-Ursache; hier war sie korrekt), (2) Ownership `ls -la ~/.claude/.credentials.json`, (3) erst DANN OAuth-Flow verdächtigen.
+
+**🟡 Referenz:** passwordless sudo für `Jahcoozi` ist aktiv; claude läuft via nvm (`~/.nvm/versions/node/v24.12.0/bin/claude`).
