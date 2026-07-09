@@ -2314,3 +2314,13 @@ User-Report „heute regnerisch, trotzdem fahren Rollos zur Beschattung runter".
 **🔵 Yoga7-Edit-Workflow:** PostToolUse-Formatter-Hook verbiegt YAML-Flow-Mappings im Scratchpad (`target: { … }` → mehrzeilig mit Trailing-Commas). Packages daher via bash-heredoc schreiben oder Python-Patch-Skript auf `.txt`-Kopie (count==1-Asserts je Ersetzung), Original per `ssh cat` ziehen/pushen.
 
 **🔵 Classifier-Grenzen (NAS-Hygiene):** kombiniertes `sudo mv … && sudo rm backups/*.tar` blockt komplett; reines `sudo mv` nach `_attic/` (reversibel) läuft. Backup-Löschung als Einzeiler dem User geben.
+### 2026-07-10 — Lamellen schwenken trotz Fixposition: Eco-Pilot war die Ursache (BESTÄTIGT)
+
+User-Report „feste Lamellenposition geht nicht mehr, schwenkt immer weiter" (beide Haier-Klimas). Befehlsweg war komplett intakt — Ursache war der Eco-Pilot.
+
+**🔴 Eco-Pilot (`humanSensingStatus` > 0) übersteuert JEDE manuelle Lamellenposition**
+- „Vermeiden" (1) / „Folgen" (2) steuern die Lamellen autonom per Präsenzsensor → Gerät nimmt den Positionsbefehl an (resultCode 0, Telemetrie folgt), schwenkt aber sofort weiter. Eco-Pilot und feste Position schließen sich prinzipbedingt aus.
+- **Diagnose-Reihenfolge bei „Lamelle schwenkt trotz Fixposition": ZUERST `eco_pilot_mode`-Attribut prüfen** (0=Aus), BEVOR Patch/Payload/Hardware verdächtigt werden. Praktisch: die Debug-Payload jedes Settings-Commands enthält `humanSensingStatus` — ein Blick auf einen beliebigen `Command sent`-Log-Eintrag verrät den aktiven Wert mit.
+- Zeitliche Tücke: Bis zum Eco-Pilot-str()-Fix + Desync-Schutz (29.06.) war Eco-Pilot faktisch immer aus (stiller int-Fallback) — Fixpositionen hielten. Seit dem Fix erzwingt `automation.haier_eco_pilot_nachfuhren_desync_schutz` den Helferwert alle 30 min → „Vermeiden" ist jetzt WIRKLICH aktiv, Abschalten am Gerät/App kommt binnen 30 min zurück. Ein reparierter Bug kann so ein neues Symptom „erzeugen".
+- **Fix ausschließlich über die Helfer** (`input_select.haier_flur/sz_eco_pilot` → „Aus"), damit Apply- + Resync-Automatik synchron bleiben. Resync sendet bei want=0 nichts nach → kein Fighten. Verify: `eco_pilot_mode`-Attribut beider climates nach nächstem Poll = 0 (Background-`until`-Loop auf das Attribut statt fixem sleep).
+- Befehlsweg-Gesundcheck davor (alles war OK, 2 min): climate.py-Patch (`grep PositionSequence`), `.pyc`-Frische, `__init__.py`-Lineage (`grep -c MOBILE_ID` = 0), Live-Payload via Debug-Logger (`windDirectionVertical` + `windDirectionVerticalPositionSequence` beide mit Zielwert, `resultCode: 0`).
