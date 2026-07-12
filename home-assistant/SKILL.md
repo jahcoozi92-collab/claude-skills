@@ -2324,3 +2324,49 @@ User-Report „feste Lamellenposition geht nicht mehr, schwenkt immer weiter" (b
 - Zeitliche Tücke: Bis zum Eco-Pilot-str()-Fix + Desync-Schutz (29.06.) war Eco-Pilot faktisch immer aus (stiller int-Fallback) — Fixpositionen hielten. Seit dem Fix erzwingt `automation.haier_eco_pilot_nachfuhren_desync_schutz` den Helferwert alle 30 min → „Vermeiden" ist jetzt WIRKLICH aktiv, Abschalten am Gerät/App kommt binnen 30 min zurück. Ein reparierter Bug kann so ein neues Symptom „erzeugen".
 - **Fix ausschließlich über die Helfer** (`input_select.haier_flur/sz_eco_pilot` → „Aus"), damit Apply- + Resync-Automatik synchron bleiben. Resync sendet bei want=0 nichts nach → kein Fighten. Verify: `eco_pilot_mode`-Attribut beider climates nach nächstem Poll = 0 (Background-`until`-Loop auf das Attribut statt fixem sleep).
 - Befehlsweg-Gesundcheck davor (alles war OK, 2 min): climate.py-Patch (`grep PositionSequence`), `.pyc`-Frische, `__init__.py`-Lineage (`grep -c MOBILE_ID` = 0), Live-Payload via Debug-Logger (`windDirectionVertical` + `windDirectionVerticalPositionSequence` beide mit Zielwert, `resultCode: 0`).
+
+### 2026-07-12 — Bosch Home Connect Waschmaschine: Programm-Verfügbarkeit, continue_on_error-Grenze, Fernstart-Sperre, persistent_notification-WS, WLED-Entscheidung
+
+**🔴 `select.*_ausgewahltes_programm`-Options sind STATISCH (alle Programme), Verfügbarkeit ist DYNAMISCH**
+- Das `options`-Attribut listet alle Programme (hier 16), das Gerät akzeptiert aber nur eine Teilmenge JETZT. Auswahl eines gerade nicht verfügbaren → `SDK.Error.ProgramNotAvailable` (HTTP 500, roter HA-Toast).
+- **Trommelreinigung (`drum_clean`) ist NIE fernwählbar/-startbar** — Wartungsprogramm (heiß, leere Trommel nötig), Bosch sperrt es komplett für Home Connect. `cotton`/`mix` etc. gehen (HTTP 200), `drum_clean` → 500. Empirisch trennen: normales Programm testen vs. Zielprogramm.
+- **Schleuder 1400 U/min ist programmabhängig**: Baumwolle/Eco 40-60/Pflegeleicht bieten 1400, Dunkle Wäsche kappt bei 1200, Wolle/Fein niedriger. `spin_speed`-Options ändern sich je Programm. Reihenfolge: erst Programm, dann Drehzahl (Programmwechsel resettet Drehzahl auf Programm-Default).
+- **Extra-Spülen (`rinse_plus`) nur `off` verfügbar** → nicht nutzbar; kein reines Spülen-Programm per API.
+
+**🔴 `continue_on_error: true` fängt Integration-`HomeAssistantError`/`ConflictError` in HA 2026.7 NICHT ab**
+- Script mit `continue_on_error` am `select.select_option` brach trotzdem ab („Error executing script … at pos 1"), Folge-Actions (Notification) liefen nie.
+- **Zuverlässiges Muster**: riskanten Service-Call in ein eigenes Sub-Skript auslagern und via `script.turn_on` ASYNCHRON starten → Fehler dort isoliert, Parent läuft weiter. Variablen per `data.variables` durchreichen. Danach Ergebnis prüfen (`states(...) != erwartet`) + verständlich melden.
+  ```yaml
+  wm_select_raw:   # darf fehlschlagen, isoliert
+    sequence: [{ service: select.select_option, target: {entity_id: select.X}, data: {option: "{{ programm }}"} }]
+  wm_programm_waehlen:
+    sequence:
+      - service: script.turn_on
+        target: { entity_id: script.wm_select_raw }
+        data: { variables: { programm: "{{ programm }}" } }
+      - delay: "00:00:02"
+      - if: "{{ states('select.X') != programm }}"
+        then: [ persistent_notification.create ... ]
+  ```
+- Nebeneffekt fürs UI: Kachel-`tap_action` ruft das Skript → Aufruf liefert 200 → KEIN roter Toast mehr, auch wenn der Select intern scheitert.
+
+**🔴 `Fernstart` (RemoteControlStartAllowed) ist read-only — per Software NICHT setzbar**
+- `binary_sensor.*_fernstart` ist ein Status, kein Schalter; Home Connect hat KEINEN Befehl dafür. Muss physisch am Gerät gedrückt werden, **jeden Zyklus neu** (Bosch-Sicherheit, Wasser-/Überflutungsrisiko). Für Waschmaschinen meist auch kein „Dauer-Fernstart" im Gerätemenü (anders als Geschirrspüler).
+- **Start-Fähigkeit** = `binary_sensor.*_startbereit` (fernstart on + Tür closed/locked). Start via `home_connect.start_selected_program` (startet das vorgewählte Programm; sauberer als `select.aktives_programm`).
+- **Auto-Start-Komfort-Muster**: Automation triggert auf `fernstart → on`, Bedingung ready + Tür zu + Programm gewählt (+ Abschalt-`input_boolean`), Action `start_selected_program`. Der eine physische Fernstart-Druck bleibt unumgänglich, aber der Dashboard-Tipp entfällt. Trigger nicht simulierbar (read-only Sensor → nur echt getestet).
+
+**🔴 Programmdauer wird VOR Start NICHT gemeldet**
+- `sensor.*_programm_endzeit`/`_fortschritt` = `unavailable` solange „ready". Vorab-Dauer nur als statische Schätz-Tabelle je Programm (Template-Sensor, „ca."), echte Endzeit erst bei laufendem Programm. VarioPerfect Speed/Eco kürzt/verlängert die Schätzung (~0.65 / ~1.2).
+
+**🔴 VarioPerfect (Speed/EcoPerfect) nur via Service, KEINE Entität**
+- `home_connect.set_program_and_options` mit `washer_options: { laundry_care_common_option_vario_perfect: ..._speed_perfect }`. Feld-Schema aus `/api/services` zeigt pro Option die verfügbaren Werte — Länge 0 = Gerät unterstützt sie nicht; `vario_perfect` hatte 3 (off/eco/speed). Programmabhängig (Mix/Super → 400). Keine Rückmelde-Entität → Helfer-first (`input_select`) als Wahrheit. Werte IMMER volle Enum-Strings, `affects_to: selected_program`, `device_id` aus `core.device_registry`.
+
+**🟡 `persistent_notification` ist in HA 2026 KEINE State-Entity mehr**
+- `integration_entities('persistent_notification')` = `[]`, `/api/states` zeigt nichts. Prüfen NUR per WebSocket `persistent_notification/get` → Ergebnis ist eine **LISTE** (nicht Dict). `persistent_notification.create/dismiss` funktionieren normal (fixe `notification_id` = gezielt ersetzen/entfernen).
+
+**🟡 `docker exec` braucht `-i` für heredoc-stdin (WS-Helper)**
+- `docker exec homeassistant python3 - <<'PY'` OHNE `-i` → stdin nicht attached → leeres Skript → gar keine Ausgabe (sieht aus wie „hängt"). Immer `docker exec -i [-e VAR=...] homeassistant python3 - <<'PY'`.
+
+**🔴 LED-Streifen DG/OG: UniLED tot ohne aktiven BT-Proxy → Entscheidung WLED**
+- UniLED (BanlanX SP630E) braucht eine **connectable** BLE-Verbindung. Alle vorhandenen Proxys sind Shelly-BLE-Gateways (`connectable:false`, nur passiv) → UniLED-Config-Flow bricht mit `no_devices_found` ab (auch nach Aktivieren des Shelly-BT-Gateways; SP6xxE zudem außer Reichweite im DG). NAS hat keinen BT-Adapter (`/sys/class/bluetooth` fehlt).
+- User-Entscheidung: **WLED statt UniLED** — SP630E ersetzen durch ESP32 + WLED am WS2814-Streifen (24V RGBW COB, single-wire → 1 Daten-GPIO, 74AHCT125-Levelshifter, 24→5V-Buck). HA-`wled`-Integration ist eingebaut (zeroconf-Auto-Discovery `_wled._tcp`). UniLED-Custom-Component nach `config/_attic/` archiviert (Zero-Delete). Siehe Memory [[project_led_streifen_og_banlanx]].
