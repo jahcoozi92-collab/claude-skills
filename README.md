@@ -8,25 +8,26 @@ Dieses Repository enthält selbst-verbessernde Skills für Claude Code, maßgesc
 
 ## 📁 Skill-Übersicht
 
-| Skill | Beschreibung | Trigger |
-|-------|--------------|---------|
-| **[reflect](./reflect/SKILL.md)** | Meta-Skill zum Lernen aus Sessions | `/reflect` |
-| **[pflege-dokumentation](./pflege-dokumentation/SKILL.md)** | Medifox, DAN, Pflegesoftware | automatisch |
-| **[n8n-workflow](./n8n-workflow/SKILL.md)** | Workflow-Automatisierung | automatisch |
-| **[docker-admin](./docker-admin/SKILL.md)** | Container-Management (NAS) | automatisch |
-| **[rag-system](./rag-system/SKILL.md)** | RAG-Pipelines, Vektordatenbanken | automatisch |
-| **[n8n-workflow-auditor](./n8n-workflow-auditor/SKILL.md)** | Workflow-Audit und -Validierung | automatisch |
-| **[nas-homelab](./nas-homelab/SKILL.md)** | NAS Administration (UGREEN) | automatisch |
-| **[open-webui](./open-webui/SKILL.md)** | Open WebUI Integration | automatisch |
-| **[business-strategie](./business-strategie/SKILL.md)** | Geschäftsstrategieplanung | automatisch |
+| Skill                                                       | Beschreibung                                                                                       | Trigger                       |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ----------------------------- |
+| **[reflect](./reflect/SKILL.md)**                           | Meta-Skill zum Lernen aus Sessions                                                                 | `/reflect`                    |
+| **[pflege-dokumentation](./pflege-dokumentation/SKILL.md)** | Medifox, DAN, Pflegesoftware                                                                       | automatisch                   |
+| **[n8n-workflow](./n8n-workflow/SKILL.md)**                 | Workflow-Automatisierung                                                                           | automatisch                   |
+| **[docker-admin](./docker-admin/SKILL.md)**                 | Container-Management (NAS)                                                                         | automatisch                   |
+| **[rag-system](./rag-system/SKILL.md)**                     | RAG-Pipelines, Vektordatenbanken                                                                   | automatisch                   |
+| **[n8n-workflow-auditor](./n8n-workflow-auditor/SKILL.md)** | Workflow-Audit und -Validierung                                                                    | automatisch                   |
+| **[nas-homelab](./nas-homelab/SKILL.md)**                   | NAS Administration (UGREEN)                                                                        | automatisch                   |
+| **[open-webui](./open-webui/SKILL.md)**                     | Open WebUI Integration                                                                             | automatisch                   |
+| **[business-strategie](./business-strategie/SKILL.md)**     | Geschäftsstrategieplanung                                                                          | automatisch                   |
+| **[grill-me-codex](./grill-me-codex/SKILL.md)**             | Architekt-Arbeiter-Workflow: Claude plant (Interview + TDD), Codex implementiert, Claude validiert | `/grill-me-codex`, "grill me" |
 
 ### Instanz-Skills (maschinenspezifisch)
 
-| Skill | Maschine | Beschreibung | Trigger |
-|-------|----------|--------------|---------|
+| Skill                                                     | Maschine     | Beschreibung                                             | Trigger     |
+| --------------------------------------------------------- | ------------ | -------------------------------------------------------- | ----------- |
 | **[windows-workstation](./windows-workstation/SKILL.md)** | WS44 (Win11) | Windows-Arbeitsplatz, Pfade, Netzlaufwerke, lokale Tools | automatisch |
-| **[win-docker](./win-docker/SKILL.md)** | WS44 (Win11) | Docker Desktop (Entwicklung/Test, nicht Produktion) | automatisch |
-| **[qm-word-automation](./qm-word-automation/SKILL.md)** | WS44 (Win11) | QM-Handbuch Word-Automatisierung via pywin32 COM | automatisch |
+| **[win-docker](./win-docker/SKILL.md)**                   | WS44 (Win11) | Docker Desktop (Entwicklung/Test, nicht Produktion)      | automatisch |
+| **[qm-word-automation](./qm-word-automation/SKILL.md)**   | WS44 (Win11) | QM-Handbuch Word-Automatisierung via pywin32 COM         | automatisch |
 
 ---
 
@@ -43,6 +44,7 @@ git clone [DEIN-REPO-URL] .claude/skills
 ### 2. Claude Code konfigurieren
 
 Füge in deiner Claude Code Config hinzu:
+
 ```json
 {
   "skills_directory": "~/.claude/skills"
@@ -83,11 +85,13 @@ Nächste Session: Fehler passiert nicht mehr!
 ## 📊 Setup-Informationen
 
 ### Hardware
+
 - **NAS:** UGREEN DXP4800PLUS-30E @ 192.168.22.90
 - **Dev:** Yoga7 (Kali Linux)
 - **Work:** Windows 11
 
 ### Services
+
 - n8n (Port 5678)
 - Ollama (Port 11434)
 - Supabase (wfklkrgeblwdzyhuyjrv)
@@ -114,13 +118,13 @@ git push
 
 ## 🔧 Befehle
 
-| Befehl | Was es tut |
-|--------|------------|
-| `/reflect` | Startet Reflexion, fragt nach Skill |
-| `/reflect [name]` | Reflektiert spezifischen Skill |
-| `reflect on` | Aktiviert automatisches Lernen |
-| `reflect off` | Deaktiviert automatisches Lernen |
-| `reflect status` | Zeigt aktuellen Status |
+| Befehl            | Was es tut                          |
+| ----------------- | ----------------------------------- |
+| `/reflect`        | Startet Reflexion, fragt nach Skill |
+| `/reflect [name]` | Reflektiert spezifischen Skill      |
+| `reflect on`      | Aktiviert automatisches Lernen      |
+| `reflect off`     | Deaktiviert automatisches Lernen    |
+| `reflect status`  | Zeigt aktuellen Status              |
 
 ---
 
@@ -129,6 +133,7 @@ git push
 Jeder Skill hat einen "Gelernte Lektionen" Abschnitt, der automatisch aktualisiert wird.
 
 Du kannst auch die Git-History nutzen:
+
 ```bash
 git log --oneline ./[skill-name]/SKILL.md
 ```
@@ -137,8 +142,8 @@ git log --oneline ./[skill-name]/SKILL.md
 
 ## 🤝 Contributing
 
-Dieses Repository ist für Diana's persönlichen Gebrauch.
-Bei Fragen oder Ideen: Einfach in der nächsten Claude-Session besprechen!
+Dieses Repository ist für Diana's persönlichen Gebrauch. Bei Fragen oder Ideen: Einfach in der nächsten
+Claude-Session besprechen!
 
 ---
 
@@ -148,4 +153,4 @@ Privates Repository. Nicht zur Weiterverbreitung bestimmt.
 
 ---
 
-*Erstellt mit ❤️ von Claude für Diana*
+_Erstellt mit ❤️ von Claude für Diana_
