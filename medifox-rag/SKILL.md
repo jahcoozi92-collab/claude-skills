@@ -724,6 +724,8 @@ END IF;  -- sonst NOP
 
 **MediFox-Erkenntnis:** In der gesamten Update-Historie 10.26.22 → 10.28.8 gibt es **keine** Rechte-/Zugriffsänderung für „Offene Posten". Rechte-/Berechtigungsfragen sind eine **systematische Lücke** im öffentlichen Wiki (reine Troubleshooting-FAQ, kein Rechtebaum-Handbuch) → bei solchen Fragen NICHT extrapolieren, sondern Screenshot der Benutzerverwaltung/Organisationseinheiten bzw. MediFox-Support als `trust_level=3`-Quelle anfordern.
 
+**AUFLÖSUNG „Offene Posten nicht aufrufbar" (vom Einrichtungs-Admin bestätigt):** Es war **weder** ein Recht **noch** eine Organisationseinheit — es war schlicht ein **gesetzter Filter in der Offene-Posten-Liste** (Status „bezahlt/unbezahlt", Zeitraum oder Kostenträger-/Bereichsauswahl). Ein pro Benutzer gespeicherter Ansichtsfilter blendet Einträge aus und *wirkt* wie ein fehlendes Recht. **Heuristik für künftige „sieht nichts trotz Rechten"-Fälle: ZUERST die Ansichts-/Listenfilter prüfen, DANN erst Rechte/Rollen/Organisationseinheiten.** Als `faq`/`trust_level=3`-Chunk (`topic:'offene-posten-filter'`) in `rag_chunks` hinterlegt.
+
 ---
 
 ## Quick Reference
