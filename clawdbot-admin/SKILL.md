@@ -2786,3 +2786,25 @@ Betrifft das **Claude-Code-CLI-Tool** auf der Clawbot VM — NICHT das OpenClaw-
 
 **🔵 Auto-Updater deckt die tägliche Prüfung ab**
 - Kein `DISABLE_AUTOUPDATER` o.ä. in der Env → Default = aktiv. Claude Code prüft bei jedem Start auf Updates und installiert sie. Bei täglicher Nutzung ist „mindestens einmal täglich prüfen" damit erfüllt — kein separater Timer/Cron nötig (vom User 2026-06-08 so gewählt).
+
+### 2026-07-17 — /doctor Cleanup: Config-State-Map + CLAUDE.md-Lazy-Migration
+
+**🔴 Config-State-Map für Claude Code (CLI) — welche Datei hält welchen State:**
+- `~/.claude.json`: `skillUsage` (name→{usageCount,lastUsedAt}), `pluginUsage` (`<name>@<marketplace>`→{...}), `numStartups`, `installMethod`, `autoUpdates`, `projects["<cwd>"].mcpServers` / `disabledMcpServers`.
+- `~/.claude/settings.json`: `enabledPlugins` (`<name>@<marketplace>`→bool), `permissions.defaultMode`, `permissions.allow`, `hooks`, `autoUpdatesChannel`.
+- `~/.claude/plugins/installed_plugins.json`: Install-Manifeste (scope user/project, version, installPath, gitCommitSha).
+- **⚠ Falle (heute live):** `enabledPlugins` liegt NICHT in `~/.claude.json` — dort stehen nur die *Usage*-Counter. Erste `jq`-Pfadsuche in `~/.claude.json` lief ins Leere; enable-State steht in `~/.claude/settings.json`. Merke: **Nutzung = .claude.json, Aktivierung/Permissions/Hooks = settings.json.**
+- Plugin deaktivieren: `jq --arg k "<name>@<marketplace>" '.enabledPlugins[$k]=false'` in `~/.claude/settings.json` (via mktemp + mv, Namen nie in die Kommandozeile interpolieren). Rückgängig via `/plugin` oder Wert auf `true`.
+- `usageCount` ist Lifetime-Summe (nie gefenstert); `pluginUsage.lastUsedAt` wird beim Install/Enable auf „jetzt" geseedet → für Zero-Count-Plugins kein Fensternachweis, nur Transcripts zählen.
+
+**🟡 CLAUDE.md-Lazy-Migration als Dauer-Kontext-Diät:**
+- Problem: `~/CLAUDE.md` (immer geladen) trug ~87 Zeilen `clawdbot-src`-Entwickler-Doku für ein Repo, das die Datei selbst als „existiert nicht mehr" markiert → lud in jede Session.
+- Fix: Message-Flow, Source-Code-Referenz (pnpm build/test/lint, Workspace-Pakete, Key-Patterns) und Multi-Agent-git-Regeln in neuen Skill `clawdbot-src-dev` ausgelagert (nur Beschreibungszeile resident, Rumpf bedarfsgeladen). `~/CLAUDE.md`: 11.394 → 7.316 chars (208 → 142 Zeilen), ~1k Tokens/Session gespart.
+- **Drei-Stufen-Hierarchie erweitert:** Root `~/CLAUDE.md` (Betriebswissen dieser Maschine) → `clawd/CLAUDE.md` (Workspace, bei clawd/-Arbeit) → Skill `clawdbot-src-dev` (Repo-Dev, nur nach Re-Clone). Heuristik: bedingte/„nur-wenn-X"-Referenz-Doku gehört in einen Skill, nicht in die Dauer-Kontext-Datei.
+
+**🔵 /doctor-Befund Clawbot VM (Baseline, sauber):**
+- Native Install `2.1.211` = latest (Kanal `latest`, Auto-Updates an), `installMethod: native` stimmt, PATH ok, keine npm-Leichen.
+- `permissions.defaultMode: auto` bereits user-scope gesetzt; 0 verweigerte Befehle im Fenster (große bestehende Allowlist erklärt das).
+- Hooks alle schnell: UserPromptSubmit (activator.sh) Ø23ms, SessionStart Ø114ms; Bash-Hooks (codex-review-gate, error-detector) leichtgewichtig.
+- Plugin-Cleanup: `cli-anything` + `frontend-design` (je 0 Nutzungen) deaktiviert, `codex@openai-codex` (170) behalten.
+- `~/.claude/skills` ist Symlink → `~/claude-skills` (kein Duplikat). claude.ai-Connectors (Gmail, Supabase, …) sind deferred (~0 Kontext) und nur via claude.ai verwaltbar, nicht lokal.
