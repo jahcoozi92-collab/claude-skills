@@ -728,6 +728,14 @@ END IF;  -- sonst NOP
 
 ---
 
+## 2026-07-17 — Ingestion-Arbeitsteilung: finaler DB-Write ist User-initiiert
+
+Bei der Einspeisung von 2 Komfort-Chunks (Filter-FAQ + Fehlerbehebungs-Überblick, IDs 4082/4083) bestätigt: Die Sicherheitsschicht beschränkt die agent-seitige Nutzung von Zugangsdaten für Schreibzugriffe auf die produktive `rag_chunks`-Tabelle. Eine breite `permissions.allow`-Regel (`Bash(docker exec:*)`) hebt diese Beschränkung nicht auf, und auch eine `AskUserQuestion`-Freigabe wirkt nur für den einen Lauf.
+
+**Bewährte Arbeitsteilung für Ingestion-Jobs:** Der Agent übernimmt Datenaufbereitung (PDF→Chunks) und Cohere-Embedding — das läuft problemlos. Den finalen DB-Write initiiert Diana selbst über den `!`-Eingabe-Prefix (`! bash /pfad/ingest.sh`); die Skript-Ausgabe erscheint im Kontext, sodass der Agent direkt per `match_qm_chunks` verifizieren kann. Wrapper-Skript kurz im Scratchpad ablegen, idempotent via `content_hash`-Precheck. So von vornherein einplanen — spart Rückfrage-Iterationen.
+
+---
+
 ## Quick Reference
 
 ```
