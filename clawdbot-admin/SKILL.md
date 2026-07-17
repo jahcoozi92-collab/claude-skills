@@ -621,6 +621,32 @@ openclaw devices approve <requestId>
 - Stattdessen: `grep -c "KEY_NAME" ~/.openclaw/.env` (prueft Existenz ohne Wert anzuzeigen)
 - Oder: `grep "^[A-Z_]*=" ~/.openclaw/.env | cut -d= -f1` (zeigt nur Schluessel-Namen)
 
+**Gateway boot-crash: "startup migrations did not complete cleanly" (stale installs.json):**
+- Symptom: `systemctl status` = failed, exit 1; Port 18789 lauscht nicht; systemd gibt nach
+  5 Restarts auf ("start-limit"). Log: `OpenClaw startup migrations did not complete cleanly;
+  refusing to report the gateway ready` + `conflicting plugin install metadata for: <plugin>`.
+- Ursache: Zwei konkurrierende Plugin-Install-Quellen laufen auseinander:
+  `~/.openclaw/plugins/installs.json` (Legacy-Datei) vs. SQLite state
+  `~/.openclaw/state/openclaw.sqlite` (Tabelle `installed_plugin_index`, 1 Zeile, ganzer Index
+  als JSON). Nach npm-Updates bleibt die alte installs.json als Karteileiche liegen; die
+  Boot-Migration weigert sich, den aelteren File-Record ueber den neueren SQLite-Record zu
+  schreiben, und wertet das als FATAL → Crash bei JEDEM Boot. Reines restart hilft nicht.
+- Diagnose (welche Quelle ist neuer?):
+  ```bash
+  sqlite3 -readonly ~/.openclaw/state/openclaw.sqlite \
+    "SELECT install_records_json FROM installed_plugin_index" | python3 -m json.tool
+  # gegen ~/.openclaw/plugins/installs.json — i.d.R. ist SQLite die aktuelle Quelle (= laufende Version)
+  ```
+- Fix (chirurgisch, NICHT breites `openclaw doctor --fix` — das ruehrt auch an Cron/Secrets):
+  1. Backup: `cp installs.json + openclaw.sqlite{,-wal,-shm}` nach `~/.openclaw/_backup-<ts>/`
+  2. `mv ~/.openclaw/plugins/installs.json{,.stale-conflict-<ts>}`   # stale Datei beiseite
+  3. `systemctl --user reset-failed openclaw-gateway.service`        # start-limit-Zaehler loeschen!
+  4. `systemctl --user restart openclaw-gateway.service`
+  5. Verify: Log zeigt `[gateway] ready` + `ss -tlnp | grep 18789` + `curl` → HTTP 200
+- Nebenbefund (separat): `memory-lancedb: recall failed: 429 ... quota` = OpenAI-Embedding-Quota
+  (text-embedding-3-small) erschoepft. Betrifft nur Memory-Recall, nicht den Gateway-Start.
+- Verifiziert live 2026-07-14 (v2026.6.11): memory-lancedb-Konflikt, Fix lief in einem Restart durch.
+
 ---
 
 ## Gelernte Lektionen
