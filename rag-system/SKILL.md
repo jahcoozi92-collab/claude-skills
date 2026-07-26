@@ -4,6 +4,30 @@
 |------|-------------|
 | rag-system | Hilft beim Aufbau und Betrieb von RAG-Pipelines mit Supabase, Ollama und n8n. Optimiert für Dokumenten-Verarbeitung und semantische Suche. |
 
+> ## 🚨 Stand 2026-07-26 — vor dem Weiterlesen
+>
+> **Das Live-System (`rag_chunks`) nutzt Cohere `embed-v4.0` mit 1536 Dimensionen**, seit der
+> Migration am 2026-06-29. Alle Angaben zu `text-embedding-3-large` / **3072** in diesem Dokument
+> sind **historisch** und dürfen nicht als aktuelle Konfiguration übernommen werden.
+>
+> | | aktuell |
+> |---|---|
+> | Modell | Cohere `embed-v4.0`, `output_dimension: 1536` |
+> | `input_type` | `search_document` (Chunks) / `search_query` (Queries) |
+> | `rag_chunks.embedding` | `vector(1536)` — nur Insert-Ziel, wird vom Trigger geleert |
+> | `rag_chunks.embedding_half` | `halfvec(1536)` — trägt die Daten, HNSW-Index |
+>
+> **Fehlende Embeddings IMMER über `embedding_half IS NULL` suchen**, nie über
+> `embedding IS NULL` — der Trigger `sync_rag_chunks_embedding_half` nullt `embedding` nach der
+> Konvertierung, die Bedingung trifft daher auf **alle** Zeilen zu.
+>
+> Aktuelle Konfiguration im Zweifel immer live verifizieren:
+> ```sql
+> SELECT attname, format_type(atttypid, atttypmod) FROM pg_attribute
+> WHERE attrelid='public.rag_chunks'::regclass AND attname LIKE 'embedding%';
+> ```
+> Ausführliches Vorgehen (Backfill via n8n, RLS-Fallstrick, Paraphrase-Test) im Skill `medifox-rag`.
+
 ## Was ist dieser Skill?
 
 **Für 12-Jährige erklärt:**
@@ -49,7 +73,7 @@ Die KI kennt nur das, was sie in der Schule gelernt hat (Training). Sie weiß ni
 |------------|-------------|-------|
 | **Dokumenten-Quelle** | NextCloud auf NAS | PDFs, Docs speichern |
 | **Orchestrierung** | n8n Workflows | Automatische Verarbeitung |
-| **Embedding-Modell** | OpenAI text-embedding-3-large (3072d) | Text → Vektoren |
+| **Embedding-Modell** | **Cohere embed-v4.0 (1536d)** — bis 2026-06-29: OpenAI text-embedding-3-large (3072d) | Text → Vektoren |
 | **Vektor-Datenbank** | Supabase pgvector (halfvec HNSW) | Speicher + Suche |
 | **LLM** | Claude Sonnet 4.5 (Anthropic) | Antworten generieren |
 
@@ -1046,14 +1070,26 @@ Wenn Antworten schlecht sind, prüfe in dieser Reihenfolge:
 | **all-minilm** | 384 | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ✅ Ja |
 | **text-embedding-3-small** | 1536 | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ✅ Ja |
 | **text-embedding-3-large** | 3072 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ❌ Nein! |
+| **Cohere embed-v4.0** ← aktiv | 1536 (konfigurierbar 256/512/1024/1536) | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ✅ Ja |
 
-**Diana's Setup:**
-- **n8n Workflow:** text-embedding-3-large (3072 dims) → gespeichert als `embedding_half` (halfvec)
-- Sync-Trigger `trg_sync_embedding_half` kopiert `embedding` → `embedding_half` automatisch
+**Diana's Setup (aktuell, seit 2026-06-29):**
+- **n8n Workflow:** Cohere `embed-v4.0`, 1536 dims → gespeichert als `embedding_half` (halfvec)
+- Sync-Trigger `sync_rag_chunks_embedding_half` castet `embedding` → `embedding_half`
+  und **setzt `embedding` danach auf NULL**
+- Der n8n-Node `embeddingsCohere` listet im Dropdown nur bis `embed-multilingual-v3.0` —
+  `modelName: 'embed-v4.0'` direkt im Node-JSON setzen funktioniert trotzdem (liefert 1536)
+- Umstellungsgrund: Unabhängigkeit von der OpenAI-Quota
+
+*Historisch (bis 2026-06-29): text-embedding-3-large mit 3072 dims.*
 
 ⚠️ **WICHTIG:** Bei >2000 Dimensionen ist kein pgvector HNSW/IVFFlat Index auf VECTOR möglich!
-**Lösung:** `halfvec(3072)` mit HNSW-Index auf `embedding_half` Spalte (aktive Suche)
-Legacy-Spalte `embedding` (VECTOR 3072) existiert noch, wird aber nicht indexiert.
+Das war der Grund für `halfvec(3072)` + HNSW auf `embedding_half`. Mit 1536 Dimensionen besteht
+diese Einschränkung nicht mehr — die halfvec-Spalte bleibt aber aktiv (halber Speicher, gleiche Qualität).
+
+⚠️ **Bei einem erneuten Dimensionswechsel ALLE Stellen anfassen** (sonst Cast-Fehler
+`different halfvec dimensions X and Y`): beide Spalten, die Trigger-Funktion (castet `::halfvec(N)`),
+den HNSW-Index sowie die RPCs `hybrid_search_v3` / `match_qm_chunks`.
+Der Trigger **blockiert `ALTER COLUMN`** → erst `DROP TRIGGER`, dann altern, dann neu anlegen.
 
 ---
 

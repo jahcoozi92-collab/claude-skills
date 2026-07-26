@@ -182,12 +182,21 @@ formatMessage() → parseStructuredResponse()
 
 ### Embedding-Pipeline: Dokumente in rag_chunks einfuegen
 
+> ⚠️ **AKTUELLER STAND (seit 2026-06-29): Cohere `embed-v4.0`, 1536 Dimensionen.**
+> Alle Angaben zu `text-embedding-3-large` / 3072 in diesem Dokument sind **historisch**.
+> Details im Abschnitt „2026-06-29 — Migration Embeddings OpenAI → Cohere embed-v4 (1536)".
+
 1. Dokument in Chunks splitten (nach ## Sektionen, max ~2000 chars)
-2. Embeddings generieren: **text-embedding-3-large** (3072 dim) — NICHT text-embedding-3-small (1536)!
+2. Embeddings generieren: **Cohere `embed-v4.0`**, `output_dimension: 1536`,
+   `input_type: 'search_document'` (für Queries: `'search_query'`)
 3. Einfuegen via Supabase REST API: POST `/rest/v1/rag_chunks` mit `{content, metadata, embedding}`
-4. Trigger `sync_rag_chunks_embedding_half` konvertiert automatisch zu halfvec
+4. Trigger `sync_rag_chunks_embedding_half` konvertiert automatisch zu halfvec **und nullt `embedding` danach**
+   → fehlende Embeddings IMMER über `embedding_half IS NULL` suchen, NIE über `embedding IS NULL`
+   (letzteres trifft auf **alle** Zeilen zu und liefert einen wertlosen Full-Table-Treffer)
 5. FTS-Spalte ist auto-generated (kein manuelles UPDATE moeglich)
-6. OpenAI-Key: aus n8n Credentials entschluesseln (EVP_BytesToKey, AES-256-CBC, Salted__ prefix)
+6. Cohere-Key: **nicht entschlüsseln** — n8n HTTP Request Node mit
+   `authentication: predefinedCredentialType`, `nodeCredentialType: cohereApi`
+   (Credential `oAOH4kNkJnovzmZP`) nutzt den Key serverseitig
 
 **Metadata-Felder:**
 ```json
@@ -276,7 +285,8 @@ MediFox-Original: https://wissen.medifoxdan.de/pages/viewpage.action?pageId=[id]
 
 **Embedding-Pipeline aufgebaut:**
 - 29 Chunks aus Screenshot-Dokumentation (md_stationaer_level2_vollstaendig.md) embedded
-- FEHLER: Erst text-embedding-3-small (1536 dim) → DB erwartet 3072 dim → Fix: text-embedding-3-large
+- FEHLER: Erst text-embedding-3-small (1536 dim) → DB erwartete damals 3072 dim → Fix: text-embedding-3-large
+  (historisch — seit 2026-06-29 ist 1536 via Cohere embed-v4.0 wieder korrekt)
 - OpenAI-Key: Aus n8n-Credentials entschluesselt (EVP_BytesToKey, AES-256-CBC)
 - Supabase REST API: POST /rest/v1/rag_chunks mit apikey + Authorization Header
 - Source: `screenshot_documentation`, Priority: `critical`, Quality: `high`
@@ -459,7 +469,7 @@ Zusätzlich: **+5% wenn `verified=true`**, **−10% wenn `metadata.needs_review=
 # 1) SECURITY DEFINER RPC anlegen (umgeht RLS)
 # 2) Pro Artikel: hash via md5(title|chunk_idx)[:12]
 # 3) Existenz-Check vor Insert (Idempotenz)
-# 4) OpenAI text-embedding-3-large (3072d)
+# 4) Cohere embed-v4.0 (1536d, input_type=search_document) — historisch: OpenAI 3072d
 # 5) RPC-Aufruf mit content+metadata+vec
 # 6) Nach Lauf: DROP FUNCTION
 ```
@@ -494,22 +504,34 @@ Zusätzlich: **+5% wenn `verified=true`**, **−10% wenn `metadata.needs_review=
 
 **Embedding-Dimensionen je Tabelle (Stolperstein):**
 
-| Tabelle | Spalte | Dimensionen | Modell |
-|---------|--------|-------------|--------|
-| `rag_chunks` | `embedding` | **3072** | `text-embedding-3-large` (`dimensions=3072`) |
-| `rag_chunks` | `embedding_half` | 3072 (halfvec) | automatisch via Trigger `trg_sync_embedding_half` |
-| `click_paths` | `embedding` | **1536** | `text-embedding-3-small` (default) |
+> ⚠️ Tabelle unten ist der **Stand vor der Cohere-Migration**. Aktuell gilt durchgängig **1536**.
 
-Falsches Modell → `22000: expected 1536 dimensions, not 3072` (oder umgekehrt). Vor PATCH die `data_type` der Spalte verifizieren.
+| Tabelle | Spalte | Dimensionen (aktuell) | Modell (aktuell) |
+|---------|--------|-------------|--------|
+| `rag_chunks` | `embedding` | **1536** (`vector`) — Insert-Ziel, danach vom Trigger geleert | Cohere `embed-v4.0` |
+| `rag_chunks` | `embedding_half` | **1536** (`halfvec`) — trägt die Daten, HNSW-Index | automatisch via Trigger `trg_rag_chunks_sync_half` |
+| `click_paths` | `embedding` | **1536** | historisch `text-embedding-3-small` |
+
+*Historisch (bis 2026-06-29): `rag_chunks` lag auf 3072 mit `text-embedding-3-large`.*
+
+Falsches Modell → `22000: different halfvec dimensions 3072 and 1536` (oder umgekehrt). Vor PATCH die `data_type` der Spalte verifizieren:
+```sql
+SELECT format_type(atttypid, atttypmod) FROM pg_attribute
+WHERE attrelid='public.rag_chunks'::regclass AND attname IN ('embedding','embedding_half');
+```
 
 **Korrektur-Workflow (5-Schritt-Pattern bei UI-Pfad-Korrekturen):**
 
 ```
 1. rag_chunks UPDATE: content + embedding=NULL + embedding_half=NULL + verified=true
-2. workflows/embed_new_chunks.py (mit OPENAI_API_KEY + SUPABASE_SERVICE_KEY)
+   ⚠️ Nur `embedding_half=NULL` setzen, wenn direkt danach neu embedded wird — sonst fällt der
+   Chunk aus der Vektorsuche. Bei reinen Content-Ergänzungen das alte `embedding_half` stehen lassen.
+2. Embedding über Cohere embed-v4.0 (1536d) erzeugen — NICHT `workflows/embed_new_chunks.py`
+   oder `generate_missing_embeddings.py`: beide fordern noch 3072 an und sind damit funktionsunfähig.
+   Ebenso defekt: Edge Function `embed-rag-chunks` (3072 + OpenAI-Key ohne Guthaben).
    → embedding_half + fts werden automatisch via Trigger gefüllt
-3. click_paths INSERT mit verified=true, verified_by='medifox_support', trust_level=3
-   → search_text + embedding (1536d) manuell mit text-embedding-3-small generieren
+3. click_paths INSERT mit verified=true, verified_by='medifox_support', trust_level=3,
+   **`product='stationaer'`** (Pflicht, siehe Klickpfad-Abschnitt)
 4. Memory-Eintrag (feedback_*.md) + alte widersprüchliche Memory aktualisieren
 5. MEMORY.md Index pflegen
 ```
@@ -650,18 +672,32 @@ WHERE cp.fts @@ plainto_tsquery('german', query_text)
   AND COALESCE(cp.trust_level, 2) >= 2
 ```
 
-Bestehender Datenbestand-Bug (Stand 2026-04-30): **19 Klickpfade** haben `product='MediFox stationär'` (mit Leerzeichen + Umlaut) — werden vom Default-Filter `'stationaer'` NIE gefunden. One-Time-Migration empfohlen:
+**✅ ERLEDIGT 2026-07-26 — `product`-Normalisierung durchgeführt.**
+Der Bestandsbug (Klickpfade mit `product='MediFox stationär'` bzw. `'MD Stationär'` wurden vom
+Default-Filter `'stationaer'` NIE gefunden) betraf zuletzt **21 Einträge** — u. a. „SIS ausfüllen",
+„Maßnahmenplan bearbeiten", „Pflegebericht schreiben", „Medikation verwalten". Migration ausgeführt:
 ```sql
-UPDATE click_paths SET product = 'stationaer' WHERE product = 'MediFox stationär';
+UPDATE click_paths SET product = 'stationaer'
+WHERE product IN ('MediFox stationär', 'MD Stationär');
 ```
 
-**Edge Function `embed-rag-chunks` (deployed 2026-04-30, slug `embed-rag-chunks`, verify_jwt=false):**
+> 🚨 **REGEL für neue Klickpfade: `product` MUSS exakt `'stationaer'` sein.**
+> Nicht „MD Stationär", nicht „MediFox stationär" — sonst ist der Eintrag für das
+> Klickpfad-Tool des Chats unsichtbar, ohne dass ein Fehler auftritt.
+> Nach jedem INSERT gegenprüfen:
+> ```sql
+> SELECT id, title FROM search_click_paths('<Suchbegriff>', 'stationaer', 5);
+> ```
+> Liefert das nichts, obwohl der Eintrag existiert → zuerst `product` prüfen.
 
-Backfill-Funktion für `rag_chunks.embedding` ohne lokalen `OPENAI_API_KEY` — nutzt den Key aus den Supabase-Function-Secrets.
-- POST `{ids:[3844, 3845, ...]}` → gezielter Backfill der angegebenen IDs.
-- POST `{batch_size:20}` (oder leer) → nimmt die nächsten N Rows mit `embedding IS NULL`.
-- Trigger `trg_rag_chunks_sync_half` füllt anschließend `embedding_half`; `fts` ist Generated Column.
-- Nutzbar als Alternative zu `workflows/embed_new_chunks.py`, wenn die `.env`-Datei nicht zugänglich ist.
+**Edge Function `embed-rag-chunks` (deployed 2026-04-30) — ⛔ DEFEKT, NICHT VERWENDEN (Stand 2026-07-26):**
+
+Zwei unabhängige Gründe:
+1. Sie fordert `dimensions: 3072` an — die Spalte ist seit der Cohere-Migration `vector(1536)`.
+2. Ihr hinterlegter OpenAI-Key hat kein Guthaben (`You exceeded your current quota`).
+
+Zudem filtert sie auf `embedding IS NULL`, was seit dem Trigger-Verhalten **alle 1950 Zeilen** trifft.
+Bis zu einem Rewrite auf Cohere gilt: Embeddings über n8n erzeugen (siehe unten).
 
 ---
 
@@ -733,6 +769,56 @@ END IF;  -- sonst NOP
 Bei der Einspeisung von 2 Komfort-Chunks (Filter-FAQ + Fehlerbehebungs-Überblick, IDs 4082/4083) bestätigt: Die Sicherheitsschicht beschränkt die agent-seitige Nutzung von Zugangsdaten für Schreibzugriffe auf die produktive `rag_chunks`-Tabelle. Eine breite `permissions.allow`-Regel (`Bash(docker exec:*)`) hebt diese Beschränkung nicht auf, und auch eine `AskUserQuestion`-Freigabe wirkt nur für den einen Lauf.
 
 **Bewährte Arbeitsteilung für Ingestion-Jobs:** Der Agent übernimmt Datenaufbereitung (PDF→Chunks) und Cohere-Embedding — das läuft problemlos. Den finalen DB-Write initiiert Diana selbst über den `!`-Eingabe-Prefix (`! bash /pfad/ingest.sh`); die Skript-Ausgabe erscheint im Kontext, sodass der Agent direkt per `match_qm_chunks` verifizieren kann. Wrapper-Skript kurz im Scratchpad ablegen, idempotent via `content_hash`-Precheck. So von vornherein einplanen — spart Rückfrage-Iterationen.
+
+---
+
+## 2026-07-26 — Embedding-Backfill über n8n + RLS-Fallstrick (Gap-Fill „Grundbotschaft")
+
+**Erprobtes Backfill-Muster ohne Key-Materialisierung.** Ein schlanker n8n-Workflow erledigt den
+kompletten Roundtrip; der Cohere- und der Supabase-Key bleiben im n8n-Credential-Store:
+
+```
+Webhook → HTTP GET Supabase (rag_chunks?embedding_half=is.null&select=id,content)
+        → Code „Prepare Bodies"  (Body je Chunk per JSON.stringify vorbauen)
+        → HTTP POST api.cohere.com/v2/embed
+        → Code „Build Patch"     (Vektor → '[...]'-String, chunk_id via $('Prepare Bodies').all()[i])
+        → HTTP PATCH Supabase (?id=eq.{{ $json.chunk_id }})
+```
+
+- Beide HTTP-Nodes mit `authentication: predefinedCredentialType` —
+  `nodeCredentialType: cohereApi` (`oAOH4kNkJnovzmZP`) bzw. `supabaseApi` (`xG3IsdqbYMiWY8oP`).
+- Cohere-Body: `{model:'embed-v4.0', texts:[content], input_type:'search_document',
+  embedding_types:['float'], output_dimension:1536}`; Antwort liegt in `embeddings.float[0]`.
+- **Body immer im Code-Node vorbauen**, nicht als Inline-Expression: Chunk-Inhalte mit
+  escapten Anführungszeichen und Backslashes lassen den Expression-Body scheitern (HTTP 500).
+- Helper-Workflows nach Gebrauch **deaktivieren** — sonst bleiben offene Webhooks stehen,
+  die Cohere-Credits verbrauchen können.
+
+**🚨 Supabase REST PATCH mit anon-Key schreibt NICHT.** Der Request liefert **HTTP 204**, RLS
+verwirft die Änderung aber still — es gibt keine Fehlermeldung. Wer nur auf den Statuscode schaut,
+hält den Backfill fälschlich für erfolgreich. Nach jedem Write gegenprüfen:
+```sql
+SELECT id, (embedding_half IS NULL) AS fehlt FROM rag_chunks WHERE id IN (...);
+```
+Schreiben nur über MCP `execute_sql` oder n8n mit `supabaseApi`-Credential.
+
+**Verifikation eines Gap-Fills — Paraphrase-Test ist Pflicht.** Die Originalfrage trifft nach dem
+Insert oft schon über FTS (das neue Stichwort ist distinktiv) — das beweist aber nichts über die
+Vektorseite. Erst eine Paraphrase **ohne** das Stichwort zeigt, ob das Embedding wirkt:
+- vor Backfill: „Wo trage ich ein, dass eine Bewohnerin geduzt werden möchte?" → falsche Antwort (Biografie/Stammdaten)
+- nach Backfill: dieselbe Frage → korrekt „Grundbotschaft" als Option 1
+Test direkt gegen `POST /webhook/rag-chat-api` mit `{"message":"...","session_id":"..."}`.
+
+**Fachlich ergänzt (Chunks 4084–4086, click_paths 132/133):** Die **Grundbotschaft** ist ein
+optionales Freitextfeld über dem Maßnahmenplan (`Dokumentation → Dokumentation → [Bewohner] →
+Maßnahmenplan`, Plan per **Doppelklick** öffnen → „Sichern"). Nur bei **SIS/Strukturmodell**-Bewohnern.
+Einrichtungsweit schaltbar über `Administration → Dokumentation → Grundeinstellungen → Register
+„Planung" → Einstellungen zum Strukturmodell (SIS) → „Grundbotschaft anzeigen"`; das Ausblenden wirkt
+auch auf das CarePad. Quelle: MediFox stationär Update-Info 01|2017 (v4.1), S. 3.
+
+**Offen:** 18 `structured_click_path`-Chunks (IDs 2414–2446) haben weiterhin kein Embedding —
+Cohere liefert für diese Inhalte HTTP 500. Geringe Auswirkung (inhaltsgleich mit `click_paths`,
+per FTS auffindbar), aber ungelöst.
 
 ---
 
