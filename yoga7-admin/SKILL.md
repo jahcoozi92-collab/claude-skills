@@ -1534,3 +1534,58 @@ Alternative bevor vi: Heredoc-Pipe statt Editor öffnen.
 - User will die **neueste Version** (auch wenn "untested"/fehlerbehaftet) — mehrfach betont, gegen meine
   Stabilitäts-Empfehlung. Neueste umsetzen, Konsequenz kurz nennen, nicht wiederholt gegenargumentieren.
 - User will Probleme **behoben**, nicht umgangen/deaktiviert (Blender: funktional gemacht statt abgeschaltet).
+
+### 2026-07-27 — Zwischenablage: CopyQ + GNOME Wayland (Super+V)
+
+**🔴 Super+V ist unter GNOME doppelt belegt — Default muss weichen**
+- `org.gnome.shell.keybindings toggle-message-tray` = `['<Super>v', '<Super>m']`. Eine Custom-Keybinding auf Super+V wird davon geschluckt.
+- Fix (Super+M bleibt für die Benachrichtigungszentrale):
+  ```bash
+  gsettings set org.gnome.shell.keybindings toggle-message-tray "['<Super>m']"
+  P=/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/copyq/
+  gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "['$P']"
+  gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$P name 'CopyQ Zwischenablage'
+  gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$P command 'copyq toggle'
+  gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$P binding '<Super>v'
+  ```
+- Leere Liste (`@as []`) bei `custom-keybindings` = die eigene Belegung ist verloren gegangen, nicht nur inaktiv.
+- Unter Wayland kann CopyQ eigene globale Shortcuts NICHT registrieren — es muss immer über eine GNOME-Keybinding laufen.
+
+**🔴 CopyQ-Autostart und Speicher-Verzögerung sind die zwei stillen Killer**
+- `autostart=false` ist Default → nach jedem Reboot schneidet niemand mit. `copyq config autostart true` legt `~/.config/autostart/com.github.hluk.copyq.desktop` an.
+- `save_delay_ms_on_item_added=300000` (5 Minuten!) → alles Neuere ist bei Reboot/Absturz weg. Auf 3000 setzen (auch `save_delay_ms_on_item_modified`).
+- Diagnose "seit wann läuft CopyQ": `ps -o lstart=,etime= -p <pid>` gegen `who -b` halten. Lücke = Blindzeit ohne Mitschnitt.
+- Zweiter Indikator: Zeitstempel von `~/.config/copyq/copyq_tab_*.dat`. Liegt der Monate zurück, ist die geladene Historie ein alter Stand.
+
+**🔴 Gepinnte Items blockieren `copyq remove` — unpin ist zwingend**
+- Fehlerbild: `ScriptError: Removing pinned item is not allowed (unpin item first)`
+- Hier trugen ALLE 100 Items das Format `application/x-copyq-item-pinned`.
+- Das VORHANDENSEIN des Formats zählt, der Wert kann leer sein → ein Längen-Check auf `read(mime, i)` ist wertlos. Richtig: `Object.keys(getItem(i))` prüfen.
+- API: `plugins.itempinned.unpin([row])` — dann erst `remove(row)`.
+
+**🔴 Index-basiertes Löschen driftet — inhaltsbasiert arbeiten**
+- Zwischen Diagnose und Ausführung verschieben sich alle Indizes, weil der User Fehlermeldung und Befehl selbst kopiert → die landen als neue Items 0..n.
+- Konkret: das Passwort wanderte in Minuten von Zeile 21 auf 23.
+- Muster: Treffer per Regex suchen, unpin, Position ERNEUT suchen, dann remove, in einer Schleife. Nie eine vorab ermittelte Indexliste anwenden.
+
+**🔴 `copyq eval 'script'` als Shell-Argument bricht bei Regex-Escapes**
+- `\s` in einem einfachen Quote wird gefressen → `SyntaxError: Expected token 'numeric literal'`. Auch `\n` im String zerlegt den Aufruf.
+- `copyq eval -f datei.js` gibt es NICHT → `ReferenceError: f is not defined`.
+- Richtig: `copyq eval - <<'JSEOF' … JSEOF` (quoted Delimiter) oder `copyq eval - < datei.js`.
+
+**🟡 Wayland: ohne laufenden Manager ist Kopiertes unwiederbringlich**
+- Der Inhalt lebt im Speicher der Quell-Anwendung, es gibt keine System-Persistenz. Kein CopyQ zum Kopierzeitpunkt = endgültig weg.
+- Einzige Rettung: Quellfenster noch offen → dort erneut kopieren.
+- Aktuellen Stand prüfen: `wl-paste -n` (Clipboard) und `wl-paste -p -n` (Primary Selection, oft noch der ältere Stand).
+
+**🟡 Clipboard-Historie ist ein Secret-Speicher — regelmäßig scannen**
+- `~/.config/copyq/copyq_tab_*.dat` ist unverschlüsselt.
+- Fundstücke hier: JWT, drei Passwörter, SHA256. Scan-Heuristik ohne Klartext-Hardcoding:
+  - JWT: `/^eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\./`
+  - Passwort: len 15–32, kein Whitespace, Mix aus Groß/Klein/Ziffer/Sonderzeichen
+- Ausgabe immer maskieren (`t.substr(0,3) + "***"`), nie den Wert loggen.
+- Das Entfernen aus der Historie ersetzt keine Rotation exponierter Tokens.
+
+**🟡 Destruktive CopyQ-Löschungen sind User-initiiert**
+- Der Auto-Mode-Classifier lässt die Diagnose (lesen, zählen, maskiert anzeigen) durch, nicht aber den Löschlauf.
+- Sanktionierte Arbeitsteilung: Claude schreibt das Skript in den Scratchpad, der User startet es mit `copyq eval - < /pfad/skript.js`.
