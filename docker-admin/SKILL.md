@@ -1,15 +1,16 @@
 # Docker-Admin Skill – Container-Management für Diana
 
-| name | description |
-|------|-------------|
+| name         | description                                                                                                                                 |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | docker-admin | Hilft bei Docker-Container-Management auf Diana's NAS und lokalen Systemen. Optimiert für UGREEN DXP4800PLUS, Portainer und Docker Compose. |
 
 ## Was ist dieser Skill?
 
-**Für 12-Jährige erklärt:**
-Stell dir vor, du hast viele verschiedene Apps auf deinem Computer. Jede App braucht andere Sachen zum Laufen. Das kann chaotisch werden!
+**Für 12-Jährige erklärt:** Stell dir vor, du hast viele verschiedene Apps auf deinem Computer. Jede App
+braucht andere Sachen zum Laufen. Das kann chaotisch werden!
 
 Docker ist wie ein Schuhkarton-System:
+
 - Jede App kommt in ihren eigenen "Karton" (Container)
 - Der Karton hat alles, was die App braucht
 - Die Kartons stören sich nicht gegenseitig
@@ -21,51 +22,51 @@ Docker ist wie ein Schuhkarton-System:
 
 ### Hardware
 
-| System | Beschreibung | IP/Zugang |
-|--------|--------------|-----------|
+| System         | Beschreibung                 | IP/Zugang     |
+| -------------- | ---------------------------- | ------------- |
 | **UGREEN NAS** | DXP4800PLUS-30E (Haupt-Host) | 192.168.22.90 |
-| **Yoga7** | Kali Linux (Entwicklung) | Lokal |
-| **Windows 11** | Arbeitsrechner | Lokal |
+| **Yoga7**      | Kali Linux (Entwicklung)     | Lokal         |
+| **Windows 11** | Arbeitsrechner               | Lokal         |
 
 ### Laufende Container auf dem NAS
 
-| Container | Port | Zweck |
-|-----------|------|-------|
-| **n8n** | 5678 | Workflow-Automatisierung |
-| **Open-WebUI** | 8080 | KI-Chat-Interface |
-| **Ollama** | 11436 | Lokale LLMs |
-| **Home Assistant** | 8123 | Smart Home |
-| **LiveKit** | 7880 | Video/Audio-Kommunikation |
-| **Portainer** | 9000 | Docker-Management-UI |
-| **Kimi-free-api** | 8011 | Kimi/Moonshot API Proxy |
-| **NextCloud** | 8282 | Dateispeicher |
-| **Cloudflared** | - | Cloudflare Tunnel |
-| **SearXNG** | 8081 | Suchmaschine für RAG |
-| **Vaultwarden** | 8083 | Passwort-Manager |
+| Container          | Port  | Zweck                     |
+| ------------------ | ----- | ------------------------- |
+| **n8n**            | 5678  | Workflow-Automatisierung  |
+| **Open-WebUI**     | 8080  | KI-Chat-Interface         |
+| **Ollama**         | 11436 | Lokale LLMs               |
+| **Home Assistant** | 8123  | Smart Home                |
+| **LiveKit**        | 7880  | Video/Audio-Kommunikation |
+| **Portainer**      | 9000  | Docker-Management-UI      |
+| **Kimi-free-api**  | 8011  | Kimi/Moonshot API Proxy   |
+| **NextCloud**      | 8282  | Dateispeicher             |
+| **Cloudflared**    | -     | Cloudflare Tunnel         |
+| **SearXNG**        | 8081  | Suchmaschine für RAG      |
+| **Vaultwarden**    | 8083  | Passwort-Manager          |
 
 ### Container-zu-Compose-Mapping (NAS)
 
 Nicht jeder Container hat sein eigenes Compose-Verzeichnis. Diese Zuordnung ist kritisch für Updates:
 
-| Container | Compose-Verzeichnis | Anmerkung |
-|-----------|---------------------|-----------|
-| cloudflared | `/volume1/docker/cloudflared/` | Eigenständig |
-| n8n-n8n-1 | `/volume1/docker/n8n/` | Image: `docker.n8n.io/n8nio/n8n:latest` |
-| crawl4ai-n8n | `/volume1/docker/Crawl4AI/` | Nutzt gleiches n8n-Image, anderer Stack! |
-| ollama | `/volume1/docker/ollama/` | Eigenständig |
-| searxng | `/volume1/docker/searxng-docker/` | NICHT `/volume1/docker/searxng/`! |
-| homeassistant | `/volume1/docker/home-assistant/` | `-p home-assistant` für Compose |
-| mosquitto | `/volume1/docker/home-assistant/` | Teil des HA-Stacks |
-| esphome | `/volume1/docker/home-assistant/` | Teil des HA-Stacks |
-| matter-server | `/volume1/docker/home-assistant/` | Teil des HA-Stacks |
-| nextcloud_app | `/volume1/docker/nextcloud/` | Eigenständig |
-| nextcloud_db | `/volume1/docker/nextcloud/` | MariaDB, Teil des NC-Stacks |
-| vaultwarden | `/volume1/docker/vaultwarden/` | Eigenständig |
-| faster-whisper | `/volume1/docker/speechreader-backend/` | Image: `ghcr.io/speaches-ai/speaches:0.8.3-cpu` (ehem. fedirz/faster-whisper-server) |
-| crawl4ai | `/volume1/docker/Crawl4AI/` | Image: `unclecode/crawl4ai:0.8.5` |
-| open-webui | `/volume1/docker/open-webui/` | Eigenständig |
-| magic-video-db | `~/magic-video-backend/` | PostgreSQL 16, Port 5438 |
-| magic-video-redis | `~/magic-video-backend/` | Redis 7, Port 6380 |
+| Container         | Compose-Verzeichnis                     | Anmerkung                                                                            |
+| ----------------- | --------------------------------------- | ------------------------------------------------------------------------------------ |
+| cloudflared       | `/volume1/docker/cloudflared/`          | Eigenständig                                                                         |
+| n8n-n8n-1         | `/volume1/docker/n8n/`                  | Image: `docker.n8n.io/n8nio/n8n:latest`                                              |
+| crawl4ai-n8n      | `/volume1/docker/Crawl4AI/`             | Nutzt gleiches n8n-Image, anderer Stack!                                             |
+| ollama            | `/volume1/docker/ollama/`               | Eigenständig                                                                         |
+| searxng           | `/volume1/docker/searxng-docker/`       | NICHT `/volume1/docker/searxng/`!                                                    |
+| homeassistant     | `/volume1/docker/home-assistant/`       | `-p home-assistant` für Compose                                                      |
+| mosquitto         | `/volume1/docker/home-assistant/`       | Teil des HA-Stacks                                                                   |
+| esphome           | `/volume1/docker/home-assistant/`       | Teil des HA-Stacks                                                                   |
+| matter-server     | `/volume1/docker/home-assistant/`       | Teil des HA-Stacks                                                                   |
+| nextcloud_app     | `/volume1/docker/nextcloud/`            | Eigenständig                                                                         |
+| nextcloud_db      | `/volume1/docker/nextcloud/`            | MariaDB, Teil des NC-Stacks                                                          |
+| vaultwarden       | `/volume1/docker/vaultwarden/`          | Eigenständig                                                                         |
+| faster-whisper    | `/volume1/docker/speechreader-backend/` | Image: `ghcr.io/speaches-ai/speaches:0.8.3-cpu` (ehem. fedirz/faster-whisper-server) |
+| crawl4ai          | `/volume1/docker/Crawl4AI/`             | Image: `unclecode/crawl4ai:0.8.5`                                                    |
+| open-webui        | `/volume1/docker/open-webui/`           | Eigenständig                                                                         |
+| magic-video-db    | `~/magic-video-backend/`                | PostgreSQL 16, Port 5438                                                             |
+| magic-video-redis | `~/magic-video-backend/`                | Redis 7, Port 6380                                                                   |
 
 ---
 
@@ -73,24 +74,26 @@ Nicht jeder Container hat sein eigenes Compose-Verzeichnis. Diese Zuordnung ist 
 
 ### Die wichtigsten Begriffe
 
-| Begriff | Bedeutung | Analogie |
-|---------|-----------|----------|
-| **Image** | Bauplan für Container | Backrezept |
-| **Container** | Laufende Instanz eines Images | Der fertige Kuchen |
-| **Volume** | Dauerhafter Speicher | Kühlschrank (bleibt auch wenn Kuchen weg) |
-| **Network** | Verbindung zwischen Containern | Straßen zwischen Häusern |
-| **Compose** | Multi-Container-Setup | Ganzes Menü statt einzelnes Gericht |
+| Begriff       | Bedeutung                      | Analogie                                  |
+| ------------- | ------------------------------ | ----------------------------------------- |
+| **Image**     | Bauplan für Container          | Backrezept                                |
+| **Container** | Laufende Instanz eines Images  | Der fertige Kuchen                        |
+| **Volume**    | Dauerhafter Speicher           | Kühlschrank (bleibt auch wenn Kuchen weg) |
+| **Network**   | Verbindung zwischen Containern | Straßen zwischen Häusern                  |
+| **Compose**   | Multi-Container-Setup          | Ganzes Menü statt einzelnes Gericht       |
 
 ### Container vs. Virtual Machine
 
 **Für 12-Jährige:**
 
 **Virtual Machine (VM):**
+
 - Wie ein ganzes zweites Haus in deinem Haus bauen
 - Hat eigene Wände, eigene Heizung, eigenes alles
 - Braucht viel Platz und Energie
 
 **Container:**
+
 - Wie ein Zimmer in deinem Haus
 - Teilt sich Wände, Heizung, Strom mit dem Haus
 - Braucht viel weniger Platz und Energie
@@ -129,9 +132,11 @@ docker ps -a --filter "status=exited" --filter "status=restarting"
 ```
 
 **Typische Probleme beim Update:**
+
 - Port already allocated → alter Container mit gleichem Port läuft noch
 - Container name conflict → `docker compose down` dann `up -d`
-- Orphaned Container mit Prefix-Namen (z.B. `7b0265dce765_searxng-docker-searxng-1`) → `docker rm` der alten Container
+- Orphaned Container mit Prefix-Namen (z.B. `7b0265dce765_searxng-docker-searxng-1`) → `docker rm` der alten
+  Container
 
 ### Container verwalten
 
@@ -201,7 +206,7 @@ docker-compose up -d --build [service-name]
 ## Diana's typische Docker-Compose-Struktur
 
 ```yaml
-version: '3.8'
+version: "3.8"
 
 services:
   n8n:
@@ -246,19 +251,21 @@ networks:
 ### 🔴 NIEMALS
 
 1. **NIEMALS** Container ohne Restart-Policy
+
    ```yaml
    # ✅ Richtig
    restart: unless-stopped
-   
+
    # ❌ Falsch (kein restart)
    ```
 
 2. **NIEMALS** Passwörter direkt in docker-compose.yml
+
    ```yaml
    # ✅ Richtig - Umgebungsvariable
    environment:
      - PASSWORD=${MY_SECRET}
-   
+
    # ❌ Falsch - Klartext
    environment:
      - PASSWORD=geheim123
@@ -269,10 +276,11 @@ networks:
    - Kann viel Arbeit zerstören
 
 4. **NIEMALS** Container auf `latest` Tag in Produktion
+
    ```yaml
    # ✅ Richtig - Feste Version
    image: n8nio/n8n:1.20.0
-   
+
    # ❌ Falsch - Kann sich ändern
    image: n8nio/n8n:latest
    ```
@@ -299,6 +307,7 @@ networks:
 ### Problem: Container startet nicht
 
 **Diagnose-Schritte:**
+
 ```bash
 # 1. Status prüfen
 docker ps -a | grep [container-name]
@@ -312,12 +321,12 @@ docker logs --tail 50 [container-name]
 
 **Häufige Ursachen:**
 
-| Fehler | Ursache | Lösung |
-|--------|---------|--------|
-| "Port already in use" | Port belegt | Anderen Port nutzen |
-| "Volume mount failed" | Pfad existiert nicht | Ordner erstellen |
-| "Permission denied" | Rechte-Problem | chown oder chmod |
-| "Out of memory" | Zu wenig RAM | Limits erhöhen |
+| Fehler                | Ursache              | Lösung              |
+| --------------------- | -------------------- | ------------------- |
+| "Port already in use" | Port belegt          | Anderen Port nutzen |
+| "Volume mount failed" | Pfad existiert nicht | Ordner erstellen    |
+| "Permission denied"   | Rechte-Problem       | chown oder chmod    |
+| "Out of memory"       | Zu wenig RAM         | Limits erhöhen      |
 
 ### Problem: Container ist langsam
 
@@ -391,23 +400,27 @@ cp -r /path/to/compose-files /backup/docker-compose-$(date +%Y%m%d)
 ### 2026-01-11 - Open WebUI Modell-Konfiguration
 
 **Open WebUI Datenbank-Manipulation:**
+
 - Modelle werden in SQLite gespeichert: `/volume1/docker/open-webui/webui.db`
 - Tabelle `model` enthält: id, name, meta (JSON mit icon, description, tags)
 - Nach DB-Änderungen IMMER: `docker restart open-webui`
 - Python-Skripte für Updates unter `/volume1/docker/open-webui/*.py`
 
 **SVG-Icons in Web-Interfaces:**
+
 - SVG-Gradient-IDs müssen eindeutig sein wenn mehrere Icons auf einer Seite
 - Lösung: Hash des Model-IDs als Suffix (z.B. `id='g{uid}'`)
 - Base64-Encoding: `data:image/svg+xml;base64,...`
 
 **Cloudflare Tunnel Troubleshooting:**
+
 - 502/530 Fehler = Origin nicht erreichbar
 - Nach Container-Restart: `docker restart cloudflared`
 - Logs prüfen: `docker logs cloudflared --tail 20`
 - Tunnel-Config liegt in `/volume1/docker/cloudflared/config.yml`
 
 **Open WebUI Modell-Kategorisierung:**
+
 - Lokal (grün): Ollama-Modelle, offline nutzbar
 - Extern (blau): API-Modelle (OpenAI, Anthropic, Google, Mistral, MiniMax)
 - Custom (lila): Eigene Personas/Assistenten
@@ -416,11 +429,13 @@ cp -r /path/to/compose-files /backup/docker-compose-$(date +%Y%m%d)
 ### 2026-01-11 - Open WebUI Level 3 Optimierung
 
 **API-Verbindungen - NIEMALS:**
+
 - NIEMALS Anthropic als OpenAI-kompatiblen Endpoint konfigurieren (nutzt eigenes API-Format)
 - NIEMALS MiniMax ohne korrekten Endpoint (`/v1/models` existiert nicht bei allen Providern)
 - Fehlerhafte Verbindungen verursachen `500 Internal Server Error` bei `/openai/models/X`
 
 **Datenbank-Reparatur bei API-Fehlern:**
+
 ```bash
 # API-Verbindungen prüfen
 sqlite3 webui.db "SELECT data FROM config WHERE id=1;" | python3 -c "
@@ -433,11 +448,13 @@ print(json.dumps(d.get('openai',{}), indent=2))"
 ```
 
 **Docker-Compose YAML-Syntax:**
+
 - NIEMALS Prompt-Templates mit Sonderzeichen direkt in environment-Liste
 - Führt zu: `unexpected type map[string]interface {}`
 - Lösung: Templates über Admin-UI konfigurieren, nicht YAML
 
 **Level-basierte Konfiguration:**
+
 ```
 docker-compose.level1.yml  → Basis + DALL-E + TTS/STT
 docker-compose.level2.yml  → + Code Interpreter + Autocomplete
@@ -445,23 +462,26 @@ docker-compose.level3.yml  → Produktionsreif (alle Features)
 ```
 
 **Wichtige Level 3 Environment-Variablen:**
+
 ```yaml
-- ENABLE_CODE_INTERPRETER=true      # Pyodide Sandbox
+- ENABLE_CODE_INTERPRETER=true # Pyodide Sandbox
 - ENABLE_AUTOCOMPLETE_GENERATION=true
-- TASK_MODEL=qwen2.5:7b             # Schnelle lokale Tasks
-- TASK_MODEL_EXTERNAL=gpt-4o-mini   # Externe Tasks
-- WHISPER_LANGUAGE=de               # Deutsche Spracherkennung
-- PDF_EXTRACT_IMAGES=true           # OCR für PDFs
-- YOUTUBE_LOADER_LANGUAGE=de,en     # YouTube-Transkripte
+- TASK_MODEL=qwen2.5:7b # Schnelle lokale Tasks
+- TASK_MODEL_EXTERNAL=gpt-4o-mini # Externe Tasks
+- WHISPER_LANGUAGE=de # Deutsche Spracherkennung
+- PDF_EXTRACT_IMAGES=true # OCR für PDFs
+- YOUTUBE_LOADER_LANGUAGE=de,en # YouTube-Transkripte
 ```
 
 **NAS-spezifisch:**
+
 - `cp -f` funktioniert nicht immer → nutze `yes | cp` für automatische Bestätigung
 - Nach Level-Wechsel: `docker compose down && docker compose up -d`
 
 ### 2026-01-11 - Open WebUI Fehlerbehebung & Best Practices
 
 **Functions/Tools bei Fehlern - NIEMALS nur deaktivieren:**
+
 ```sql
 -- FALSCH: Nur deaktivieren (wird trotzdem geladen!)
 UPDATE function SET is_active=0, meta=json_set(meta,'$.enabled',false) WHERE id='...';
@@ -472,33 +492,39 @@ DELETE FROM tool WHERE id='elasticsearch_forensik_rag';
 ```
 
 **DALL-E Bildgenerierung - korrekte Model-Namen:**
+
 ```
 ❌ FALSCH: gpt-image-1 (existiert nicht)
 ✅ RICHTIG: dall-e-2 oder dall-e-3
 ```
 
 **RAM/OOM Management:**
+
 - Modelle >10GB NIEMALS als Default wenn <20GB RAM frei
 - `free -h` vor Modell-Konfiguration prüfen
 - Swap voll = System überlastet → kleinere Modelle wählen
 - qwen2.5:32b (19GB) → qwen2.5:7b (4.7GB)
 
 **Custom Models/Assistants:**
+
 - `base_model_id` muss auf lauffähiges Modell zeigen
 - Prüfen: `SELECT id, base_model_id FROM model WHERE id LIKE '%assistant%';`
 - Bei OOM-Fehlern: base_model_id auf kleineres Modell ändern
 
 **Modell-Anzeige in Open WebUI:**
+
 - Benchmarks ins NAME-Feld setzen (nicht DESCRIPTION)
 - Format: `Kategorie • Name | ≈XX% ≈Vergleichsmodell`
 - Beispiel: `Lokal • Qwen 2.5 7B | ≈78% ≈GPT-4o Mini`
 
 **'NoneType' Fehler debuggen:**
+
 1. `docker logs open-webui | grep -E "(Error|NoneType)"`
 2. Meist: Function/Tool mit fehlerhafter externer Verbindung
 3. Lösung: Function komplett löschen (nicht nur deaktivieren)
 
 **Container-Neustart bei DB-Änderungen:**
+
 ```bash
 # FALSCH: restart lädt DB-Änderungen nicht immer
 docker restart open-webui
@@ -510,6 +536,7 @@ docker compose down open-webui && docker compose up -d open-webui
 ### 2026-01-15 - Container-Updates & Synology-Spezifika
 
 **Container-Update-Workflow:**
+
 ```bash
 # 1. Update-Check für alle wichtigen Images
 docker pull [image] && docker inspect --format '{{.Id}}' [image]
@@ -525,6 +552,7 @@ docker image prune -a
 ```
 
 **Synology BTRFS Berechtigungsprobleme:**
+
 - Mosquitto kann `passwordfile` nicht lesen trotz korrekter chmod/chown
 - Exit code 13 = Permission denied bei Bind-Mounts
 - Versuche wie `chmod 777`, `chown 1883:1883` helfen NICHT
@@ -534,6 +562,7 @@ docker image prune -a
   - File im Container erstellen: `docker exec mosquitto mosquitto_passwd -c ...`
 
 **Port-Binding für externe Erreichbarkeit:**
+
 ```yaml
 # ❌ FALSCH - Nur localhost, nicht von außen erreichbar
 ports:
@@ -547,6 +576,7 @@ ports:
 ```
 
 **Container-Namen ändern sich:**
+
 - Docker Compose v2 nutzt andere Namenskonvention
 - Alt: `projectname_servicename_1` (Compose v1)
 - Neu: `projectname-servicename-1` oder einfach `servicename` (Compose v2)
@@ -554,11 +584,13 @@ ports:
 - Home Assistant Sensor-Commands anpassen!
 
 **Home Assistant Docker-Sensor Optimierung:**
+
 - Scan Intervals von 300s auf 600s erhöhen (weniger Last)
 - Container-Status-Checks sind ressourcenintensiv
 - Nur kritische Container überwachen
 
 **Defekte Container identifizieren:**
+
 ```bash
 # Restart-Loops finden
 docker ps -a --filter "status=restarting"
@@ -574,6 +606,7 @@ docker inspect --format '{{.State.ExitCode}}' [container]
 ```
 
 **SearXNG + Open WebUI Integration:**
+
 - Open WebUI hat bereits RAG_WEB_SEARCH_ENGINE Umgebungsvariable
 - SearXNG muss im gleichen Docker-Netzwerk sein
 - URL-Format: `http://searxng:8080` (Container-Name, interner Port)
@@ -581,6 +614,7 @@ docker inspect --format '{{.State.ExitCode}}' [container]
 ### 2026-01-12 - npm ci vs npm install in Docker
 
 **Problem:** Docker-Build schlägt fehl mit `npm ci` Fehler:
+
 ```
 npm error `npm ci` can only install packages when your package.json
 and package-lock.json are in sync
@@ -588,11 +622,13 @@ npm error Invalid: lock file's picomatch@2.3.1 does not satisfy picomatch@4.0.3
 ```
 
 **Ursache:**
+
 - `npm ci` ist strikt - Lock-File muss exakt zur npm-Version passen
 - Host-System hat andere npm-Version als Container (node:20-alpine)
 - Lock-File wurde mit Host-npm generiert, Container-npm lehnt ab
 
 **Lösung im Dockerfile:**
+
 ```dockerfile
 # ❌ FALSCH - Strikt, bricht bei Versions-Mismatch
 RUN npm ci
@@ -602,6 +638,7 @@ RUN npm install
 ```
 
 **Vite allowedHosts - Nur für Dev-Server:**
+
 - Fehler "This host is not allowed" kommt nur vom Vite Dev-Server
 - Production-Build mit nginx hat KEINE Host-Restriktionen
 - `vite.config.ts` → `server.allowedHosts` nur für `npm run dev` relevant
@@ -609,16 +646,16 @@ RUN npm install
 
 ### 2026-01-16 - AI Container Stack & Cloudflare Automation
 
-**AI Container (aktiv, Stand 2026-03-24):**
-| Container | Port | Besonderheiten |
-|-----------|------|----------------|
-| CrewAI | 3400 | Kein offizielles Image → Custom Dockerfile |
+**AI Container (aktiv, Stand 2026-03-24):** | Container | Port | Besonderheiten |
+|-----------|------|----------------| | CrewAI | 3400 | Kein offizielles Image → Custom Dockerfile |
 
 **Entfernte AI-Container (2026-03-24):**
+
 - Dify (nie genutzt), OpenHands (nie genutzt), Langflow (nie genutzt), AutoGPT (nie installiert)
 - vLLM (benötigt GPU)
 
 **CrewAI Custom Build:**
+
 ```dockerfile
 FROM python:3.11-slim
 RUN pip install crewai crewai-tools langchain-ollama fastapi uvicorn
@@ -627,6 +664,7 @@ CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
 **Container Permission Fixes:**
+
 ```yaml
 # Langflow - Permission denied für /app/data
 services:
@@ -643,24 +681,20 @@ services:
       - openhands-data:/opt/openhands
 ```
 
-**Subdomain ↔ Container Mapping (ACHTUNG: Name ≠ Subdomain!):**
-| Container-Name | Subdomain | Port |
-|----------------|-----------|------|
-| open-webui | **chat**.forensikzentrum.com | 8080 |
-| open-webui | **agents**.forensikzentrum.com | 8080 |
-| songcrafter-pro | **songcraft**.forensikzentrum.com | 3080 |
-| songcrafter-backend | **songcraft**.forensikzentrum.com/api/* | 8002 |
-| crawl4ai | **crawl**.forensikzentrum.com | 18800 |
-| speechreader | **speech**.forensikzentrum.com | 5174 |
-| openapi-speechreader | **speech-api**.forensikzentrum.com | 8006 |
-| medifox-admin | **medifox-admin**.forensikzentrum.com | 8086 |
-| searxng-docker-searxng-1 | **searxng**.forensikzentrum.com | 8081 |
-| gedenkseite | **gedenkseite**.forensikzentrum.com | 8182 |
-| faster-whisper | — (kein Tunnel) | 8007 |
+**Subdomain ↔ Container Mapping (ACHTUNG: Name ≠ Subdomain!):** | Container-Name | Subdomain | Port |
+|----------------|-----------|------| | open-webui | **chat**.forensikzentrum.com | 8080 | | open-webui |
+**agents**.forensikzentrum.com | 8080 | | songcrafter-pro | **songcraft**.forensikzentrum.com | 3080 | |
+songcrafter-backend | **songcraft**.forensikzentrum.com/api/\* | 8002 | | crawl4ai |
+**crawl**.forensikzentrum.com | 18800 | | speechreader | **speech**.forensikzentrum.com | 5174 | |
+openapi-speechreader | **speech-api**.forensikzentrum.com | 8006 | | medifox-admin |
+**medifox-admin**.forensikzentrum.com | 8086 | | searxng-docker-searxng-1 | **searxng**.forensikzentrum.com |
+8081 | | gedenkseite | **gedenkseite**.forensikzentrum.com | 8182 | | faster-whisper | — (kein Tunnel) | 8007
+|
 
 **Cloudflare Zone ID:** `772684b736f745da1fc16def3a83b547` (forensikzentrum.com)
 
 **Cloudflare Tunnel API (Token-basiert):**
+
 ```bash
 # Token-basierte Tunnel ignorieren lokale config.yml!
 # Routes nur via API änderbar:
@@ -676,6 +710,7 @@ curl -X PUT "https://api.cloudflare.com/client/v4/accounts/{account_id}/cfd_tunn
 ```
 
 **Cloudflare DNS via API:**
+
 ```bash
 # Separater Token mit "Zone DNS:Edit" nötig!
 ZONE_ID=$(curl -s "https://api.cloudflare.com/client/v4/zones?name=domain.com" \
@@ -687,22 +722,22 @@ curl -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records" \
   -d '{"type":"CNAME","name":"subdomain","content":"tunnel-id.cfargotunnel.com","proxied":true}'
 ```
 
-**Zwei Cloudflare Tokens benötigt:**
-| Zweck | Template | Berechtigung |
-|-------|----------|--------------|
-| Tunnel Routes | **Benutzerdefiniert** (kein Template!) | Konto → Cloudflare Tunnel → Bearbeiten |
-| DNS Records | Edit zone DNS | Zone → DNS → Edit |
+**Zwei Cloudflare Tokens benötigt:** | Zweck | Template | Berechtigung | |-------|----------|--------------| |
+Tunnel Routes | **Benutzerdefiniert** (kein Template!) | Konto → Cloudflare Tunnel → Bearbeiten | | DNS
+Records | Edit zone DNS | Zone → DNS → Edit |
 
-**ACHTUNG:** Template "Edit Cloudflare Zero Trust" existiert NICHT auf der Token-Seite!
-Immer "Benutzerdefiniertes Token erstellen" wählen.
+**ACHTUNG:** Template "Edit Cloudflare Zero Trust" existiert NICHT auf der Token-Seite! Immer
+"Benutzerdefiniertes Token erstellen" wählen.
 
 **Port-Kollisionen vermeiden:**
+
 ```bash
 # VOR Installation prüfen
 docker ps --format "{{.Ports}}" | tr ',' '\n' | grep -oE ':[0-9]+' | sort -u
 ```
 
 **DNS-Cache auf NAS umgehen:**
+
 ```bash
 # Lokaler DNS cached alte Einträge - Test mit direkter IP:
 curl --resolve "host.domain.com:443:104.21.30.51" https://host.domain.com
@@ -711,6 +746,7 @@ curl --resolve "host.domain.com:443:104.21.30.51" https://host.domain.com
 ### 2026-01-27 - Clawdbot Installation & Migration
 
 **VOR Docker-Setup immer prüfen ob Container existiert:**
+
 ```bash
 # IMMER zuerst prüfen!
 docker ps -a | grep -E 'claw'
@@ -720,6 +756,7 @@ docker ps -a | grep -E 'claw'
 ```
 
 **Clawdbot WhatsApp deaktivieren:**
+
 ```bash
 # ❌ config "enabled: false" reicht NICHT
 # ✅ Credentials verschieben:
@@ -730,12 +767,14 @@ docker compose restart clawdbot-gateway
 ```
 
 **Cloudflare Tunnel für neue Subdomain:**
+
 1. `config.yml` editieren reicht NICHT allein
 2. DNS CNAME Record muss im Cloudflare Dashboard angelegt werden
 3. Name: `clawdbot` → Target: `[tunnel-id].cfargotunnel.com`
 4. Dann: `docker restart cloudflared`
 
 **Clawdbot Gateway Token:**
+
 - Liegt in `.env` als `CLAWDBOT_GATEWAY_TOKEN`
 - Control UI: http://192.168.22.90:18789/
 - Token in UI-Settings eingeben für Zugriff
@@ -743,6 +782,7 @@ docker compose restart clawdbot-gateway
 ### 2026-02-04 - Ollama Modell-Management
 
 **Modelle auflisten, hinzufügen, entfernen:**
+
 ```bash
 # Liste aller installierten Modelle
 docker exec ollama ollama list
@@ -757,19 +797,18 @@ docker exec ollama ollama rm qwen3:30b-a3b
 docker exec ollama ollama create pflege-assistent -f /root/.ollama/Modelfile-pflege
 ```
 
-**Modell-Größen für CPU-only NAS (UGREEN DXP4800):**
-| Kategorie | Empfehlung |
-|-----------|------------|
-| ✅ Gut | 3B-8B Modelle (~3-8 GB, 20-50 tok/s) |
-| ⚠️ Grenzwertig | 14B Modelle (~9 GB, 10-15 tok/s) |
-| ❌ Vermeiden | 30B+ Modelle (>18 GB, <5 tok/s) |
+**Modell-Größen für CPU-only NAS (UGREEN DXP4800):** | Kategorie | Empfehlung | |-----------|------------| |
+✅ Gut | 3B-8B Modelle (~3-8 GB, 20-50 tok/s) | | ⚠️ Grenzwertig | 14B Modelle (~9 GB, 10-15 tok/s) | | ❌
+Vermeiden | 30B+ Modelle (>18 GB, <5 tok/s) |
 
 **Speicherplatz-Optimierung:**
+
 - Vor dem Löschen: `docker exec ollama ollama list` für Größen prüfen
 - Nach dem Löschen: Speicher wird sofort freigegeben
 - Embedding-Modelle (bge-m3, nomic-embed) klein halten (~1-2 GB)
 
 **Port-Mapping beachten:**
+
 - Ollama intern: Port 11434
 - NAS extern: Port 11436 (gemapped in docker-compose.yml)
 - API-Calls: `http://192.168.22.90:11436/api/tags`
@@ -777,18 +816,21 @@ docker exec ollama ollama create pflege-assistent -f /root/.ollama/Modelfile-pfl
 ### 2026-02-03 - OpenClaw / Clawdbot VM Troubleshooting
 
 **VM-Architektur auf dem NAS:**
+
 - `192.168.22.206` ist eine VM auf dem NAS `192.168.22.90` (kein separates Gerät!)
 - Hostname: `ugreen-gateway`, User: `moltbotadmin`
 - Docker ist auf der VM NICHT installiert
 - Dienste laufen als systemd User-Services, nicht als Container
 
 **Clawdbot Gateway Diagnose-Reihenfolge:**
+
 1. Config-Validierung: `clawdbot.json` auf ungültige Keys prüfen
 2. Auth: `auth-profiles.json` auf abgelaufene/gesperrte Keys prüfen
 3. Billing: `"disabledReason": "billing"` = Guthaben/Zahlung beim Provider prüfen
 4. Service-Status: `systemctl --user status clawdbot-gateway.service`
 
 **Clawdbot Config-Reparatur:**
+
 ```bash
 # Config-Keys validieren und ungültige entfernen
 clawdbot doctor --fix
@@ -798,6 +840,7 @@ clawdbot doctor --fix
 ```
 
 **Clawdbot Gateway als systemd User-Service:**
+
 ```bash
 # Status prüfen
 systemctl --user status clawdbot-gateway.service
@@ -813,20 +856,19 @@ loginctl enable-linger moltbotadmin
 ```
 
 **Auth-Profile Pfad:**
+
 ```
 ~/.clawdbot/agents/main/agent/auth-profiles.json
 ```
 
-**Häufige Fehler:**
-| Fehler | Ursache | Lösung |
-|--------|---------|--------|
-| `Unrecognized keys` in clawdbot.json | Veraltete Config | `clawdbot doctor --fix` |
-| `HTTP 401 invalid x-api-key` | API-Key ungültig/abgelaufen | Neuen Key eintragen |
-| `No API key found for provider` | Provider nicht konfiguriert | `auth-profiles.json` bearbeiten |
-| `disabledReason: "billing"` | Kein Guthaben beim Provider | Billing auf Provider-Seite prüfen |
-| `Context overflow` | Prompt zu groß für Model | Kontext leeren oder größeres Model |
+**Häufige Fehler:** | Fehler | Ursache | Lösung | |--------|---------|--------| | `Unrecognized keys` in
+clawdbot.json | Veraltete Config | `clawdbot doctor --fix` | | `HTTP 401 invalid x-api-key` | API-Key
+ungültig/abgelaufen | Neuen Key eintragen | | `No API key found for provider` | Provider nicht konfiguriert |
+`auth-profiles.json` bearbeiten | | `disabledReason: "billing"` | Kein Guthaben beim Provider | Billing auf
+Provider-Seite prüfen | | `Context overflow` | Prompt zu groß für Model | Kontext leeren oder größeres Model |
 
 **502 bei Cloudflare Tunnel zu VM-Diensten:**
+
 - Cloudflared-Logs prüfen: `docker logs cloudflared --tail 50 | grep openclaw`
 - Fehler `connection refused` = Dienst auf VM läuft nicht
 - Erst VM-Erreichbarkeit testen: `nc -z -w 3 192.168.22.206 18789`
@@ -835,11 +877,13 @@ loginctl enable-linger moltbotadmin
 ### 2026-02-04 - Clawdbot Modell-Konfiguration
 
 **Fehler "HTTP 404: model 'X' not found":**
+
 - Bedeutet: Modell-ID in clawdbot.json existiert nicht auf Ollama-Server
 - Prüfen welche Modelle verfügbar: `docker exec ollama ollama list`
 - Config anpassen: `nano ~/.clawdbot/clawdbot.json`
 
 **Clawdbot Config-Struktur für Modelle:**
+
 ```json
 {
   "agents": {
@@ -866,15 +910,14 @@ loginctl enable-linger moltbotadmin
 }
 ```
 
-**Wichtige Pfade in clawdbot.json:**
-| Pfad | Bedeutung |
-|------|-----------|
-| `agents.defaults.model.primary` | Haupt-Modell (Format: provider/model-id) |
-| `agents.defaults.model.fallbacks` | Backup-Modelle wenn primary fehlschlägt |
-| `models.providers.ollama.models` | Ollama-Modell-Definitionen |
-| `models.providers.ollama.baseUrl` | Ollama API URL |
+**Wichtige Pfade in clawdbot.json:** | Pfad | Bedeutung | |------|-----------| |
+`agents.defaults.model.primary` | Haupt-Modell (Format: provider/model-id) | |
+`agents.defaults.model.fallbacks` | Backup-Modelle wenn primary fehlschlägt | |
+`models.providers.ollama.models` | Ollama-Modell-Definitionen | | `models.providers.ollama.baseUrl` | Ollama
+API URL |
 
 **Verfügbare Ollama-Modelle auf NAS (Stand 02/2026):**
+
 - `qwen2.5:32b` (19 GB) - Flagship, langsam
 - `qwen2.5:7b` (4.7 GB) - Empfohlen für Clawdbot
 - `qwen2.5-coder:7b-instruct` (4.7 GB) - Code
@@ -883,6 +926,7 @@ loginctl enable-linger moltbotadmin
 - `bge-m3` (1.2 GB) - Embedding only
 
 **Empfohlene Clawdbot-Konfiguration:**
+
 ```json
 "model": {
   "primary": "anthropic/claude-sonnet-4-20250514",
@@ -891,26 +935,31 @@ loginctl enable-linger moltbotadmin
 ```
 
 **Heartbeat deaktivieren:**
+
 ```json
 "heartbeat": {
   "enabled": false
 }
 ```
+
 Oder Interval sehr hoch setzen: `"every": "8760h"` (1 Jahr)
 
 ### 2026-03-14 - Kontext-Erkennung & SSH-User
 
 **SSH-User IMMER aus Instanzen-Tabelle (CLAUDE.md) prüfen:**
+
 - NAS: `Jahcoozi@192.168.22.90` (NICHT `yoga7@`)
 - Clawbot: `moltbotadmin@192.168.22.206`
 - Fehler in dieser Session: `ssh yoga7@192.168.22.90` → Timeout/Fehler
 
 **Kontext-Erkennung bei "Docker aktualisieren":**
+
 - Docker ist auf Yoga7 NICHT installiert → keine Rückfrage nötig
 - n8n läuft auf NAS (steht in CLAUDE.md) → direkt NAS ansteuern
 - Regel: Wenn Docker lokal nicht existiert UND CLAUDE.md sagt "Docker auf NAS" → sofort NAS-SSH
 
 **Standard Docker-Update-Workflow (bewährt):**
+
 1. `docker ps` — alle Container auflisten
 2. `docker images` — alle Images auflisten (nur Remote-Images pullen, lokale Builds skippen)
 3. `docker pull` für jedes Remote-Image
@@ -922,46 +971,49 @@ Oder Interval sehr hoch setzen: `"every": "8760h"` (1 Jahr)
 ### 2026-02-10 - Container-Update-Session (Reflect)
 
 **Container-zu-Compose-Mapping ist kritisch:**
+
 - SearXNG liegt in `searxng-docker/`, nicht `searxng/`
 - Mosquitto ist Teil des home-assistant Stacks (kein eigenes Compose)
 - MariaDB ist Teil des nextcloud Stacks
 - crawl4ai-n8n nutzt das gleiche n8n-Image, gehört aber zum Crawl4AI-Stack
 
 **Orphaned Container bei Updates:**
+
 - Nach Docker Compose v1→v2 Migration bleiben alte Container mit Prefix-Namen
 - Symptom: `Conflict. The container name "/xyz" is already in use`
 - Lösung: `docker compose down && docker compose up -d` oder `docker rm [alte-id]`
 - Port-Konflikte: Alten Container erst stoppen bevor neuer starten kann
 
 **Risiko-basiertes Update-Verfahren:**
+
 - Pull zuerst (ändert keine laufenden Container)
 - Kategorisiere: sicher → mittel → sensibel
 - Patch-Updates (z.B. MariaDB 11.4.9→11.4.10) sind sicher
 - Sensible Services (Vaultwarden, Datenbanken) nur nach Bestätigung
 
 **Dify entfernt (2026-03-24):**
+
 - War nie genutzt (0 Workflows, 0 Apps, 1x eingeloggt am 17.01.2026)
 - Alle 7 Container, 3 Volumes, Images entfernt
 - Cloudflare Route `dify.forensikzentrum.com` entfernt
 
 **n8n Image-Registry:**
+
 - Tatsächliches Image: `docker.n8n.io/n8nio/n8n:latest` (nicht `n8nio/n8n`)
 
 ### 2026-02-05 - Große Modelle: API statt Lokal
 
-**Modelle >10GB auf CPU-only NAS → API bevorzugen:**
-| Modell | Lokal (CPU) | API | Empfehlung |
-|--------|-------------|-----|------------|
-| glm-4.7-flash (19GB) | ~4-5 tok/s | sofort | ❌ Lokal, ✅ API |
-| qwen3:30b (18GB) | ~5 tok/s | - | ❌ Zu groß |
-| phi4:14b (9GB) | ~10 tok/s | - | ⚠️ Grenzwertig |
-| qwen3:8b (5GB) | ~25-30 tok/s | - | ✅ Lokal OK |
+**Modelle >10GB auf CPU-only NAS → API bevorzugen:** | Modell | Lokal (CPU) | API | Empfehlung |
+|--------|-------------|-----|------------| | glm-4.7-flash (19GB) | ~4-5 tok/s | sofort | ❌ Lokal, ✅ API |
+| qwen3:30b (18GB) | ~5 tok/s | - | ❌ Zu groß | | phi4:14b (9GB) | ~10 tok/s | - | ⚠️ Grenzwertig | |
+qwen3:8b (5GB) | ~25-30 tok/s | - | ✅ Lokal OK |
 
 **Faustregel:** Modelle >8GB = API nutzen (Z.AI, Moonshot, OpenRouter)
 
 ### 2026-03-24 - Bulk Update, Prune & Cloudflare Route Cleanup
 
 **Docker Image Update-Check — zuverlässige Methode:**
+
 ```bash
 # FALSCH: docker manifest inspect Digest ≠ RepoDigests → False Positives
 # RICHTIG: Pull + Image-ID-Vergleich (vorher/nachher)
@@ -972,15 +1024,19 @@ NEW_ID=$(docker inspect --format='{{.Id}}' "$img" | cut -c8-19)
 ```
 
 **Projekt-Renames beachten:**
+
 - `fedirz/faster-whisper-server` → `ghcr.io/speaches-ai/speaches` (Jan 2025)
 - Alte Docker Hub Images werden nicht mehr aktualisiert
 - Volume-Pfade können sich ändern (`/root/` → `/home/ubuntu/`)
 
 **Cloudflare api-upload-routes-v2.sh Bugs (gefixt):**
-1. jq: Backslash `\` am Zeilenende in Single Quotes → jq interpretiert als Literal, nicht Zeilenfortsetzung → Entfernen
+
+1. jq: Backslash `\` am Zeilenende in Single Quotes → jq interpretiert als Literal, nicht Zeilenfortsetzung →
+   Entfernen
 2. API: Timeout-Strings `"30s"` → API erwartet Integer `30` → jq `to_secs` Konvertierung
 
 **Cloudflare Route Audit — Container-Abgleich:**
+
 ```bash
 # Für jeden Route-Port prüfen ob ein Container lauscht:
 docker ps --format "{{.Ports}}" | grep "0.0.0.0:${PORT}->"
@@ -990,15 +1046,17 @@ docker ps --format "{{.Ports}}" | grep "0.0.0.0:${PORT}->"
 ```
 
 **Entfernte Services & Routes (2026-03-24/25):**
+
 - Dify (7 Container, ~800 MB RAM, ~4 GB Disk)
 - Coqui TTS / piper-tts (Projekt eingestellt 2023)
-- Cloudflare Routes identifiziert 2026-03-24, tatsächlich aus Remote-Config entfernt 2026-03-25:
-  portainer, aura, auto-claude, openhands, langflow, moltbot
+- Cloudflare Routes identifiziert 2026-03-24, tatsächlich aus Remote-Config entfernt 2026-03-25: portainer,
+  aura, auto-claude, openhands, langflow, moltbot
 - openclaw Route bleibt (Container läuft)
 - Neue Route hinzugefügt: medifox-admin.forensikzentrum.com → :8086
 - Fehlende DNS CNAMEs erstellt: searxng, agents
 
 **Custom Modelfile für CPU-Optimierung (+25% Speed):**
+
 ```bash
 cat > Modelfile-fast << 'EOF'
 FROM [model]:latest
@@ -1012,6 +1070,7 @@ docker exec ollama ollama create model-fast -f /root/.ollama/Modelfile-fast
 ```
 
 **Z.AI (Zhipu AI) für GLM-Modelle:**
+
 - API-Base: `https://api.z.ai/api/paas/v4`
 - GLM-4.7-Flash: **KOSTENLOS**
 - GLM-4.7: $0.60/$2.20 per 1M tokens
@@ -1020,13 +1079,16 @@ docker exec ollama ollama create model-fast -f /root/.ollama/Modelfile-fast
 ### 2026-04-08 - n8n Permissions & IPv6 Health-Checks
 
 **n8n >=2.14 erzwingt strenge Config-Permissions:**
+
 - Fehler: `EACCES: permission denied, open '/home/node/.n8n/config'`
 - Ursache: Config-Datei hat falsche Permissions (777/root) nach NAS-Reboot
 - Fix: `chmod 0600 /volume1/docker/n8n/data/config && chown 1000:1000 /volume1/docker/n8n/data/config`
 - n8n Container laeuft als `node` (UID 1000)
-- `N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=false` in docker-compose verhindert den Fehler NICHT (zu spaet geladen)
+- `N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=false` in docker-compose verhindert den Fehler NICHT (zu spaet
+  geladen)
 
 **IPv6 Health-Check Problem in Docker:**
+
 - `localhost` wird in `/etc/hosts` zu `::1` (IPv6) aufgeloest
 - n8n hoert nur auf `0.0.0.0` (IPv4) → `wget http://localhost:5678/healthz` → Connection refused
 - Fix: Health-Checks IMMER mit `127.0.0.1` statt `localhost`:
@@ -1040,6 +1102,7 @@ docker exec ollama ollama create model-fast -f /root/.ollama/Modelfile-fast
 ### 2026-04-01 - Docker Daemon Zombie-Prozess & Kimi-free-api
 
 **Zombie-dockerd blockiert Neustart (UGREEN-spezifisch):**
+
 - Symptom: `systemctl start docker` → `failed to start daemon, PID X is still running`
 - Ursache: Manuell gestarteter `sudo dockerd` Prozess läuft parallel zu systemd
 - UGREEN `docker_serv` (Go-basierter Monitoring-Dienst) spammt Logs — ist nur Symptom, NICHT die Ursache
@@ -1053,6 +1116,7 @@ docker exec ollama ollama create model-fast -f /root/.ollama/Modelfile-fast
 - Während "activating" ist der Socket bereits nutzbar (`docker info` funktioniert)
 
 **kimi-free-api Deployment:**
+
 - Compose: `/home/Jahcoozi/kimi/docker-compose.yml`
 - Port: 8011 → Container 8000
 - Image: `vinlic/kimi-free-api:latest`
@@ -1068,17 +1132,24 @@ docker exec ollama ollama create model-fast -f /root/.ollama/Modelfile-fast
 ### 2026-04-23 - faster-whisper 1.0.3 Metadata-Bug + LibreOffice headless Pipeline
 
 **faster-whisper 1.0.3 Import-Fehler `No module named 'requests'`:**
-- `faster-whisper 1.0.3` nutzt `requests` in `utils.py`, deklariert es aber NICHT als Dependency → `ModuleNotFoundError` beim Import
+
+- `faster-whisper 1.0.3` nutzt `requests` in `utils.py`, deklariert es aber NICHT als Dependency →
+  `ModuleNotFoundError` beim Import
 - Fix: `faster-whisper>=1.1.1,<2` UND explizit `requests>=2.31,<3` in requirements.txt
-- Debug-Pattern: `docker exec <container> python -c "import faster_whisper; print(faster_whisper.__version__)"` gibt den echten Import-Fehler
-- `faster-whisper` mit CPU-only auf NAS: `WhisperModel("small", device="cpu", compute_type="int8")` — int8 ist 2-3× schneller als float32
+- Debug-Pattern:
+  `docker exec <container> python -c "import faster_whisper; print(faster_whisper.__version__)"` gibt den
+  echten Import-Fehler
+- `faster-whisper` mit CPU-only auf NAS: `WhisperModel("small", device="cpu", compute_type="int8")` — int8 ist
+  2-3× schneller als float32
 
 **Whisper-Model-Cache persistieren:**
+
 - `/root/.cache/huggingface` als Docker-Volume (`fem_models:/root/.cache/huggingface`)
 - Lazy-Load beim ersten `/whisper_stt`-Call — erster Call ~20s (Model-Download), danach ~3s für 5s Audio
 - Volume überlebt `docker compose down && up` → kein Re-Download nach Container-Restart
 
 **LibreOffice headless PPTX → PNG Pipeline:**
+
 - Robuster via PDF-Zwischenschritt als direkt-PNG:
   ```
   soffice --headless --convert-to pdf deck.pptx  →  deck.pdf
@@ -1098,17 +1169,22 @@ docker exec ollama ollama create model-fast -f /root/.ollama/Modelfile-fast
 ### 2026-04-22 - FEM-Pipeline Deployment (edge-tts + Multi-Stage Rebuild)
 
 **edge-tts Version-Pinning (KRITISCH):**
+
 - Symptom: `edge-tts` Container liefert plötzlich `WSServerHandshakeError: 403 Forbidden`
 - Ursache: Microsoft hat Auth-Mechanismus verschärft, alte `edge-tts` Versionen (z.B. `==7.0.0`) bekommen 403
 - Fix: NIE fixed pinning auf alte Version — stattdessen Range:
   ```
   edge-tts>=7.0.2,<8
   ```
-- Lesson: TTS-Provider mit gestreamten WebSockets ändern Auth ohne Vorwarnung — Range-Pinning schützt vor Lock-In
+- Lesson: TTS-Provider mit gestreamten WebSockets ändern Auth ohne Vorwarnung — Range-Pinning schützt vor
+  Lock-In
 
 **docker compose Build-Cache vs. requirements.txt Update:**
-- Symptom: `requirements.txt` geändert, `docker compose up --build` neu gebaut, aber alte Package-Version im Container
-- Ursache: Docker nutzt Layer-Cache, wenn `COPY requirements.txt` Datei-Hash gleich aussieht (bei Range-Pin: `>=7.0.2,<8` blieb formal identisch)
+
+- Symptom: `requirements.txt` geändert, `docker compose up --build` neu gebaut, aber alte Package-Version im
+  Container
+- Ursache: Docker nutzt Layer-Cache, wenn `COPY requirements.txt` Datei-Hash gleich aussieht (bei Range-Pin:
+  `>=7.0.2,<8` blieb formal identisch)
 - Fix bei stabilem requirements.txt aber neuem Lockfile-Bedarf:
   ```bash
   docker compose build --no-cache <service>
@@ -1117,6 +1193,7 @@ docker exec ollama ollama create model-fast -f /root/.ollama/Modelfile-fast
 - Alternative: `pip install --upgrade --force-reinstall` im Dockerfile bei kritischen Paketen
 
 **FastAPI + python-pptx Deployment-Pattern (fem-pipeline):**
+
 - Stack: FastAPI + uvicorn[standard] + python-pptx + lxml + ffmpeg (System-Pkg) + edge-tts
 - `requirements.txt` mit exakten Pins für Stabilität:
   ```
@@ -1132,6 +1209,7 @@ docker exec ollama ollama create model-fast -f /root/.ollama/Modelfile-fast
 - WICHTIG: `python-multipart` für FastAPI File-Uploads explizit listen (sonst 422 Errors)
 
 **Network-Mismatch zwischen n8n und Service-Container:**
+
 - Symptom: n8n erreicht neuen Service nicht (`ECONNREFUSED` oder `Name or service not known`)
 - Ursache: Service in `n8n_default` Network, n8n selbst aber in `shared-services` Network
 - Diagnose:
@@ -1140,7 +1218,8 @@ docker exec ollama ollama create model-fast -f /root/.ollama/Modelfile-fast
   docker inspect <new-service> --format '{{json .NetworkSettings.Networks}}'
   ```
 - Fix: In compose.yml für neuen Service `networks: [shared-services]` setzen + `external: true`
-- Lesson: Bei NAS mit zentralem n8n IMMER prüfen, in welchem Network n8n läuft, BEVOR neuer Service deployed wird
+- Lesson: Bei NAS mit zentralem n8n IMMER prüfen, in welchem Network n8n läuft, BEVOR neuer Service deployed
+  wird
 
 ---
 
@@ -1169,9 +1248,11 @@ docker exec ollama ollama create model-fast -f /root/.ollama/Modelfile-fast
 
 ## 2026-05-17 — „Port already allocated" Decision-Tree (NAS-bewährt)
 
-**Symptom:** `Error response from daemon: driver failed programming external connectivity ... Bind for 0.0.0.0:PORT failed: port is already allocated`
+**Symptom:**
+`Error response from daemon: driver failed programming external connectivity ... Bind for 0.0.0.0:PORT failed: port is already allocated`
 
 **Diagnose-Pfad:**
+
 ```
 1. sudo ss -tlnp | grep ":PORT"       ← KRITISCH: ohne sudo zeigt es keine PIDs
    sudo lsof -i :PORT
@@ -1200,8 +1281,11 @@ docker exec ollama ollama create model-fast -f /root/.ollama/Modelfile-fast
 ```
 
 **Vaultwarden-Spezifika (seit Version 1.29+):**
-- Separater WebSocket-Port `3012:3012` ist **obsolet** — WebSockets laufen über Port 80 (Rocket Server unified)
-- Bei Restart-Problemen ruhig den 3012-Mapping aus `docker-compose.yml` entfernen, das macht die Migration einfacher
+
+- Separater WebSocket-Port `3012:3012` ist **obsolet** — WebSockets laufen über Port 80 (Rocket Server
+  unified)
+- Bei Restart-Problemen ruhig den 3012-Mapping aus `docker-compose.yml` entfernen, das macht die Migration
+  einfacher
 
 ---
 
@@ -1211,16 +1295,18 @@ docker exec ollama ollama create model-fast -f /root/.ollama/Modelfile-fast
 
 Layout: `jarvis/{brain,deploy/nas/docker-compose.yml}`
 
-| Pfad in compose.yml | Wohin es zeigt | Ergebnis |
-|---|---|---|
+| Pfad in compose.yml    | Wohin es zeigt              | Ergebnis                         |
+| ---------------------- | --------------------------- | -------------------------------- |
 | `context: ../../brain` | `/<parent of jarvis>/brain` | ❌ `path "/.../brain" not found` |
-| `context: ../brain` | `jarvis/brain` | ✅ funktioniert |
+| `context: ../brain`    | `jarvis/brain`              | ✅ funktioniert                  |
 
-Mental-Modell: vom Compose-File aus, NICHT vom CWD. Vor dem ersten `docker compose build` lieber `ls -la $(dirname compose.yml)/<context>/Dockerfile` prüfen.
+Mental-Modell: vom Compose-File aus, NICHT vom CWD. Vor dem ersten `docker compose build` lieber
+`ls -la $(dirname compose.yml)/<context>/Dockerfile` prüfen.
 
 **🟡 Container-Architecture-Discovery ohne Source-Zugriff**
 
 Wenn `/volume1/docker/<svc>/` von Auto-Klassifizierung gesperrt ist, geht trotzdem:
+
 ```bash
 ssh nas 'docker inspect <container>' | python3 -c '
 import json, sys, re
@@ -1241,24 +1327,27 @@ for c in json.load(sys.stdin):
 '
 ```
 
-Liefert Stack-Overview ohne Source-Code zu lesen. Wichtig für fremde NAS-Setups oder Multi-Tenant-Docker-Hosts.
+Liefert Stack-Overview ohne Source-Code zu lesen. Wichtig für fremde NAS-Setups oder
+Multi-Tenant-Docker-Hosts.
 
 **🟡 Persistent Container-Identity via Volume**
 
-Pattern für Services mit krypto-Keys (Ed25519, Matter-Pairing, OAuth-tokens): Volume-Mount für `/data`, in dem JSON-Dateien mit Identity persistieren. Image-Rebuild überschreibt sie NICHT:
+Pattern für Services mit krypto-Keys (Ed25519, Matter-Pairing, OAuth-tokens): Volume-Mount für `/data`, in dem
+JSON-Dateien mit Identity persistieren. Image-Rebuild überschreibt sie NICHT:
 
 ```yaml
 services:
   myservice:
     image: myservice:latest
     volumes:
-      - service-data:/data         # benannt, überlebt rm
+      - service-data:/data # benannt, überlebt rm
 
 volumes:
-  service-data:                    # docker compose down -v zum echten Reset
+  service-data: # docker compose down -v zum echten Reset
 ```
 
 Code-Pattern (Python):
+
 ```python
 DEVICE_FILE = Path(os.getenv("DEVICE_KEY", "/data/device.json"))
 if DEVICE_FILE.exists():
@@ -1276,17 +1365,21 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -fsS http://localhost:8765/healthz || exit 1
 ```
 
-`docker ps` zeigt dann `(healthy)`/`(unhealthy)` — keine externen Probes nötig. `start_period=10s` verhindert false-negative beim Boot.
+`docker ps` zeigt dann `(healthy)`/`(unhealthy)` — keine externen Probes nötig. `start_period=10s` verhindert
+false-negative beim Boot.
 
 **🔵 OpenRouter-/SDK-kompatible Container ohne Auth-Vendor-Lock**
 
-OpenRouter ist `pip install openai` + custom base_url — kein Vendor-spezifisches SDK. Container braucht nur `OPENROUTER_API_KEY` ENV, nicht ANTHROPIC_API_KEY + OPENAI_API_KEY + GOOGLE_API_KEY parallel. Slim-Image bleibt slim.
+OpenRouter ist `pip install openai` + custom base_url — kein Vendor-spezifisches SDK. Container braucht nur
+`OPENROUTER_API_KEY` ENV, nicht ANTHROPIC_API_KEY + OPENAI_API_KEY + GOOGLE_API_KEY parallel. Slim-Image
+bleibt slim.
 
 ### 2026-06-04 — Stack SICHER entfernen + Quell-Ort via compose-Labels
 
 **🟡 Wiederverwendbares Pattern: einen ganzen Stack rückbauen (backup-first)**
 
-Reihenfolge ist wichtig — erst sichern, dann erst `down -v`. `docker compose down -v` löscht die benannten Volumes UNWIDERRUFLICH.
+Reihenfolge ist wichtig — erst sichern, dann erst `down -v`. `docker compose down -v` löscht die benannten
+Volumes UNWIDERRUFLICH.
 
 ```bash
 # 0. Quell-Ort + Volumes + Ports erfassen (siehe Discovery unten)
@@ -1306,54 +1399,86 @@ rm -rf <projektordner>
 # 4. Kontrolle
 docker ps -a --filter "name=<prefix>"; docker volume ls | grep <prefix>; docker network ls | grep <net>
 ```
-- **Wiederherstellung später:** tar auspacken → `docker compose up -d` → `pg_restore` des Dumps in die frische DB.
-- `_archived/` ist die richtige Ablage (CLAUDE.md: „do not delete") — Backups bleiben erhalten, Stack-Footprint (RAM/CPU/Disk) ist weg.
-- Diana bestätigt Entfernung in zwei Stufen: erst der laufende Stack, dann separat der verwaiste Quellordner — Backup deckt beides ab, also vor Stufe 1 schon alles sichern.
+
+- **Wiederherstellung später:** tar auspacken → `docker compose up -d` → `pg_restore` des Dumps in die frische
+  DB.
+- `_archived/` ist die richtige Ablage (CLAUDE.md: „do not delete") — Backups bleiben erhalten,
+  Stack-Footprint (RAM/CPU/Disk) ist weg.
+- Diana bestätigt Entfernung in zwei Stufen: erst der laufende Stack, dann separat der verwaiste Quellordner —
+  Backup deckt beides ab, also vor Stufe 1 schon alles sichern.
 
 **🟡 Quell-Ort eines fremden/vergessenen Containers via compose-Labels finden**
 
 Wenn unklar ist, wo ein Container herkommt (welcher Ordner, welche compose-Datei):
+
 ```bash
 docker inspect <container> --format '{{range $k,$v := .Config.Labels}}{{$k}}={{$v}}{{"\n"}}{{end}}' | grep -i compose
 ```
+
 Liefert direkt:
+
 - `com.docker.compose.project.config_files` → exakter Pfad der docker-compose.yml
 - `com.docker.compose.project.working_dir` → Projektordner
-- `com.docker.compose.project` → Compose-Projektname (für `docker ps --filter label=com.docker.compose.project=<name>`)
+- `com.docker.compose.project` → Compose-Projektname (für
+  `docker ps --filter label=com.docker.compose.project=<name>`)
 
-So fand ich `rag-mc-n8n` → `/home/Jahcoozi/rag-masterclass-deploy/` (lag NICHT in `/volume1/docker/`, sondern im Home-Verzeichnis — Quellordner liegen nicht immer im Standard-Docker-Pfad).
+So fand ich `rag-mc-n8n` → `/home/Jahcoozi/rag-masterclass-deploy/` (lag NICHT in `/volume1/docker/`, sondern
+im Home-Verzeichnis — Quellordner liegen nicht immer im Standard-Docker-Pfad).
 
 **🔵 Log: rag-mc-n8n / rag-masterclass-deploy entfernt (2026-06-04)**
-- Zweiter, eigenständiger n8n-Stack (n8n 1.73.1 + eigenes pgvector `rag-mc-postgres`), Port `127.0.0.1:5679`, Projekt `rag-masterclass-deploy` im Home-Verzeichnis — getrennt vom produktiven n8n (5678).
-- „RAG Masterclass Kit" — Demo-/Übungs-Baukasten. Ungenutzt: 0 Executions, leerer Chat-Verlauf, nur 2 Test-Dokumente / 9 Chunks.
-- Entfernt: 2 Container + 2 Volumes (`rag-mc-n8n-data`, `rag-mc-postgres-data`) + Netzwerk `rag-masterclass-net` + Quellordner. Backup in `/volume1/docker/_archived/rag-masterclass-deploy-removed-20260603/`.
+
+- Zweiter, eigenständiger n8n-Stack (n8n 1.73.1 + eigenes pgvector `rag-mc-postgres`), Port `127.0.0.1:5679`,
+  Projekt `rag-masterclass-deploy` im Home-Verzeichnis — getrennt vom produktiven n8n (5678).
+- „RAG Masterclass Kit" — Demo-/Übungs-Baukasten. Ungenutzt: 0 Executions, leerer Chat-Verlauf, nur 2
+  Test-Dokumente / 9 Chunks.
+- Entfernt: 2 Container + 2 Volumes (`rag-mc-n8n-data`, `rag-mc-postgres-data`) + Netzwerk
+  `rag-masterclass-net` + Quellordner. Backup in
+  `/volume1/docker/_archived/rag-masterclass-deploy-removed-20260603/`.
 - Produktives n8n (5678) lief getrennt → nicht betroffen.
 
 ### 2026-06-27 — Remotion-Studio Crash = Browser-Übersetzung + node_modules-Patch-Strategie
 
-**🔴 `NotFoundError: Failed to execute 'removeChild' on 'Node'` im Remotion-Studio = Browser-Auto-Übersetzung, KEIN Remotion-Bug**
-- Symptom in den Container-Logs: `An error occurred in the Studio` + `NotFoundError: ... removeChild ... not a child of this node` mit Stacktrace in `react-dom.development.js`.
-- Ursache: Chrome/Edge übersetzt die englische Studio-UI automatisch (Diana ist `de_DE`), fügt dabei Text-Nodes ein/entfernt sie → kollidiert mit Reacts Reconciler → Crash. Passiert im **gerendeten UI im Browser**, nicht in der Composition (`HelloWorld.tsx` etc. unbeteiligt).
-- **Falsche Fährte:** Downgrade auf eine ältere Remotion-Version. Bringt nichts (Server-seitig läuft v4 sauber: `Server ready`, `Built in …ms`) und holt alte Vulnerabilities/APIs zurück.
-- **Quick-Fix (browserseitig):** Übersetzen-Symbol in der Adressleiste → „Diese Seite nie übersetzen" / Inkognito / Auto-Translate für `192.168.22.90`+`localhost` aus.
-- **Dauerhafter Fix (server-seitig):** `translate="no"` am `<html>` + `<meta name="google" content="notranslate">` in die Studio-HTML-Shell injizieren. Template liegt in `node_modules/@remotion/studio-shared/dist/studio-html.js` (Generator `studioHtml`, aufgerufen via `BundlerInternals.indexHtml`). Nach Patch: Studio-Tab hart neu laden (Strg+Shift+R).
+**🔴 `NotFoundError: Failed to execute 'removeChild' on 'Node'` im Remotion-Studio = Browser-Auto-Übersetzung,
+KEIN Remotion-Bug**
+
+- Symptom in den Container-Logs: `An error occurred in the Studio` +
+  `NotFoundError: ... removeChild ... not a child of this node` mit Stacktrace in `react-dom.development.js`.
+- Ursache: Chrome/Edge übersetzt die englische Studio-UI automatisch (Diana ist `de_DE`), fügt dabei
+  Text-Nodes ein/entfernt sie → kollidiert mit Reacts Reconciler → Crash. Passiert im **gerendeten UI im
+  Browser**, nicht in der Composition (`HelloWorld.tsx` etc. unbeteiligt).
+- **Falsche Fährte:** Downgrade auf eine ältere Remotion-Version. Bringt nichts (Server-seitig läuft v4
+  sauber: `Server ready`, `Built in …ms`) und holt alte Vulnerabilities/APIs zurück.
+- **Quick-Fix (browserseitig):** Übersetzen-Symbol in der Adressleiste → „Diese Seite nie übersetzen" /
+  Inkognito / Auto-Translate für `192.168.22.90`+`localhost` aus.
+- **Dauerhafter Fix (server-seitig):** `translate="no"` am `<html>` +
+  `<meta name="google" content="notranslate">` in die Studio-HTML-Shell injizieren. Template liegt in
+  `node_modules/@remotion/studio-shared/dist/studio-html.js` (Generator `studioHtml`, aufgerufen via
+  `BundlerInternals.indexHtml`). Nach Patch: Studio-Tab hart neu laden (Strg+Shift+R).
 
 **🔴 Patches an `node_modules` gehören in den Dockerfile (Build-Zeit), NICHT in den laufenden Container**
-- Bei Images, die Deps per `RUN npm install` bauen, liegt `node_modules` **im Image** — ein `docker exec ... sed -i` im laufenden Container überlebt zwar `restart`, aber **keinen Rebuild / kein recreate**.
-- Sauberes Pattern: kleines idempotentes Patch-Script ins Projekt legen, im Dockerfile nach `npm install` per `COPY` + `RUN bash patch.sh` ausführen → jeder Rebuild re-appliziert automatisch. Script bricht laut ab, wenn der erwartete Marker fehlt (fängt Upstream-Versionsänderungen ab).
+
+- Bei Images, die Deps per `RUN npm install` bauen, liegt `node_modules` **im Image** — ein
+  `docker exec ... sed -i` im laufenden Container überlebt zwar `restart`, aber **keinen Rebuild / kein
+  recreate**.
+- Sauberes Pattern: kleines idempotentes Patch-Script ins Projekt legen, im Dockerfile nach `npm install` per
+  `COPY` + `RUN bash patch.sh` ausführen → jeder Rebuild re-appliziert automatisch. Script bricht laut ab,
+  wenn der erwartete Marker fehlt (fängt Upstream-Versionsänderungen ab).
   ```dockerfile
   RUN npm install
   COPY patch-studio-html.sh ./
   RUN bash patch-studio-html.sh   # idempotent, exit 1 wenn Marker fehlt
   ```
-- Deploy danach: `docker compose build` → `docker compose up -d` (recreate). Verifikation, dass der Patch im neuen Container UND im ausgelieferten HTML steckt:
+- Deploy danach: `docker compose build` → `docker compose up -d` (recreate). Verifikation, dass der Patch im
+  neuen Container UND im ausgelieferten HTML steckt:
   ```bash
   docker exec <c> grep -n 'translate=' /app/node_modules/@remotion/studio-shared/dist/studio-html.js
   curl -s http://localhost:<port>/ | grep -o '<html[^>]*>'
   ```
 
 **🟡 Mount-Diagnose: liegt eine Datei im Image oder im Bind-Mount?**
-- Host-`npm ls` zeigte `(empty)` + `node_modules`-Count 0, obwohl das Studio lief → Deps stecken im Image, nicht auf dem Host.
+
+- Host-`npm ls` zeigte `(empty)` + `node_modules`-Count 0, obwohl das Studio lief → Deps stecken im Image,
+  nicht auf dem Host.
 - Schnell-Check, was tatsächlich vom Host gemountet ist (hier nur `./src` + `./out`, der Rest im Image):
   ```bash
   docker inspect <c> --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}'
@@ -1362,4 +1487,49 @@ So fand ich `rag-mc-n8n` → `/home/Jahcoozi/rag-masterclass-deploy/` (lag NICHT
 - Merke: Was NICHT im Bind-Mount liegt, kann nur über Image-Rebuild dauerhaft geändert werden.
 
 **🟡 Auto-Mode-Classifier blockt `sed -i` auf vorbestehende `node_modules`-Dateien im Container — zu Recht**
-- Reasoning: „Irreversible Local Destruction … patch should go in the project's own source tree." Deckt sich exakt mit der Build-Zeit-Strategie oben. Nicht umgehen — stattdessen Dockerfile-Patch.
+
+- Reasoning: „Irreversible Local Destruction … patch should go in the project's own source tree." Deckt sich
+  exakt mit der Build-Zeit-Strategie oben. Nicht umgehen — stattdessen Dockerfile-Patch.
+
+### 2026-07-29 — n8n-Migrations-Selbstheilung + UGREEN-Rechte-Fallen (Update 2.30.5→2.32.6)
+
+**🟡 n8n-Migrationsfehler `duplicate column` heilt sich oft per Auto-Restart selbst — NICHT sofort in die DB
+eingreifen**
+
+- Symptom beim Image-Update: erster Boot crasht mit `SQLITE_ERROR: duplicate column name: <col>` in
+  `Starting migration <Name>` — sieht nach kaputter DB aus.
+- Ursache: früherer Crash (siehe `crash.journal`) hat eine Migration teilweise angewendet (Spalte existiert),
+  ohne sie in der `migrations`-Tabelle zu verbuchen.
+- `restart: unless-stopped` startet den Container neu → **zweiter Boot lief durch**: Migrationen verbucht,
+  `Recorded version change: 2.30.5 -> 2.32.6`, alle Workflows aktiviert.
+- Diagnose-Reihenfolge daher:
+  `docker inspect <c> --format 'RestartCount={{.RestartCount}} Status={{.State.Status}} ExitCode={{.State.ExitCode}}'` +
+  **komplette** Logs lesen (`docker logs`, nicht nur `grep error` — der Fehler vom ersten Boot steht VOR dem
+  erfolgreichen zweiten Boot im selben Log). Erst wenn der Container dauerhaft im Restart-Loop hängt, manuell
+  an `migrations`-Tabelle/Schema arbeiten.
+- Backup-first bleibt Pflicht: vor dem Pull `docker compose stop n8n` → `database.sqlite` + `.env`
+  (N8N_ENCRYPTION_KEY!) + compose nach `/volume1/docker/_archived/n8n-preupdate-<stamp>/`.
+- Rollback nach gelungener Migration = altes Image UND DB-Backup zurückspielen — Image allein reicht nicht,
+  die DB ist vorwärts migriert.
+
+**🔴 UGREEN-Rechte-Falle: `chmod go-w` machte aus `777` → `000` (nicht `755`)**
+
+- Auf dem UGREEN-BTRFS mit ACLs (`drwxrwxrwx+`) lieferte relatives `chmod go-w` ein komplett gesperrtes
+  Verzeichnis (`d---------`) — User konnte sein eigenes Home nicht mehr betreten
+  (`Could not chdir to home directory`).
+- Zusätzlich gehen die erweiterten ACL-Einträge (`+`) bei chmod-Reparaturen verloren.
+- Regel: Rechte auf dem NAS IMMER explizit setzen (`chmod 755 <dir>`), NIE relativ (`go-w`, `a+r`, …). Vor
+  Rechte-Änderungen `getfacl -p <dir>` sichern.
+
+**🟡 SSH-Key-Login aufs NAS scheitert trotz korrektem Key — zwei getrennte Ursachen prüfen**
+
+1. `~/.ssh`/`authorized_keys` gehören `root` statt dem User (passiert nach UGREEN-Firmware-Updates) →
+   `ssh-copy-id` scheitert mit `Permission denied` beim Schreiben. Fix: per Passwort-Login +
+   `sudo chown -R user:gruppe ~/.ssh && chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys`.
+2. sshd `StrictModes=yes` (Default) verweigert Pubkey-Auth stillschweigend, solange das **Home**
+   group-/world-writable ist (UGREEN-Default ist `777`!) → Home auf `755` setzen, sonst hilft auch ein korrekt
+   eingetragener Key nicht.
+
+- ssh-copy-id/Passwort-Login aus Claude-Session heraus geht nicht (kein TTY, `ssh-askpass` fehlt auf Kali) →
+  User macht das im echten Terminal; `-o PubkeyAuthentication=no` verhindert dabei
+  `Too many authentication failures` durch die 4 Agent-Keys.
