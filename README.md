@@ -20,6 +20,7 @@ Dieses Repository enthält selbst-verbessernde Skills für Claude Code, maßgesc
 | **[open-webui](./open-webui/SKILL.md)**                     | Open WebUI Integration                                                                             | automatisch                   |
 | **[business-strategie](./business-strategie/SKILL.md)**     | Geschäftsstrategieplanung                                                                          | automatisch                   |
 | **[grill-me-codex](./grill-me-codex/SKILL.md)**             | Architekt-Arbeiter-Workflow: Claude plant (Interview + TDD), Codex implementiert, Claude validiert | `/grill-me-codex`, "grill me" |
+| **[rollen-workflow](./rollen-workflow/SKILL.md)**           | Multi-Rollen-Workflow: eine Rolle pro Ordner mit CLAUDE.md-Rollenkarte, Handoff per Datei (inkl. kopierbarer Ordner-Vorlage) | "Rollen-Workflow", "Handoff"  |
 
 ### Instanz-Skills (maschinenspezifisch)
 
