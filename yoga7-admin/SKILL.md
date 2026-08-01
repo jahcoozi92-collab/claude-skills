@@ -1589,3 +1589,23 @@ Alternative bevor vi: Heredoc-Pipe statt Editor öffnen.
 **🟡 Destruktive CopyQ-Löschungen sind User-initiiert**
 - Der Auto-Mode-Classifier lässt die Diagnose (lesen, zählen, maskiert anzeigen) durch, nicht aber den Löschlauf.
 - Sanktionierte Arbeitsteilung: Claude schreibt das Skript in den Scratchpad, der User startet es mit `copyq eval - < /pfad/skript.js`.
+
+### 2026-08-01 — Video-Analyse-Pipeline (X/Twitter, lokale Videos, YouTube)
+
+**🔴 X/Twitter-Video-Posts: Metadaten via fxtwitter-API statt x.com**
+- x.com liefert ohne Login keine Inhalte; `api.fxtwitter.com/i/status/<tweet-id>` gibt Autor, Text, Video-Metadaten, Engagement als JSON — direkt per WebFetch nutzbar.
+
+**🔴 Lokale Videos (Screen-Recordings) komplett auswerten: Frames + Audio getrennt**
+- Folien/Szenen: `ffmpeg -i video.mp4 -vf "select='gt(scene,0.25)'" -vsync vfr frames/scene_%04d.jpg` → nur echte Szenenwechsel (26-min-Talk ≈ 39 Frames), dann als Bilder lesen.
+- Audio: `ffmpeg -i video.mp4 -vn -ac 1 -ar 16000 audio.wav`, dann faster-whisper (`base.en`, `compute_type="int8"`, `vad_filter=True`) — 26 min CPU-Transkription in wenigen Minuten, gute Qualität bei klarem Konferenz-Audio.
+- Frame-Dateinamen mit `-frame_pts 1` sind PTS-Werte: Sekunden ≈ pts/120 (timebase-abhängig, gegen Videodauer kalibrieren).
+
+**🔴 PEP 668: `pip install` ist auf Kali system-blockiert (externally-managed)**
+- Fehlerbild: `note: ... PEP 668`. NICHT `--break-system-packages` nutzen — stattdessen venv im Scratchpad: `python3 -m venv $SP/venv && $SP/venv/bin/pip install faster-whisper`.
+
+**🔴 YouTube-Untertitel: yt-dlp „The page needs to be reloaded" → Client-Fallback**
+- Default-Client (tv/web) scheitert an YouTube-Anti-Bot; Fallback durchprobieren: `yt-dlp --skip-download --write-auto-subs --sub-langs en --extractor-args "youtube:player_client=android"` — android lief hier sofort durch (ios/web_embedded als weitere Kandidaten).
+- VTT bereinigen: Tags strippen (`sed -E 's/<[^>]*>//g'`), Timestamps/Header greppen, aufeinanderfolgende Duplikate entfernen — auto-subs wiederholen jede Zeile mehrfach.
+
+**🟡 Virale KI-Tweets erst faktenchecken, dann analysieren**
+- Beispiel dieser Session: Tweet behauptete „Anthropic-Prompting-Workshop von den Machern" — das Video war real ein Google-Cloud-Vortrag (Claude Code auf GCP, Ivan Nardini). Erst Quelle identifizieren (fxtwitter + WebSearch), dann Inhalt bewerten; Diskrepanz dem User explizit nennen.
