@@ -182,13 +182,18 @@ formatMessage() → parseStructuredResponse()
 
 ### Embedding-Pipeline: Dokumente in rag_chunks einfuegen
 
-> ⚠️ **AKTUELLER STAND (seit 2026-06-29): Cohere `embed-v4.0`, 1536 Dimensionen.**
-> Alle Angaben zu `text-embedding-3-large` / 3072 in diesem Dokument sind **historisch**.
-> Details im Abschnitt „2026-06-29 — Migration Embeddings OpenAI → Cohere embed-v4 (1536)".
+> ⚠️ **AKTUELLER STAND (seit 2026-08-01): Ollama `bge-m3:latest`, 1024 Dimensionen, lokal.**
+> Zielspalte ist **`embedding_bge`** (halfvec 1024), RPC **`match_qm_chunks_bge`**.
+> Alle Angaben zu Cohere `embed-v4.0` / 1536 **und** zu `text-embedding-3-large` / 3072
+> in diesem Dokument sind **historisch**. Der Cohere-Trial-Key ist seit 2026-07-31 in HTTP 429.
+> Details im Abschnitt „2026-08-01 — Cohere-Ausfall, Migration auf lokales bge-m3".
 
 1. Dokument in Chunks splitten (nach ## Sektionen, max ~2000 chars)
-2. Embeddings generieren: **Cohere `embed-v4.0`**, `output_dimension: 1536`,
-   `input_type: 'search_document'` (für Queries: `'search_query'`)
+2. Embeddings generieren: **Ollama `bge-m3:latest`** (1024d) über
+   `POST http://ollama:11434/api/embed` mit `{model, input: [texte]}` — max. 3–5 Texte pro Request.
+   Einfacher: Chunks **ohne** Vektor einspielen (siehe Ingest-Webhook unten) und den Workflow
+   `RAG Embedding Backfill (bge-m3 lokal)` nachziehen lassen.
+   *(historisch: Cohere `embed-v4.0` 1536d — Key seit 2026-07-31 in HTTP 429)*
 3. Einfuegen via Supabase REST API: POST `/rest/v1/rag_chunks` mit `{content, metadata, embedding}`
 4. Trigger `sync_rag_chunks_embedding_half` konvertiert automatisch zu halfvec **und nullt `embedding` danach**
    → fehlende Embeddings IMMER über `embedding_half IS NULL` suchen, NIE über `embedding IS NULL`
@@ -816,9 +821,198 @@ Einrichtungsweit schaltbar über `Administration → Dokumentation → Grundeins
 „Planung" → Einstellungen zum Strukturmodell (SIS) → „Grundbotschaft anzeigen"`; das Ausblenden wirkt
 auch auf das CarePad. Quelle: MediFox stationär Update-Info 01|2017 (v4.1), S. 3.
 
-**Offen:** 18 `structured_click_path`-Chunks (IDs 2414–2446) haben weiterhin kein Embedding —
-Cohere liefert für diese Inhalte HTTP 500. Geringe Auswirkung (inhaltsgleich mit `click_paths`,
-per FTS auffindbar), aber ungelöst.
+**~~Offen:~~ ✅ GELÖST 2026-08-01 — und die Diagnose war falsch.** Die 18
+`structured_click_path`-Chunks (IDs 2414–2446) bekamen kein Embedding, weil ihr **`content`
+`NULL` war** — nicht wegen eines Cohere-Fehlers. Jeder Embedding-Lauf holte sie erneut,
+verwarf sie im Filter (`content.length < 20`) und verlor dadurch dauerhaft Durchsatz
+(50 geholt → nur 32 verarbeitet). Sie wurden archiviert und gelöscht; sie waren ohnehin
+redundant zu den Einträgen in `click_paths`.
+
+> **Lehre:** Bei „Embedding-Dienst wirft Fehler" zuerst `content IS NULL` und `length(content)`
+> prüfen, bevor der externe Dienst verdächtigt wird. Ein Filter, der stillschweigend Zeilen
+> überspringt, sieht in der Statistik aus wie ein API-Problem.
+
+---
+
+## 2026-08-01 — Cohere-Ausfall, Migration auf lokales bge-m3, Wissens-Ausbau
+
+### 🚨 Der Auslöser: Cohere-Trial-Kontingent erschöpft
+
+Am **2026-07-31** lief der Cohere-Trial-Key in **HTTP 429** („1000 API calls / month").
+Betroffen war damit **beides gleichzeitig**: die Query-Embeddings der Vektorsuche **und**
+der Reranker. Der Chat lief weiter und antwortete formal sauber — sagte aber selbst
+„Ratenlimit des Suchdienstes" und lieferte keine Treffer mehr.
+
+> **Diagnose-Falle:** `grounding_score` blieb bei 0,82–0,83, obwohl die Suche tot war.
+> Der Score bewertet die Formulierung, **nicht** ob echte Treffer vorlagen.
+> Bei Qualitätsverdacht immer den `answer`-Text selbst lesen, nicht nur den Score.
+
+Parallel dazu: **OpenRouter „Payment required"** vom 27.–30.07. (4 Tage Totalausfall),
+davor einzelne Tage am 21./22.07. Zwei unabhängige externe Quotas, zwei Ausfälle in einer Woche.
+
+### Neue Live-Architektur (Stand 2026-08-01)
+
+| Element | vorher | **jetzt** |
+|---|---|---|
+| Embedding-Modell | Cohere `embed-v4.0` (1536d) | **Ollama `bge-m3:latest` (1024d)**, lokal |
+| Vektorspalte | `embedding_half` halfvec(1536) | **`embedding_bge` halfvec(1024)** |
+| HNSW-Index | `idx_rag_chunks_embedding_half_hnsw` | **`idx_rag_chunks_embedding_bge_hnsw`** (m=16, ef=64) |
+| RPC im Abruf-Node | `match_qm_chunks` | **`match_qm_chunks_bge`** |
+| n8n-Node | `embeddingsCohere` | **`embeddingsOllama`**, Cred `5lTPbsBoe59VZ1LX` |
+| Reranker | Cohere `rerank-v3.5` | **aus** (`useReranker: false`, Verbindung entfernt) |
+
+Umschalt-Skript mit Rollback: `switch_to_bge.py --revert` (im Scratchpad, sichert vorher den Workflow).
+
+**Gemessene Latenzen `bge-m3` auf 6 CPU-Kernen (keine GPU):**
+
+| Aufgabe | Zeit |
+|---|---|
+| Suchanfrage (kurzer Text) | **0,5 s** — für den Live-Chat unproblematisch |
+| Dokument-Chunk (~2000 Zeichen) | **6,5 s** — nur für Backfill relevant |
+| Voller Backfill 2726 Chunks | ~6 h (mit Systemlast), 62 Läufe |
+
+Ollama erreicht n8n als `http://ollama:11434` (Credential `ollamaApi`, kein Key nötig).
+Batch geht über `input: [...]` als Array — spart Roundtrips, aber **max. 3–5 Texte pro Request**:
+25 Texte auf einmal führten zu `ECONNABORTED`, und unter Systemlast reißen selbst 5er-Batches
+das 600-s-Timeout. Robuste Einstellung: `BATCH=3`, Node-Timeout 1800 s, `retryOnFail`.
+
+### ⭐ Ingest-Webhook — Chunks einspielen ohne Key-Materialisierung
+
+Löst das in diesem Dokument mehrfach beschriebene Freigabe-Problem beim DB-Write.
+Workflow **`RAG Chunk Ingest (Webhook)`** (`wJ6Eg6RAxFiWW9oh`):
+
+```
+POST /webhook/rag-chunk-ingest   {"chunks":[{content, metadata, verified}, ...]}
+  → Code „Build Insert"  (filtert content < 200 Zeichen, baut JSON-Array)
+  → HTTP POST /rest/v1/rag_chunks   (predefinedCredentialType: supabaseApi)
+  → Summary  {erwartet, eingefuegt}
+```
+
+Der Service-Key bleibt im n8n-Credential-Store; von außen wird nur JSON geschickt.
+Bewährt mit 341 Chunks in Batches à 20–25. Zum Nachziehen der Vektoren dient
+**`RAG Embedding Backfill (bge-m3 lokal)`** (`gT5hye8d2kTPmnn6`), der alle Zeilen mit
+`embedding_bge IS NULL` abarbeitet — neu eingespielte Chunks also automatisch mitnimmt.
+
+### Reranker: n8n lässt sich NICHT auf einen lokalen Dienst umbiegen
+
+- n8n liefert **nur** `RerankerCohere` — keinen generischen Reranker-Node.
+- Die `cohereApi`-Credential hat zwar ein Base-URL-Feld, aber der Node reicht es **nicht** durch:
+  `@langchain/cohere/dist/client.cjs` ruft `new CohereClient({ token: apiKey })` ohne `environment`
+  auf → immer `https://api.cohere.com/v1/rerank`. Es gibt auch keine Env-Variable dafür.
+- Anbindung eines lokalen Dienstes erfordert einen Patch dieser Datei im Container
+  (überlebt kein n8n-Update → in `ops/n8n/update_n8n.sh` verankern).
+
+**Lokaler Reranker steht bereit, aber gestoppt:** `/volume1/docker/reranker/` (Infinity, Port 8009).
+Modellvergleich unter Last, 12 Dokumente:
+
+| Modell | Deutsch | 12 × 2000 Z. |
+|---|---|---|
+| `BAAI/bge-reranker-v2-m3` (568M) | sehr gut (0,90) | 35 s |
+| `jinaai/jina-reranker-v2-base-multilingual` (278M) | gut (0,69) | 21 s |
+| `BAAI/bge-reranker-base` (278M) | **unbrauchbar** (0,07–0,17, Reihenfolge unverändert) | 36 s |
+
+`bge-reranker-base` ist auf Englisch/Chinesisch trainiert — für deutsche Inhalte nicht verwenden.
+Die Kosten skalieren **linear mit der Textlänge**; unsere Chunks tragen ~300 Zeichen Kopfzeilen,
+die für die Relevanzbewertung wertlos sind. Ein kürzender Adapter brächte ~4–6 s.
+
+### PDF-Handbücher sauber chunken
+
+Die MediFox-Handbücher haben eine verlässliche Seitenstruktur:
+**Zeile 1 = Seitenzahl, Zeile 2 = Kapitel, Zeile 3 = Unterkapitel**, danach Inhalt.
+Daraus lassen sich semantische Chunks bauen statt blinder Zeichenschnitte:
+
+1. Titelei und Inhaltsverzeichnis überspringen (Seiten mit `.count('....') > 4`)
+2. Seitenzahl-Zeile entfernen, Kapitel/Unterkapitel als Metadaten mitführen
+3. Aufeinanderfolgende Seiten desselben Unterkapitels zusammenführen, dann bei ~2200 Zeichen teilen
+4. `§`-Bullets zu `-` normalisieren, Silbentrennung reparieren: `re.sub(r'(\w)-\n(\w)', r'\1\2', s)`
+5. **Teile unter 300 Zeichen verwerfen** — genau daraus entstand der Alt-Müll (siehe unten)
+
+### Chunk-Müll: 180 Zeilen entfernt
+
+Frühere PDF-Importe hinterließen Fragmente ohne Informationswert, die in der Vektorsuche
+Plätze der Top-12 belegten: `"68"`, `"Seite 2 von 4"`, `"# Arztcockpit"`,
+`"MEDIFOX® care management software"`. Betroffen v. a. `MF_Connect_Handbuch_stationaer.pdf`
+(41 von 185 Chunks) und `Update-Info_2020_stationaer_7.0.pdf` (21 von 93).
+
+Gelöschte Kategorien — alle vorher nach `rag_chunks_archiv_20260801` gesichert:
+
+| Grund | Anzahl |
+|---|---|
+| `A` Fragment unter 150 Zeichen | 105 |
+| `B` Confluence-Makro-Rest (`label in (…)`) | 6 |
+| `C` reine Verweisliste (`wiki_article`, ≥2× „Page:", < 450 Z.) | 22 |
+| `D` Video-Stub, ersetzt durch echtes Transkript | 29 |
+| `E` `content IS NULL` | 18 |
+
+> **Vorsicht bei Kriterium C:** Chunks mit **einer** „Page:"-Referenz enthalten oft echten Inhalt
+> (z. B. #2839 mit der Textmarken-Erklärung zum Heimvertrag). Erst ab 2 Referenzen ist es
+> zuverlässig eine reine Verweisliste.
+
+### Video-Transkription — 41 Schulungsvideos erschlossen
+
+Die 🎞-Seiten des Wikis (41 Stück, ~2 h Material) waren bis dahin **inhaltsleer** — nur
+„Folge 2 zeigt Ihnen…"-Stubs. Themen wie Interessentenmanagement, Apothekenportal,
+digitale Arztunterschrift, Einsatzplanung und Änderungshistorie (PEP) existierten
+in **keiner** Textquelle.
+
+**Pipeline (vollständig lokal, 41/41 fehlerfrei):**
+
+1. Video-ID aus dem Confluence-`body.view` per Regex: `streamio\.com/api/v1/videos/([a-f0-9]+)/public_show\?player_id=([a-f0-9]+)`
+2. Diese URL mit `User-Agent`-Header abrufen → im HTML steht die direkte MP4-URL
+   (`<meta name="twitter:player:stream" content="https://bunnycdn-prod.streamio.com/...mp4">`)
+   sowie `duration` und Dateiname
+3. `ffmpeg -vn -ac 1 -ar 16000 -c:a pcm_s16le` → WAV
+4. `POST http://192.168.22.90:8007/v1/audio/transcriptions` (Speaches, OpenAI-kompatibel),
+   `model=Systran/faster-whisper-large-v3`, `language=de` — etwa **1,1× Echtzeit**
+5. Floskeln entfernen („Hallo und herzlich willkommen zu MediFox Know-how"), `Medifox`→`MediFox`,
+   in Absätze zu je ~3 Sätzen gliedern
+
+**Pflicht bei Video-Chunks:** Die Videos sind von **2024**. Jeder Chunk trägt einen
+Warnblock und `trust_level: 2`, damit aktuelle Quellen bei Pfadangaben vorgehen:
+
+> ⚠️ Schulungsvideo Stand 2024 — Funktionsbeschreibungen gültig, **Menüpfade ggf. veraltet**.
+> „Pflege & Betreuung" existiert nicht mehr (heute `Dokumentation → Dokumentation`);
+> „MDK-Prüfung" heißt seit 2022 „Qualitätsprüfung".
+
+### Neue System-Prompt-Regel: keine erfundenen UI-Positionen
+
+Beobachtet: Das Modell verkürzte eine belegte Positionsangabe
+(„im oberen/mittleren Bereich auf das Zahnrad auf der rechten Seite" → „Zahnrad rechts oben")
+und schmückte eine Rubrikbezeichnung aus („Ohne Tagesstruktur" → „Ohne Tagesstrukturzuordnung").
+
+Ergänzung zu Grundregel 3: Positionsangaben („oben rechts", „in der Symbolleiste") nur
+**wörtlich belegt**; Namen von Schaltflächen, Registern und Rubriken **exakt** übernehmen.
+Begründung im Prompt: Eine erfundene Position klingt glaubwürdig und schickt den Nutzer an
+die falsche Stelle — genauso schädlich wie ein falscher Menüpfad.
+
+### Bestandsveränderung
+
+| | vorher | nachher |
+|---|---|---|
+| Chunks | 2.557 | **2.726** |
+| Neu | — | TI/KIM 8, CarePad-Handbuch 255, MediFox time 28, Video-Transkripte 58 |
+| Entfernt | — | 180 (archiviert) |
+| Embeddings | Cohere 1536d | **bge-m3 1024d, 100 %** |
+| DB-Größe | 71 MB | ~84 MB (Spitze), nach Aufräumen ~62 MB — Free-Tier-Limit 500 MB |
+
+**Größte Einzellücke geschlossen:** die Wiki-Seite „Einrichtung der Telematikinfrastruktur"
+(pageId **170229869**, 14.371 Zeichen, Stand 13.05.2026) — vorher existierten dazu nur
+Nebensätze aus Update-PDFs. 8 Chunks entlang der 8 Einrichtungsschritte, `trust_level: 3`.
+
+### Offene Punkte (Stand 2026-08-01 abends)
+
+1. **Upload-Pfade hängen weiter an Cohere** — `Embeddings OpenAI_Upload`, `_Upload2`,
+   `Form Embeddings`. Sie laufen in denselben 429. Reparatur erfordert:
+   `embedding` von `vector(1536)` auf `vector(1024)` ändern **und** den Trigger
+   `sync_rag_chunks_embedding_half` auf `embedding_bge` umlenken. Erst danach schreiben
+   die Insert-Nodes wieder in die Spalte, die die Suche nutzt.
+2. **Aufräumen ausstehend:** alte Spalte `embedding_half` + ihr HNSW-Index (−22 MB).
+   Bewusst zurückgestellt, solange der Rollback auf Cohere offen bleiben soll.
+3. **Reranker-Entscheidung** nach der ersten Nightly-Messung gegen den Referenzwert **0,84**.
+4. **Kein Handbuch für MD Stationär selbst** — das Wiki hat Handbücher nur für CarePad,
+   Connect und time. Die eigentliche Vollständigkeitsquelle wäre die **F1-Online-Hilfe**
+   der Software (hinter Login, bislang nicht erfasst). Ebenso weiterhin ungelöst:
+   der Rechte-/Rollenbaum.
 
 ---
 
@@ -834,7 +1028,11 @@ per FTS auffindbar), aber ungelöst.
 │ Quelle:     wissen.medifoxdan.de                       │
 │ Storage:    NextCloud → Supabase rag_chunks table      │
 ├────────────────────────────────────────────────────────┤
-│ Total Docs: 1046 (725 Wiki, 245 NC, 68 KP, 8 FAQ)     │
+│ Embedding:  Ollama bge-m3 (1024d) → embedding_bge      │
+│ RPC:        match_qm_chunks_bge                        │
+│ Reranker:   AUS (Cohere 429) — Ersatz auf Port 8009    │
+├────────────────────────────────────────────────────────┤
+│ Chunks:     2726  (Stand 2026-08-01)                   │
 │ Sprache:    Deutsch (IMMER 'german' für tsvector!)     │
 └────────────────────────────────────────────────────────┘
 ```
