@@ -2370,3 +2370,72 @@ User-Report „feste Lamellenposition geht nicht mehr, schwenkt immer weiter" (b
 **🔴 LED-Streifen DG/OG: UniLED tot ohne aktiven BT-Proxy → Entscheidung WLED**
 - UniLED (BanlanX SP630E) braucht eine **connectable** BLE-Verbindung. Alle vorhandenen Proxys sind Shelly-BLE-Gateways (`connectable:false`, nur passiv) → UniLED-Config-Flow bricht mit `no_devices_found` ab (auch nach Aktivieren des Shelly-BT-Gateways; SP6xxE zudem außer Reichweite im DG). NAS hat keinen BT-Adapter (`/sys/class/bluetooth` fehlt).
 - User-Entscheidung: **WLED statt UniLED** — SP630E ersetzen durch ESP32 + WLED am WS2814-Streifen (24V RGBW COB, single-wire → 1 Daten-GPIO, 74AHCT125-Levelshifter, 24→5V-Buck). HA-`wled`-Integration ist eingebaut (zeroconf-Auto-Discovery `_wled._tcp`). UniLED-Custom-Component nach `config/_attic/` archiviert (Zero-Delete). Siehe Memory [[project_led_streifen_og_banlanx]].
+
+### 2026-08-01 — Matter-Doppel-Pairing auflösen, .storage-Eingriffe, DB-Diagnose, Falsch-Positiv-Fallen
+
+**🔴 Matter-Node entfernen: `TimeoutError` am Skript-Ende bedeutet NICHT Fehlschlag**
+- Ausgangslage: eine Bosch-Bridge zweimal in der Fabric (Node 1 tot seit 18.01.2026, Node 2 live) → 23 Karteileichen-Entities, alle Plattform `matter`.
+- `remove_node` läuft in zwei Phasen: (1) lokaler Fabric-Eintrag wird entfernt, (2) Over-the-Air-Uncommissioning am Gerät. Bei einem offline Gerät scheitert Phase 2 zwangsläufig — das Skript läuft in den 30-s-Timeout und wirft einen Traceback, **obwohl Phase 1 erfolgreich war**.
+- **Nicht am Exit-Code messen, sondern am Server-Log:**
+  ```bash
+  docker logs matter-server --tail 20 | grep -i "removed\|unpair"
+  # Erfolg: "Node ID 1 successfully removed from Matter server."
+  # Danach erwartbar+harmlos: "Remove Current Fabric Failed", "Failed to unpair device"
+  ```
+  Gegenprobe mit `get_nodes` (read-only, vorher UND nachher fahren).
+- **HA räumt danach von selbst auf:** `core.entity_registry` wird im selben Moment neu geschrieben, alle Node-1-Entities verschwinden, ihr letzter DB-State ist `NULL`. Kein manueller Registry-Purge nötig.
+- Vorher `matter-server/` sichern (`tar -czf`, ~250 KB) — der Eingriff schreibt in die Fabric.
+- **Vor dem Removal prüfen, ob YAML auf die sterbenden IDs zeigt.** Hier zeigten Dashboards und Packages schon durchgängig auf die `_2`-Varianten → null Anpassungen. Die `_2`-Entities behalten ihre entity_ids; der frei werdende Namensraum wird **nicht** automatisch nachbesetzt.
+
+**🔴 `.storage`-Dateien editieren: HA stoppen, sudo, danach JSON gegenlesen**
+- Die Dateien gehören `root:root` — ohne `sudo` scheitert schon das `open(p,'w')` (die Datei bleibt dabei unversehrt, der Fehler kommt vor dem Truncate).
+- Ablauf: `docker compose -p home-assistant stop homeassistant` → Backup kopieren → editieren → `json.load()` als Gegenprobe → `start`. Bei laufendem HA überschreibt der eigene Save-Zyklus die Änderung.
+- Schreib-Skript defensiv bauen: erwartete Trefferzahl prüfen und bei Abweichung mit Exit-Code abbrechen, **bevor** geschrieben wird. Bei Entity-Purges zusätzlich gegen `platform` absichern, damit kein fremder Eintrag mitgeht.
+
+**🔴 HACS führt installierte Repos in ZWEI Dateien — beide anfassen**
+- `.storage/hacs.repositories` (Top-Level `data`: `id → repo-dict`) **und** `.storage/hacs.data` (`data.repositories.<kategorie>` → Liste). Nur eine zu ändern hinterlässt einen inkonsistenten Zustand.
+- Ein Verzeichnis aus `custom_components/` zu löschen reicht nicht: HACS führt das Repo weiter als `installed: true` und bietet ggf. ein Update an — ein Klick installiert es zurück. In dieser Session stand `button_builder` bereits auf „Update verfügbar".
+- Nach dem Entfernen bleiben **verwaiste `update.<name>_update`-Entities** (Plattform `hacs`) in der Registry und stehen dauerhaft auf `unavailable` → im selben Ausfallfenster mit purgen.
+- HACS kann Repos führen, deren Dateien fehlen (hier `monty68/uniled`) — Karteileiche, gefahrlos entfernbar.
+- Manuell installierte Forks tauchen in HACS **nicht** auf. `hon` (gvigroux-Fork) fehlt dort korrekt — kein Grund zur Beunruhigung.
+
+**🔴 Entity-Diagnose über die Recorder-DB statt über die REST-API**
+- Kein Token nötig, kein fehlgeschlagener Auth-Versuch, damit kein Beitrag zum `login_attempts_threshold` (vgl. [[feedback_ha_auth_debugging]]). Immer read-only öffnen:
+  ```python
+  sqlite3.connect('file:/config/home-assistant_v2.db?mode=ro', uri=True)
+  ```
+- Letzter Zustand je Entity — das Join-Muster:
+  ```sql
+  SELECT sm.entity_id, s.state, datetime(s.last_updated_ts,'unixepoch','localtime')
+  FROM states s JOIN states_meta sm ON sm.metadata_id = s.metadata_id
+  JOIN (SELECT metadata_id, MAX(state_id) mx FROM states GROUP BY metadata_id) l
+    ON l.mx = s.state_id
+  ```
+- **Zwei Auswertungsfallen:** (1) `s.state` kann `NULL` sein (gelöschte Entity) → `str(s)[:n]` statt `s[:n]`, sonst `TypeError`. (2) Die DB enthält auch längst entfernte Entities — für den *Live*-Stand gegen `core.entity_registry` filtern, sonst zählt man Historie mit und wundert sich, dass die Zahl nach einem Purge steigt.
+- Ein Zeitstempel-Cluster auf die Sekunde genau = HA-Neustart. Entities, die dort auf `unavailable` stehen und danach keinen Eintrag mehr haben, sind seit diesem Neustart durchgehend tot.
+- Größte Recorder-Posten finden: `GROUP BY metadata_id ORDER BY count(*) DESC`.
+
+**🟡 Vier Falsch-Positive, die je einmal zu einer falschen Diagnose geführt hätten**
+| Beobachtung | Naheliegender Fehlschluss | Tatsächlich |
+|---|---|---|
+| `sensor.*_batterietyp*` = `Replace Batteries` | Batterien leer | Matter-Enum `BatReplaceability` = „wechselbar". Echter Ladestand: `binary_sensor.*_batteriestand*` |
+| Template-Sensor `unavailable` | Sensor kaputt | Gewollte `availability:`-Bedingung (hier: Met.no liefert zeitweise keine `precipitation_probability`) |
+| `.bak-*`-Dateien in `packages/` | Werden mitgeladen, Konfliktgefahr | `!include_dir_named` nimmt nur `*.yaml` — die Endung `.bak-<ts>` wird übersprungen |
+| Entity-Namen beginnen mit `bosch_` | Integration `bosch_shc` defekt | Plattform war `matter`. **Immer die `platform` in der Registry prüfen, nie vom Namen ausgehen** |
+- Bosch läuft hier bewusst **doppelt**: Steuerung über Matter, Detail-Sensorik über `bosch_shc`. Zwei Entity-Sätze für dasselbe Gerät sind kein Duplikat-Fehler.
+
+**🟡 Vor einem Recorder-`exclude` die Referenzen zählen, nicht nur die States**
+- `media_player.55oled855_12_4` war mit 44.147 States der größte DB-Posten und sah nach einem klaren Exclude-Kandidaten aus — wird aber 40× in Dashboards referenziert; „wann lief der TV" ist echte History. Der Recorder kann **keine einzelnen Attribute** filtern (Verursacher war `media_position`), also gilt ganz oder gar nicht → drin gelassen.
+- Sicher sind reine Anzeige-/Prognose-Strings, deren Vergangenheit definitionsgemäß wertlos ist (hier `sensor.waschmaschine_dauer_vorschau`, „fertig um 14:35 Uhr", 27.943 States).
+- Gegenprobe: `grep -ohE "sensor\.[a-z0-9_]+" dashboards/*.yaml packages/*.yaml | sort | uniq -c | sort -rn`
+
+**🟡 `config/www/` treibt die Backup-Größe, nicht die Datenbank**
+- Auslöser hier: 806 MB in `www/Tiguan` — 15 GLB-Dateien, von denen `viewer.html` genau zwei lädt. Ergebnis: 1,33 GB je HA-Backup, `config/backups/` bei 4,2 GB.
+- Prüf-Einstieg: `du -sh config/* | sort -rh | head` — `www/` steht dort erfahrungsgemäß vor `home-assistant_v2.db`.
+- Auch fremd wirkende Ordner mitdenken: ein Python-`.venv` unter `config/` (hier `config/muell/.venv`, 90 MB) wandert in jedes Backup. Ein venv ist **relokierbar**, solange der Interpreter systemweit liegt (`pyvenv.cfg` → `home = /usr/bin`); nach dem Verschieben Pfad im aufrufenden Skript anpassen und einen echten Parser-Lauf gegen ein temporäres Ziel fahren, bevor man es glaubt.
+- Zero-Delete beibehalten: alles nach `_purge_<datum>/` **außerhalb** von `config/` verschieben, nie direkt `rm`. Der Platz im Backup ist sofort frei, die Rückholoption bleibt.
+
+**🔵 Temporäre Packages haben ein Verfallsdatum, das niemand überwacht**
+- Gefunden: `zz_nachlauf_flur_temporaer.yaml` mit dem Kommentar „NACH DEM LAUF: diese Datei löschen" — drei Tage später noch aktiv. Die Automation triggerte auf `homeassistant.start` und hätte bei **jedem** Neustart einen Steri-Clean-56-°C-Lauf ausgelöst.
+- Vor jedem Restart prüfen: `ls config/packages/*temporaer* config/packages/zz_*` und Start-Trigger sichten (`grep -l "event: start" config/packages/*.yaml`).
+- Ob der Zweck erfüllt wurde, verrät die DB, nicht die Datei: hier zeigte `binary_sensor.*_steri_clean_56` seit dem Anlegen ausschließlich `off` — der überwachte Lauf hatte nie stattgefunden.
