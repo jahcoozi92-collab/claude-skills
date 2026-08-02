@@ -1016,6 +1016,131 @@ Nebensätze aus Update-PDFs. 8 Chunks entlang der 8 Einrichtungsschritte, `trust
 
 ---
 
+## 2026-08-02 — Drei Maßnahmen gemessen: nur eine wirkt
+
+Alle drei gegen dieselben 45 Nightly-Fragen gemessen, Referenz aus der Cohere-Zeit **0,838**.
+**Zwei von drei Vermutungen waren falsch** — ohne Messung hätten wir teuer das Falsche gebaut.
+
+| Maßnahme | Erwartung | Ergebnis | Konsequenz |
+|---|---|---|---|
+| Reranker abschalten | Verschlechterung befürchtet | **±0** (0,839) | bleibt aus |
+| **Titel voranstellen** (1083 Chunks ohne H1) | Verbesserung erhofft | **±0** (0,839) | wirkungslos |
+| **Hybrid-Suche aktivieren** | Verbesserung vermutet | **+0,010** (0,849), 10:5 | **übernommen** |
+| Reranker auf Hybrid | Verbesserung vermutet | **−0,001** (0,848), +40 % Latenz | verworfen |
+
+### ⭐ Der Live-Chat nutzte nur die halbe Suche
+
+`match_qm_chunks_bge` ist **reine Cosine-Ähnlichkeit** — keine Volltextsuche, keine Boosts.
+`hybrid_search_v3` (RRF aus Vektor + FTS, komplette Boost-Matrix, `verified`-Bonus) existierte
+seit Monaten und wurde **nie aufgerufen**. Über 41 Testfragen brachte Hybrid bei **33** neue
+Quellen in die Top-3 — bei Fachbegriffen und Abkürzungen (MD, DTA, RUPA, SIS, BTM, KIM) findet
+FTS exakte Treffer, die der Vektor verfehlt.
+
+**Warum es nicht genutzt wurde:** Der LangChain-Vector-Store-Node schickt nur den Vektor an die
+RPC, nicht den Fragetext. `hybrid_search_v3` braucht beides. Lösung — **Retrieval als eigenes
+Tool statt Vector-Store-Node**:
+
+```
+Workflow "RAG Hybrid Search (Tool-Endpunkt)"  (BHE180nmUbCujTkj)
+POST /webhook/rag-hybrid-search  {"suchbegriff": "..."}
+  → Ollama Embed (bge-m3)
+  → hybrid_search_v3 (match_count 12, product_filter 'stationaer', rrf_k 60)
+  → Format: Treffer als Text mit Herkunft "(source_type · version · verifiziert)"
+```
+
+Im Live-Workflow hängt daran ein **`httpRequestTool`** namens `Wissensbasis_Suche` mit
+`$fromAI('suchbegriff', ...)` — Vorlage war das bereits vorhandene `Klickpfad_Suche`.
+Der alte `Supabase - Vector Store_Abruf` bleibt als Node erhalten, nur die `ai_tool`-Verbindung
+ist gekappt → Rückbau in einer Minute.
+
+**Kosten: keine.** Die Antwortzeit sank sogar leicht (19,6 s statt 21,5 s im Schnitt).
+
+### ⚠️ Korrektur zur Reranker-Anbindung (Eintrag vom 2026-08-01)
+
+Die dort beschriebene Hürde — n8n `RerankerCohere` zeigt fest auf `api.cohere.com`, Patch von
+`client.cjs` nötig — ist **hinfällig, sobald das Retrieval ein eigener Workflow ist**: Dann ruft
+man den lokalen Reranker einfach per HTTP-Node auf. Kein Node-Patch, kein Update-Risiko.
+
+```
+Hybrid Search → Build Rerank (Metadatenzeilen raus, 1200 Zeichen) → POST 8009/rerank
+              → Format (Reihenfolge anwenden)
+```
+Der Rerank-Node braucht `onError: continueRegularOutput` — fällt der Dienst aus, greift im
+Format-Node der Fallback auf die RRF-Reihenfolge, statt die Suche scheitern zu lassen.
+
+**Trotzdem verworfen.** Das Muster ist aufschlussreich: Der Reranker **repariert gezielt die
+schwachen Fragen** („MD-Prüfung vorbereiten" 0,55 → 0,75; Rechnungsautomatik, Stammdatenübernahme
+je +0,10), **drückt aber viele ohnehin guten** um 0,03–0,04, weil `top_n: 6` von 12 Treffern
+Kontext wegnimmt. Netto ±0 bei +40 % Antwortzeit (27,5 s statt 19,6 s) und einem 2,2-GB-Container.
+Falls später doch gewünscht: `top_n` näher an `match_count` legen, damit er nur sortiert statt kürzt.
+
+### Titel voranstellen: wirkungslos (Negativbefund)
+
+1083 Chunks (40 %) begannen mitten im Satz — `confluence_wiki` zu 98 %. Die Titel wurden aus
+`metadata.title` bzw. `file_name` ergänzt (URL-Kodierung aufgelöst, Unterstriche ersetzt,
+Endung entfernt), danach alle neu eingebettet (~1,5 h).
+
+**Ergebnis: 0,000 Unterschied** — sowohl im Retrieval (−0,001 über 41 Fragen, 0 besser / 41 gleich /
+0 schlechter) als auch in der Antwortqualität (0,839 → 0,839). In Einzelfällen sogar schlechter:
+Bei „Welche Rechte hat die Rolle Pflegefachkraft?" verdrängte ein generischer Titel den zuvor
+korrekten Treffer „# Rollen und Rechte in MediFox stationär".
+
+> **Lehre:** bge-m3 kommt mit Fragmenten ohne Überschrift gut zurecht. Generische Titel
+> („# Abrechnung", „# Tipps Tricks") **verwässern** das Embedding eher, als es zu schärfen.
+> Nicht wiederholen. Behalten wurde es nur, weil der Rückbau erneut 1,5 h Einbettung gekostet
+> hätte; der Nebennutzen ist Lesbarkeit bei Quellenangaben und beim Debuggen.
+> Backup: `rag_chunks_titel_backup_20260801`.
+
+### Werkzeug: Retrieval-Test ohne LLM-Kosten
+
+Workflow **`RAG Retrieval-Test (Gap-Analyse)`** (`8GhJdDRgsF1qS09Y`),
+`POST /webhook/rag-retrieval-test` mit `{"frage": "...", "modus": "vektor"|"hybrid"}`.
+Liefert Top-Treffer mit Similarity, Quelle und Titel — ideal für Abdeckungsanalysen, weil kein
+Sprachmodell nötig ist (~2 s pro Frage).
+
+> **Fallstrick:** PostgREST liefert RPC-Zeilen als **einzelne n8n-Items**. Werden mehrere Fragen
+> pro Aufruf verarbeitet, lassen sich Ergebnisse nicht mehr zuordnen (jede Frage bekam Treffer
+> der ersten). Deshalb **genau eine Frage pro Aufruf**.
+
+### Abdeckung nach Bereichen (41 Fragen, Retrieval-Ø)
+
+```
+0.600 Rechte/Rollen          ← schwächster Bereich
+0.623 Controlling
+0.646 Personal-Auswertung
+0.673 Abrechnung
+0.684 Qualität/MD
+0.686 Personaleinsatzplanung
+0.691 Verwaltung/Stammdaten
+0.692 Mobile/Portale
+0.696 Technik/Betrieb
+0.697 Pflegedokumentation
+0.705 Medikation            ← bester Bereich
+```
+
+**Echte Lücken** (Treffer thematisch daneben, bestätigt in `knowledge_gaps`):
+Fluktuationsquote (0,55) · Druckrecht für Nachrichten (0,57) · Benutzerzugriff auf Abrechnung
+sperren (0,61) · Krankheitstage einer Mitarbeiterin drucken (0,62).
+**Rechte und Personal-Auswertungen sind die systematischen Schwachstellen** — beides behandelt
+das öffentliche Wiki nicht.
+
+**Geschlossen:** „Mitarbeiterliste nach Wohnbereich" (`knowledge_gaps` #147) erreicht jetzt 0,760.
+
+### Weitere Befunde
+
+- **`term_synonyms` (37 Einträge) wird nicht genutzt.** Erst mit der Hybrid-Suche überhaupt
+  wirksam, da sie nur im FTS-Teil greifen können.
+- **Feedback-Schleife läuft ins Leere:** `wrong_feedback_count` steht bei **allen** Chunks auf 0.
+  Das „Antwort war falsch"-Signal erreicht die Datenbank nicht.
+- **Inhalte aktuell** (Stand 2026-08-02): Update-PDFs vollständig bis **10.28.12**, Wiki weiterhin
+  303 Seiten ohne neue. Zwei Seiten waren auf Stand 12.04. statt 30.07. (DANSOFTWARE-Installation,
+  Hotfix-Anleitung) — nachgezogen. Beide betreffen die **DAN-Produktlinie**, nicht MD Stationär.
+- **`grounding_score` ist kein Suchindikator.** Während des Cohere-Ausfalls blieb er bei 0,82,
+  obwohl die Vektorsuche gar nichts lieferte — er bewertet die Formulierung. Bei Qualitätsverdacht
+  immer den `answer`-Text lesen.
+
+---
+
 ## Quick Reference
 
 ```
@@ -1029,10 +1154,11 @@ Nebensätze aus Update-PDFs. 8 Chunks entlang der 8 Einrichtungsschritte, `trust
 │ Storage:    NextCloud → Supabase rag_chunks table      │
 ├────────────────────────────────────────────────────────┤
 │ Embedding:  Ollama bge-m3 (1024d) → embedding_bge      │
-│ RPC:        match_qm_chunks_bge                        │
-│ Reranker:   AUS (Cohere 429) — Ersatz auf Port 8009    │
+│ Suche:      hybrid_search_v3 via Tool-Endpunkt         │
+│             /webhook/rag-hybrid-search  (RRF+FTS)      │
+│ Reranker:   AUS — gemessen ohne Nutzen, +40% Latenz    │
 ├────────────────────────────────────────────────────────┤
-│ Chunks:     2726  (Stand 2026-08-01)                   │
+│ Chunks:     2723  (Stand 2026-08-02)                   │
 │ Sprache:    Deutsch (IMMER 'german' für tsvector!)     │
 └────────────────────────────────────────────────────────┘
 ```
