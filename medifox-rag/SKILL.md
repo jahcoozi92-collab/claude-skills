@@ -1141,6 +1141,115 @@ das öffentliche Wiki nicht.
 
 ---
 
+## 2026-08-02 (Teil 2) — Feedback-Schleife repariert, Synonyme verworfen, Kosten −40 €/Monat
+
+### ⭐ Feedback-Schleife: die Lücke saß in der Mitte
+
+`wrong_feedback_count` stand seit Monaten bei **allen** Chunks auf 0 — obwohl RPCs,
+Tabellenspalten und Frontend-Buttons alle existierten. Ursache: Das Chat-HTML zog die
+betroffenen Chunk-IDs aus dem VERIFY-Block der Antwort (`meta.sources`), und der ist
+**immer leer** (`"sources":[]`). Bei `chunkIds.length === 0` wurde der Meldeaufruf
+übersprungen — lautlos.
+
+**Reparatur (Chunk-IDs serverseitig statt aus dem Frontend):**
+
+```
+Tabelle retrieval_log (session_id, suchbegriff, chunk_ids[], created_at)
+  ← Hybrid-Endpunkt protokolliert jede Trefferliste
+RPC report_wrong_feedback_by_session(p_session_id)  SECURITY DEFINER
+  → holt chunk_ids der letzten Suche dieser Session, erhöht wrong_feedback_count,
+    setzt ab 3 Meldungen metadata.needs_review='true' (Boost fällt auf 0.90)
+```
+
+- Das Tool `Wissensbasis_Suche` reicht `session_id` per
+  `={{ $('Format Chat Input').first().json.sessionId || '' }}` durch.
+  **Verifiziert:** `answer_traces.session_id` und `retrieval_log.session_id` sind
+  identisch (Form `api-<execution.id>`), die Verknüpfung trägt.
+- Der Protokoll-Node braucht `onError: continueRegularOutput` — sonst kippt ein
+  Logging-Fehler die ganze Suche.
+- Frontend ruft jetzt `report_wrong_feedback_by_session` statt der alten
+  `report_wrong_feedback(p_session_id, p_chunk_ids)`.
+
+> **Muster:** Wenn eine Feedback-/Telemetriekette „technisch vollständig" aussieht, aber
+> null Daten liefert, ist die Bruchstelle meist eine **leere Zwischenvariable**, nicht ein
+> fehlendes Teil. Erst die Kette end-to-end durchspielen, dann bauen.
+
+### Synonyme: gemessen, verschlechtert, zurückgebaut
+
+`term_synonyms` (37 Einträge, Nutzersprache → Fachbegriff) in `hybrid_search_v3`
+eingebunden — nur im FTS-Teil, Embedding bleibt die Originalfrage.
+
+**Zwei Erkenntnisse, eine davon teuer:**
+
+1. **`plainto_tsquery` verknüpft mit AND.** Synonyme einfach an den Suchtext anzuhängen
+   *verengt* die Suche — Dokumente müssten Frage **und** Synonym enthalten. Korrekt ist
+   die OR-Verknüpfung zweier tsquery-Objekte: `fts_q := plainto_tsquery(...) || plainto_tsquery(...)`.
+2. **Auch korrekt verknüpft schadete es:** 0,849 → 0,836 auf 25 vergleichbaren Fragen
+   (1 besser / 12 gleich / 11 schlechter). Generische Einträge (`App`, `mobil`, `Handy`
+   → CarePad) ziehen bei jeder passenden Frage die komplette CarePad-Doku in die
+   FTS-Kandidaten und verdrängen Passenderes.
+
+Zurückgebaut; der Weg für einen zweiten Versuch steht als Kommentar in der Funktion:
+nur `confidence = 1` verwenden und überspringen, wenn der Fachbegriff schon in der Frage steht.
+
+### Kosten: ~41 €/Monat → ~4 €/Jahr
+
+**`answer_traces.tokens_used` ist irreführend** — berechnet als `(Frage + Antwort) / 4`,
+der **Kontext fehlt komplett**. Angezeigt ~505 Token, real ~20.000 pro Frage (Faktor 40).
+Wer danach budgetiert, unterschätzt die Kosten massiv.
+
+Reale Treiber pro Frage: System-Prompt **4.482 Token bei jedem** LLM-Aufruf (2–3 pro Frage
+wegen Tool-Calls), 12 Chunks ≈ 6.000 Token, `maxIterations` stand auf 12.
+
+| Maßnahme | Wirkung |
+|---|---|
+| Testlauf Mo–Fr → **quartalsweise** (`/etc/cron.d/rag-nightly-check`) | −85 % |
+| Tests auf **Haiku 4.5** statt Sonnet 5 (`test_mode: true`) | halber Preis |
+| `maxIterations` 12 → **4** | kappt Ausreißer |
+
+Preise (OpenRouter, geprüft): Sonnet 5 = $2/$10 je Mio., Haiku 4.5 = $1/$5 — **Haiku ist
+halb so teuer, nicht ein Zehntel.**
+
+**Testmodus-Schalter:** `Format Chat Input` setzt `_model` auf
+`={{ $json.body.test_mode === true ? 'anthropic/claude-haiku-4.5' : 'anthropic/claude-sonnet-5' }}`,
+der OpenRouter-Node liest `_model` mit Sonnet als Rückfall. Bewusst **zwei feste Werte** —
+kein freier Modellname vom Client, sonst wählt jeder über die API sein Modell.
+
+> 🚨 **Der Quartalstest läuft mit Haiku und muss gegen 0,820 verglichen werden, nicht 0,849.**
+> Haiku vs. Sonnet über dieselben 45 Fragen: **0,820 vs. 0,849** (4 besser / 21 gleich /
+> 15 schlechter), Antwortzeit 10 s statt 20 s. Das Skript vergleicht gegen den *vorherigen*
+> Lauf — der Oktober-Lauf meldet daher einmalig einen Abfall, der nur der Modellwechsel ist.
+> Warnhinweis steht im Kopf von `nightly_rag_check.sh`; Referenzwerte in
+> `workflows/REGRESSION_REFERENZ.md`.
+
+**Produktiv bleibt Sonnet 5:** −0,029 Qualität für ~1 €/Monat Ersparnis lohnt nicht.
+
+### Prompt-Caching: geprüft, zurückgestellt
+
+Rechnerisch der nächste Hebel, praktisch nicht: Der Cache lebt **5 Minuten**. Bei ~50 echten
+Anfragen/Monat ist er zwischen zwei Nutzerfragen immer kalt — man zahlt nur den
+Schreibaufschlag (1,25×) und liest nie. Nutzen entsteht allein **innerhalb** einer Anfrage
+(die 2–3 Tool-Iterationen im Sekundenabstand): ~50 % auf den System-Prompt-Anteil,
+netto 20–25 %, bei diesem Volumen **Cent-Beträge**.
+
+Mindest-Prompt fürs Caching ist modellabhängig: **Sonnet 5 = 1.024 Token, Haiku 4.5 = 4.096.**
+Der System-Prompt liegt mit ~4.482 Token bei Haiku nur knapp darüber — jede Kürzung
+schaltet dort das Caching stillschweigend ab. Lohnt erst ab einigen hundert Anfragen/Monat.
+
+### Offen
+
+1. **Rechte & Personal-Auswertungen** — vier belegte Lücken (Fluktuationsquote,
+   Druckrecht Nachrichten, Abrechnungszugriff sperren, Krankheitstage drucken).
+   Nur über Screenshots aus `Administration → Benutzerverwaltung → Rollen/Rechte` bzw.
+   `Controlling → Auswertungen` oder Support-Auskunft zu schließen.
+2. **F1-Online-Hilfe** — größter unerschlossener Bestand, hinter Login.
+3. **OpenRouter-Guthaben** — am 2026-08-02 zweimal binnen Stunden leergelaufen;
+   Auto-Topup greift nicht zuverlässig.
+4. **Sicherungstabellen** `rag_chunks_archiv_20260801` (180 Zeilen) und
+   `rag_chunks_titel_backup_20260801` (1.083) — löschbar nach Freigabe.
+
+---
+
 ## Quick Reference
 
 ```
@@ -1157,7 +1266,12 @@ das öffentliche Wiki nicht.
 │ Suche:      hybrid_search_v3 via Tool-Endpunkt         │
 │             /webhook/rag-hybrid-search  (RRF+FTS)      │
 │ Reranker:   AUS — gemessen ohne Nutzen, +40% Latenz    │
+│ Feedback:   retrieval_log + report_wrong_feedback_by_  │
+│             session  (Chunk-IDs serverseitig)          │
 ├────────────────────────────────────────────────────────┤
+│ Modelle:    produktiv Sonnet 5 · Test Haiku 4.5        │
+│             (test_mode:true) — Referenz 0.849 / 0.820  │
+│ Test:       QUARTALSWEISE (1.1./1.4./1.7./1.10.)       │
 │ Chunks:     2723  (Stand 2026-08-02)                   │
 │ Sprache:    Deutsch (IMMER 'german' für tsvector!)     │
 └────────────────────────────────────────────────────────┘
