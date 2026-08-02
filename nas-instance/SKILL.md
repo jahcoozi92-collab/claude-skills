@@ -1902,3 +1902,32 @@ Diese Session vorgeschlagen: Backup-Retention auf 5 setzen. Realität nach Check
 **🟡 Diagnose-Reihenfolge bei Auth-Problemen:** (1) Systemuhr (`date` — Clock-Skew ist die andere Klassiker-Ursache; hier war sie korrekt), (2) Ownership `ls -la ~/.claude/.credentials.json`, (3) erst DANN OAuth-Flow verdächtigen.
 
 **🟡 Referenz:** passwordless sudo für `Jahcoozi` ist aktiv; claude läuft via nvm (`~/.nvm/versions/node/v24.12.0/bin/claude`).
+
+---
+
+### 2026-08-03 — Shell-Werkzeuge auf dem NAS: `bc` fehlt, `grep -c` kann zwei Nullen liefern
+
+**🟡 `bc` ist nicht installiert.** Ein Monitoring-Skript für die RAG-Kennzahlen brach still
+darauf ab (`bc: command not found`, dann leere Variablen). Auf dem NAS Fließkomma-Arithmetik
+immer mit `awk` rechnen:
+
+```bash
+# statt:  DIFF=$(echo "$A - $B" | bc)
+DIFF=$(awk -v a="$A" -v b="$B" 'BEGIN{printf "%.3f", a-b}')
+
+# Vergleich statt  [ $(echo "$A > 0.8" | bc) -eq 1 ]
+awk -v a="$A" 'BEGIN{exit !(a > 0.8)}' && echo "über Schwelle"
+```
+
+Gleiche Klasse von Fallstrick wie fehlendes `jq`/`column`: vor dem Einsatz in einem Cron-Skript
+kurz `command -v <tool>` prüfen, sonst scheitert der Lauf erst nachts und lautlos.
+
+**🔵 `grep -c … || echo 0` gibt bei null Treffern ZWEI Zeilen aus.** `grep -c` schreibt bereits
+selbst `0` auf stdout und endet trotzdem mit Exit-Code 1 — das `||` feuert also zusätzlich.
+Die Variable enthält danach `0\n0`, jede Rechnung damit schlägt fehl.
+
+```bash
+FEHLER=$(grep -c "ERROR" "$LOG" || echo 0)   # FALSCH → "0\n0"
+FEHLER=$(grep -c "ERROR" "$LOG" || true)     # richtig
+FEHLER=$(grep -c "ERROR" "$LOG" | head -1)   # richtig, auch bei anderen Zählern
+```
