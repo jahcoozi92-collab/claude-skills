@@ -934,7 +934,8 @@ Plätze der Top-12 belegten: `"68"`, `"Seite 2 von 4"`, `"# Arztcockpit"`,
 `"MEDIFOX® care management software"`. Betroffen v. a. `MF_Connect_Handbuch_stationaer.pdf`
 (41 von 185 Chunks) und `Update-Info_2020_stationaer_7.0.pdf` (21 von 93).
 
-Gelöschte Kategorien — alle vorher nach `rag_chunks_archiv_20260801` gesichert:
+Gelöschte Kategorien — alle vorher nach `rag_chunks_archiv_20260801` gesichert
+(Sicherung am 2026-08-03 nach Vollständigkeitsprüfung entfernt, siehe unten):
 
 | Grund | Anzahl |
 |---|---|
@@ -1089,7 +1090,7 @@ korrekten Treffer „# Rollen und Rechte in MediFox stationär".
 > („# Abrechnung", „# Tipps Tricks") **verwässern** das Embedding eher, als es zu schärfen.
 > Nicht wiederholen. Behalten wurde es nur, weil der Rückbau erneut 1,5 h Einbettung gekostet
 > hätte; der Nebennutzen ist Lesbarkeit bei Quellenangaben und beim Debuggen.
-> Backup: `rag_chunks_titel_backup_20260801`.
+> Backup war `rag_chunks_titel_backup_20260801` — am 2026-08-03 entfernt (siehe unten).
 
 ### Werkzeug: Retrieval-Test ohne LLM-Kosten
 
@@ -1245,8 +1246,33 @@ schaltet dort das Caching stillschweigend ab. Lohnt erst ab einigen hundert Anfr
 2. **F1-Online-Hilfe** — größter unerschlossener Bestand, hinter Login.
 3. **OpenRouter-Guthaben** — am 2026-08-02 zweimal binnen Stunden leergelaufen;
    Auto-Topup greift nicht zuverlässig.
-4. **Sicherungstabellen** `rag_chunks_archiv_20260801` (180 Zeilen) und
-   `rag_chunks_titel_backup_20260801` (1.083) — löschbar nach Freigabe.
+
+---
+
+## 2026-08-03 — Sicherungstabellen entfernt + zwei Prüf-Fallen davor
+
+Beide Tabellen sind **gelöscht**: `rag_chunks_archiv_20260801` (180 Zeilen) und
+`rag_chunks_titel_backup_20260801` (1.083). Es gibt für die Aufräumarbeiten vom 01.08.
+**keine Rückfallebene mehr** — bei einem künftigen Rückbau neu sichern statt darauf zu bauen.
+Stand danach: **2.723 Chunks, 0 ohne Vektor**.
+
+Vor dem `DROP` wurde jede Zeile gegen den Live-Bestand geprüft. Zwei Fallen dabei, die beide
+Falsch-Alarm erzeugten:
+
+**🔴 `LIKE '%'||alttext||'%'` meldet Falsch-Negative.** Enthält der gesicherte Text selbst ein
+`%` oder `_`, sind das im Suchmuster Platzhalter — der Vergleich schlägt fehl, obwohl der Text
+wörtlich vorhanden ist. Zwei von 1.083 Zeilen (ids 4133, 5369) sahen so nach Verlust aus.
+Robust ist `position(alttext in content) > 0` oder `LIKE … ESCAPE`.
+
+**🔴 Alte Video-Stubs tragen die Seiten-ID nur im Fließtext, nicht in `metadata.page_id`.**
+Ein Abgleich über `metadata->>'page_id'` ließ sieben Themen unabgedeckt aussehen (Arztcockpit,
+MDK-Prüfung, Rechnungsautomatik u. a.); alle sieben lagen längst als Transkript vor.
+**Regel:** Meldet ein Metadaten-Abgleich „fehlt", vor jeder Löschentscheidung über den **Titel**
+gegenprüfen — die Metadatenfelder sind über die Importgenerationen hinweg uneinheitlich befüllt.
+
+> `DROP TABLE` gibt den Speicher nicht sofort frei — die gemeldete Datenbankgröße kann direkt
+> danach gleich bleiben oder um 1 MB steigen. Das ist der Zustand vor dem nächsten Aufräumlauf,
+> kein Fehler.
 
 ---
 
