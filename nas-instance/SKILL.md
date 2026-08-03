@@ -1931,3 +1931,87 @@ FEHLER=$(grep -c "ERROR" "$LOG" || echo 0)   # FALSCH → "0\n0"
 FEHLER=$(grep -c "ERROR" "$LOG" || true)     # richtig
 FEHLER=$(grep -c "ERROR" "$LOG" | head -1)   # richtig, auch bei anderen Zählern
 ```
+
+---
+
+### 2026-08-02/03 — Aufräum- und Dashboard-Session: Rechte-Kaskade, Tunnel-Drift, Messfallen
+
+**🔴 Eine root-eigene Heimat erklärt ALLE EACCES-Fehler auf einmal.**
+`/home/Jahcoozi` gehörte selbst `root:root` und war für den Nutzer nicht schreibbar — dadurch
+war jede Punkt-Datei darin root-eigen. Die Symptome sahen völlig unzusammenhängend aus und
+kosteten vier getrennte Fehlersuchen: `~/.docker` (buildx „permission denied"), `~/.npm`
+(`npm install`), `~/.cache` (`playwright install`), `~/.ssh` (Schlüssel unlesbar).
+
+Besonders tückisch `~/.gitconfig`: ein `chown` der **Datei** reicht nicht, weil git die
+Sperrdatei *daneben* anlegt — das Verzeichnis selbst muss schreibbar sein.
+
+```bash
+sudo chown Jahcoozi:admin /home/Jahcoozi
+find /home/Jahcoozi -maxdepth 1 -name '.*' -user root -print0 |
+  while IFS= read -r -d '' f; do sudo chown -R Jahcoozi:admin "$f"; done
+```
+
+Die ~100 UGOS-verwalteten Inhaltsordner (`Photos`, `Mediendateien`, `FTP`, `#recycle`) bleiben
+bewusst bei root. **Diagnose-Reihenfolge künftig:** Bei EACCES in `~` zuerst
+`ls -ld /home/Jahcoozi` — nicht das einzelne Verzeichnis. Dasselbe Muster trifft
+Projektverzeichnisse unter `/volume1/docker` (`gedenkseite` → git `dubious ownership`).
+
+**🔴 Tunnel-Routen driften unbemerkt — drei Dienste waren monatelang von außen tot.**
+Beide Tunnel laufen mit `--token`, damit wird `cloudflared/config.yml` **ignoriert**. Wer einen
+Port verschiebt, muss die Route im Zero-Trust-Dashboard nachziehen, nicht die Datei. Gefunden:
+zusammen über **12.000 vergebliche Anfragen pro Tag**.
+
+| Hostname | zeigte auf | korrigiert auf |
+|---|---|---|
+| `vaultwarden` | `192.168.22.90:8084` | `:8094` |
+| `openclaw` | `127.0.0.1:18789` | `192.168.22.206:18789` (die VM) |
+| `searxng` | `192.168.22.90:8081` | `:8087` |
+
+**🔴 Route NIE über die Edit-URL öffnen.** Der direkte Aufruf der Bearbeiten-Adresse rendert ein
+**leeres** Formular — Speichern legt dann eine *zusätzliche* Route an, statt die bestehende zu
+ändern. Nur über das **⋯-Menü der Zeile → Bearbeiten**.
+
+**🟡 Die zwei cloudflared-Instanzen gehören verschiedenen Cloudflare-KONTEN.** Deshalb sind sie
+nicht zusammenlegbar — das ist die Antwort auf die immer wiederkehrende Frage. `cloudflared` →
+Konto `fe9ccc0b…` (Jahcoozi92, Zone `forensikzentrum.com`), im Dashboard irreführend als
+**`backup-yoga7`** angezeigt — das ist der **Produktions**tunnel, kein Backup.
+`cloudflared-archenoah` → Konto `02f41cec…` (Arche Noah).
+
+Wöchentliche Gegenprobe (steht jetzt in `scripts/weekly-health-check.sh`, Montag 08:00):
+
+```bash
+grep -A1 "hostname:" cloudflared/config.yml | grep -oE "192\.168\.22\.90:[0-9]+" | sort -u |
+  while read hp; do p=${hp##*:}; ss -tln | grep -qE ":$p\s" && echo "LEBT $hp" || echo "TOT  $hp"; done
+```
+
+**🔴 `docker cp` einer laufenden SQLite liefert VERALTETE Daten.** Das WAL wird nicht mitkopiert.
+Hat mich zweimal zu der falschen Aussage verleitet, es habe keine Ausführung gegeben. Statt der
+Datei immer die API bzw. `docker exec … sqlite3` des laufenden Containers befragen.
+
+**🔴 n8n-CLI `import:workflow` registriert KEINEN Webhook.** Der Workflow steht danach in der
+Datenbank und sieht in der Oberfläche korrekt aus, der Webhook antwortet aber mit
+404 „unknown webhook". Einzig verlässlicher Weg: löschen und über
+`POST /api/v1/workflows` neu anlegen, dann `POST /workflows/{id}/activate`.
+Schreibzugriffe immer über die **interne** Adresse `192.168.22.90:5678` — Cloudflare blockt PUT.
+
+**🟡 Uptime Kuma: Formular verschiebt sich ~33 px zwischen Laden und Anzeige.** Koordinatenklicks
+landen auf dem falschen Element und speichern **still** nichts. Erfolgsrezept: Feld über
+`form_input` mit `ref` setzen (nicht tippen), Bildschirmfoto **vor** dem Speichern zur
+Sichtprüfung, danach in der Datenbank gegenprüfen:
+
+```bash
+docker exec uptime-kuma sh -c 'sqlite3 /app/data/kuma.db \
+  "select id||\"  \"||name||\"  aktiv=\"||active from notification;"'
+```
+
+**🟡 Zwei eigene Fehlurteile — beide durch zu schnelles Lesen einer einzelnen Zahl.**
+- `faster-whisper` für ungenutzt gehalten, weil ich den Zeitstempel der *letzten* Logzeile las.
+  Tatsächlich: **42 echte Transkriptionen in 72 Stunden**. Bei „wird das gebraucht?" das
+  **Volumen** über einen Zeitraum zählen, nie den letzten Eintrag.
+- Die qemu-VM für Ballast gehalten — sie war erreichbar, SSH offen, HTTP 200. Kaputt war die
+  Tunnel-Route. **Erst messen, dann urteilen**, besonders vor Abschalt-Empfehlungen.
+
+**🟢 Was sich bewährt hat:** Sicherung erstmals zurückgeholt (`pragma integrity_check` + echte
+Zeilenzahlen gegen die Erwartung, niemals über Live-Daten schreiben) — halbjährlich wiederholen.
+49 `.env` von 777 auf 600; 23 davon brauchten vorher ein `chown`, sonst hätte compose sie nicht
+mehr lesen können. Beides steht in `docs/BACKUP_README.md` bzw. dem Wochencheck.

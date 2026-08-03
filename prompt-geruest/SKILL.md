@@ -101,6 +101,17 @@ Y."
 - Schicht 3: Formular-Aufbau einmalig komplett beschreiben (Zeilen, Spalten, typische Handschrift-Macken)
 - Schicht 9: JSON für die Übernahme in Medifox/DAN, Prefill mit `{`
 
+### Code-Auftrag an ein Arbeiter-Modell (Codex, TDD)
+
+- Schicht 3: Projektstruktur, Test-Befehl, unantastbare Pfade (`tests/`, `*.config.ts`)
+- **Schicht 8 umdrehen**: Bei Code-Aufträgen ist die **Testdatei** das Eindeutige und der Code das
+  Unklare. Also: „Lies ERST die Tests unter `<pfad>`, DANN die Umsetzung." Umgekehrt herum baut das
+  Arbeiter-Modell nach seinem eigenen Verständnis und passt anschließend die Tests an.
+- Schicht 10: „Schränkt dich ein Test ein, ändere das Design — nicht den Test."
+- 🟡 **Auftragsdateien mit echten Umlauten schreiben.** ASCII-Ersatz (`fuer`, `loeschen`, `Groesse`)
+  landet sonst wörtlich in Knopfbeschriftungen und Erklärtexten des fertigen Produkts — das
+  Arbeiter-Modell übernimmt die Schreibweise aus dem Auftrag. Verifiziert 2026-08-02.
+
 ### Forensik-Bericht auswerten
 
 - Schicht 2: „Trenne strikt Befund (belegbar) von Vermutung — jede Aussage mit Fundstelle"
