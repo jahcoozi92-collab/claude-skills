@@ -33,10 +33,14 @@ Stell dir vor, du hast einen geheimen Tunnel zwischen all deinen Geräten - egal
 |-------|--------------|-----|--------------|
 | **NAS (ugreen)** | `100.90.233.16` | tagged | UGREEN DXP4800, Docker-Host — Container `tailscale` (v1.98.8 gepinnt) |
 | **ws44** | `100.115.38.98` | user | Windows 11 Arbeits-PC — **ANDERES NETZ (192.168.2.x)!** Zugriff via Tailscale: RDP 3389 ✓, SMB 445 ✓, KEIN SSH (Port 22 zu) |
-| **yoga7-1** | `100.98.252.44` | tagged | Linux Laptop (Kali) — Tailnet-Name ist `yoga7-1`, nicht `yoga7` |
+| **yoga7-1** | `100.98.252.44` | tagged | Linux Laptop (Kali) — Tailnet-Name ist `yoga7-1`, nicht `yoga7`. RDP auf **Port 3390** |
 | **moltbot-vm** | `100.111.159.120` | tagged | Clawbot VM (192.168.22.206) |
 | **lenovo-t450s** | `100.92.109.104` | user | Windows Laptop |
 | **samsung-sm-s938b** | `100.126.122.31` | user | Samsung Galaxy S25 Ultra (Diana) |
+
+**Hinweis zur Tag-Spalte:** In `tailscale status` erscheint bei getaggten Geräten
+`tagged-devices` als Owner-Platzhalter — das bedeutet "gehört einem Tag" und ist
+nicht der Tag-Name selbst.
 
 ### Tailnet-Details
 
@@ -125,9 +129,12 @@ curl -s -X POST -u "$TS_API_KEY:" -H "Content-Type: application/json" -d '{"tags
 
 **Zu yoga7 (Linux):**
 1. `Win + R` → `mstsc` → Enter
-2. Computer: `100.98.252.44`
+2. Computer: `100.98.252.44:3390` ← **Port 3390, nicht Standard-3389!**
 3. Benutzer: `yoga7`
 4. Passwort: GNOME-Fernanmelde-Passwort
+
+**Fertige Verbindungsdatei:** `\\192.168.2.215\Public\RDP\yoga7.rdp`
+(enthält `full address:s:100.98.252.44:3390`, `username:s:yoga7`)
 
 **Zu NAS:**
 - Computer: `100.90.233.16`
@@ -136,7 +143,7 @@ curl -s -X POST -u "$TS_API_KEY:" -H "Content-Type: application/json" -d '{"tags
 
 **Zu yoga7 (Linux):**
 1. App öffnen → `+` → PC hinzufügen
-2. PC-Name: `100.98.252.44`
+2. PC-Name: `100.98.252.44:3390`
 3. Benutzername: `yoga7`
 4. Passwort: GNOME-Fernanmelde-Passwort
 
@@ -186,6 +193,65 @@ tailscale status
 ---
 
 ## Troubleshooting
+
+### Diagnose-Reihenfolge bei "Verbindung geht nicht" (IMMER zuerst)
+
+Ein abgelaufener Key oder ein offline Peer sieht in RDP/SSH/Browser aus wie ein
+Fehler der jeweiligen Anwendung. Deshalb **von unten nach oben** prüfen, bevor
+xrdp, sshd oder die App verdächtigt werden:
+
+```bash
+# 1. Ist der Peer überhaupt im Tailnet und online?
+tailscale status                    # Windows: & "C:\Program Files\Tailscale\tailscale.exe" status
+
+# 2. Kommen Pakete durch?
+tailscale ping 100.98.252.44        # "pong ... via <IP>:41641" = direkte Verbindung OK
+
+# 3. Lauscht der Zielport?
+```
+```powershell
+# Windows-Portcheck ohne Extra-Tools
+foreach ($p in 3390,3389,22) {
+  $c = New-Object System.Net.Sockets.TcpClient
+  $r = $c.BeginConnect("100.98.252.44",$p,$null,$null)
+  if ($r.AsyncWaitHandle.WaitOne(4000,$false) -and $c.Connected) { "Port $p : OFFEN" }
+  else { "Port $p : KEINE VERBINDUNG" }
+  $c.Close()
+}
+```
+
+**Interpretation:**
+
+| Ergebnis | Bedeutet |
+|----------|----------|
+| Peer fehlt in `status` / "offline" | Key-Expiry oder Gerät aus → siehe nächster Abschnitt |
+| Ping OK, Port zu | Dienst auf dem Ziel läuft nicht (xrdp/sshd prüfen) |
+| Ping OK, Port offen | Netzwerk ist NICHT das Problem → Credentials/App prüfen |
+
+### Problem: Schlüsselablauf (Key-Expiry) — Gerät plötzlich nicht mehr erreichbar
+
+**Symptom:** RDP/SSH zu einer `100.x`-Adresse schlägt ohne aussagekräftige Meldung
+fehl ("Verbindung nicht möglich"). Die Anwendung meldet KEINEN Tailscale-Fehler,
+weil die Verbindung schon vor dem Handshake scheitert.
+
+**Ursache:** Tailscale-Node-Keys laufen standardmäßig nach ~180 Tagen ab. Danach
+fällt das Gerät aus dem Tailnet und seine `100.x`-IP ist nicht mehr routbar.
+Betrifft besonders Geräte, die per `.rdp`-Datei o.ä. **fest auf eine 100.x-Adresse**
+verdrahtet sind — es gibt dann keinen Fallback.
+
+**Lösung:** Admin-Konsole → https://login.tailscale.com/admin/machines
+→ Gerät → `...` → **"Disable key expiry"**
+
+**WICHTIG:** Gilt **pro Gerät**, nicht fürs ganze Tailnet. Nach dem Fix für ein
+Gerät laufen alle anderen Nodes weiter mit Standardablauf und treffen dasselbe
+Problem später erneut. Für dauerhaft benötigte Geräte (NAS, Server, Remote-Ziele)
+den Ablauf direkt mit deaktivieren.
+
+**Fallback einplanen:** yoga7 ist zusätzlich per SSH (Port 22) erreichbar. Eine
+lokale IP als Notweg nur nutzen, wenn sie aktuell stimmt — das Gerät wechselt die
+Netze (2026-08-04 gemessen: `direct 192.168.3.4:41641`, während `yoga7-admin`
+noch `192.168.22.86` notiert). Die aktuelle lokale Adresse zeigt `tailscale status`
+in der `direct`-Angabe.
 
 ### Problem: Android-Apps funktionieren nicht wenn Tailscale an
 
@@ -277,3 +343,28 @@ sudo journalctl -xeu tailscaled.service --no-pager | tail -50
 - Nebenfund: Es existiert eine Route zwischen 192.168.22.x und 192.168.2.x (192.168.2.38 pingbar, sogar RDP 3389 direkt offen von Yoga7) — für Automationen trotzdem IMMER die Tailscale-IP nutzen (funktioniert standortunabhängig, Route ist nicht garantiert).
 
 **🔵 Geräte-Tabelle oben aktualisiert** (moltbot-vm + lenovo-t450s ergänzt, `yoga7-1`-Name korrigiert, Samsung = SM-S938B/S25 Ultra).
+
+### 2026-08-04 - RDP zu yoga7 defekt: Key-Expiry als Root Cause
+
+**Der Fehler zeigt sich nie dort, wo er entsteht:**
+- Symptom war "RDP-Verbindung funktioniert nicht" → Verdacht lag auf xrdp/Credentials
+- Tatsächliche Ursache: abgelaufener Tailscale-Node-Key → `100.98.252.44` nicht routbar
+- Diana hat den Schlüsselablauf deaktiviert → sofort wieder funktionsfähig
+- Lektion: Bei fest auf `100.x`-Adressen verdrahteten Verbindungen (`.rdp`-Dateien,
+  Bookmarks, Scripts) ist Key-Expiry die **erste** zu prüfende Ursache, nicht die letzte
+
+**Diagnose vor Hypothese:**
+- `tailscale status` → `tailscale ping` → TCP-Portcheck liefert in <1 Min eine
+  eindeutige Schichtzuordnung (Tailnet / Dienst / Anwendung)
+- Messergebnis nach dem Fix: Peer `active; direct 192.168.3.4:41641`, pong in 20 ms,
+  Ports 3390/3389/22 offen → Netzwerk-Layer sauber, Problem war restlos behoben
+
+**yoga7 RDP-Port ist 3390, nicht 3389:**
+- Die `.rdp`-Datei nutzt `full address:s:100.98.252.44:3390`
+- Der Skill nannte vorher nur die IP → mit `mstsc` auf Standard-3389 wäre man auf
+  einem anderen Dienst gelandet
+- Beide Ports lauschen auf yoga7; welcher Dienst auf 3389 sitzt, ist nicht untersucht
+
+**Key-Expiry ist eine Pro-Gerät-Einstellung:**
+- Das Deaktivieren für yoga7 schützt NICHT ws44, ugreen oder die anderen Nodes
+- Bei jedem dauerhaft benötigten Gerät separat setzen
