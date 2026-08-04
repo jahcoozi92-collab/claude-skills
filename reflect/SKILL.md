@@ -132,8 +132,9 @@ Diese Änderungen anwenden? [J]a / [N]ein / oder Anpassungen beschreiben
    - User: nur "ja" oder "J" → Classifier kann erneut blocken (Mehrdeutigkeit)
 4. Bestätige: "Skill aktualisiert und zu GitHub gepusht (Commit-Hash)"
 5. **Ontology aktualisieren** — PFLICHT nach jedem Reflect:
-   - **Yoga7:** Ontology ist LOKAL verfügbar — `cd ~/clawd && python3 skills/ontology/scripts/ontology.py [command]`
-   - **Andere Maschinen:** Via SSH auf Clawbot VM (192.168.22.206): `ssh moltbotadmin@192.168.22.206 'cd ~/clawd && python3 skills/ontology/scripts/ontology.py [command]'`
+   - **Kanonischer Graph liegt NUR auf der Clawbot VM (192.168.22.206)** — ALLE Maschinen schreiben via SSH dorthin. Lokale Stores (z. B. Yoga7 `~/clawd`) sind LEER; lokales Schreiben erzeugt einen divergenten Fork (verifiziert 2026-08-04: Yoga7 0 Entities, VM 213 Software-Entities).
+   - Aufruf: `ssh moltbotadmin@192.168.22.206 'cd ~/clawd && python3 skills/ontology/scripts/ontology.py [command]'`
+   - Batch bevorzugt per stdin-Pipe: `ssh -o BatchMode=yes moltbotadmin@192.168.22.206 'bash -s' < skript.sh` (von Yoga7 passwortlos verifiziert)
    - **CLI-Syntax**: `-t TYPE -p '{"name":"...","desc":"..."}'` (NICHT `--name`/`--desc`)
    ```bash
    cd ~/clawd
@@ -720,3 +721,16 @@ SET LOCAL hnsw.ef_search = 100;
 **🔴 Der Classifier blockt auch das SCHREIBEN von „Bypass"-formulierten Lektionen**
 - Ein Reflect-Edit an SKILL.md, der den `!`-Prefix als „Ausweg/Bypass, umgeht den Classifier" beschrieb, wurde selbst geblockt (liest sich als Anleitung zum Umgehen des Guards). Auch credential-detail-freie Varianten mit Bypass-Ton scheiterten.
 - **Fix:** Lektion **neutral als sanktionierte Arbeitsteilung** formulieren („finaler DB-Write ist User-initiiert"), ohne Wörter wie Bypass/Ausweg/„gatet es nicht"/„umgeht". Dann lief der Edit durch. Gilt generell für das Dokumentieren von Guard-Verhalten.
+
+### 2026-08-04 — Ontology-Standort richtiggestellt: kanonischer Graph nur auf Clawbot VM
+
+**🔴 „Yoga7: Ontology ist LOKAL verfügbar" war falsch — Fork-Gefahr**
+- Yoga7-lokaler Store (`~/clawd`) hat 0 Entities; der echte Graph liegt auf der Clawbot VM
+  (192.168.22.206, 213 Software-Entities). Lokales Schreiben hätte einen divergenten Fork erzeugt.
+- Regel jetzt in Step 5: ALLE Maschinen schreiben via SSH zur VM; Batch per
+  `ssh -o BatchMode=yes moltbotadmin@192.168.22.206 'bash -s' < skript.sh` (von Yoga7 verifiziert).
+- Vor jedem Ontology-Write kurz prüfen, ob man auf dem kanonischen Store ist:
+  `ont list -t Software | python3 -c "import json,sys; print(len(json.load(sys.stdin)))"` —
+  0 heißt: falscher Store, via SSH zur VM gehen.
+- Fund-Weg: OBSERVATIONS.md-Eintrag aus Vorsession (User: „korrigiere beim nächsten Reflect") —
+  der OBSERVATIONS-Mechanismus (Step 5 bei Ablehnung/Vertagung) funktioniert wie designed.
