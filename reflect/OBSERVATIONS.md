@@ -19,14 +19,16 @@ Hier werden Beobachtungen gespeichert, die beim `/reflect`-Befehl abgelehnt wurd
 
 ## Einträge
 
-*Noch keine Einträge. Beobachtungen werden hier gespeichert, wenn du bei `/reflect` wählst, sie für später aufzuheben.*
+### 2026-05-29 — Eigene Lesson sofort falsifiziert (Pfad-Länge, nicht `&&`)
 
-## 2026-08-04 — Ontology-Standort-Angabe für Yoga7 ist falsch (User-bestätigt: beim nächsten Reflect korrigieren)
+**Konfidenz:** MEDIUM
+**Beobachtung:** Im Commit `e419f52` wurde die Lesson kodifiziert: „KEIN `&&` in User-Befehlen — bricht auch unter 100 Zeichen". 10 Minuten später lief `scp Jahcoozi@192.168.22.90:/tmp/o.sh /tmp/ && bash /tmp/o.sh` (~58 Zeichen) sauber durch. Falsifikation: nicht `&&` ist der Bruch-Trigger, sondern **Pfad-Länge → Terminal-Auto-Wrap, das zufällig vor `&&` landet** wenn die Zeile lang genug ist. `&&` ist Symptom, nicht Ursache.
+**Mögliche Änderung:** Lesson in `reflect/SKILL.md` (Step 5) verfeinern: statt absoluter `&&`-Verbot besser „Befehle so kurz halten, dass keine Terminal-Auto-Wrap-Position vor strukturellen Tokens (`&&`, `||`, `;`) entsteht". Praktische Faustregel weiterhin: separate Zeilen sicherer als Verkettung.
+**Grund für Ablehnung:** Eine einzelne Falsifikation ist noch kein Pattern. Wenn der Fall mehrfach in den nächsten Reflect-Runden wiederkommt → in Skill übernehmen. Bis dahin als ehrliche Beobachtung hier ablegen.
 
-- SKILL.md Step 4 behauptet: "Yoga7: Ontology ist LOKAL verfügbar — cd ~/clawd && python3 …"
-- Realität (verifiziert 2026-08-04): Yoga7-lokaler Store ist LEER (0 Software/Pattern/Task) —
-  der kanonische Graph liegt auf der Clawbot VM (192.168.22.206, 213 Software-Entities)
-- Lokales Schreiben auf Yoga7 würde einen divergenten Fork erzeugen
-- Funktionierender Weg von Yoga7: `ssh -o BatchMode=yes moltbotadmin@192.168.22.206 'bash -s' < skript.sh`
-  (passwortlos, verifiziert) — Skill entsprechend umformulieren: ALLE Maschinen schreiben via SSH zur VM
-→ UMGESETZT 2026-08-04: Step 5 in SKILL.md korrigiert (kanonischer Graph nur auf Clawbot VM).
+### 2026-05-29 — Reflect-Frequenz: 3× pro Session ist hochfrequent
+
+**Konfidenz:** LOW
+**Beobachtung:** Diese Session hatte drei `/reflect`-Aufrufe hintereinander. Erster brachte 16 substanzielle Lessons (rag-system + nas-instance), zweiter 3 Meta-Lessons über reflect selbst, dritter eine Lesson-Falsifikation. Abnehmender Grenznutzen erkennbar.
+**Mögliche Änderung:** Workflow könnte eine Heuristik bekommen — z.B. „bei < 3 echten Korrekturen/Erfolgen seit letztem Reflect-Commit: OBSERVATIONS statt Commit empfehlen". Aktuell muss Claude das ad-hoc abwägen.
+**Grund für Ablehnung:** Nicht generalisierbar nach einer Session. Wenn Diana das Muster über mehrere Wochen bestätigt → in Skill übernehmen.
