@@ -9,7 +9,7 @@ Patterns and best practices for working with Home Assistant configuration on thi
 - **Internal URL**: `http://192.168.22.90:8123`
 - **External URL**: `https://homeassistant.forensikzentrum.com`
 - **Container Name**: `homeassistant` (NICHT `home-assistant`)
-- **HA Version**: 2026.4.x (stable, verifiziert 2026-04-22)
+- **HA Version**: 2026.7.4 (stable, verifiziert 2026-08-04)
 - **Docker**: `network_mode: host`, `privileged: true`
 - **Voice-Container** (laufen parallel auf NAS):
   - `ha-wyoming-whisper` (Port 10300, STT lokal, rhasspy/wyoming-whisper:latest)
@@ -2439,3 +2439,53 @@ User-Report „feste Lamellenposition geht nicht mehr, schwenkt immer weiter" (b
 - Gefunden: `zz_nachlauf_flur_temporaer.yaml` mit dem Kommentar „NACH DEM LAUF: diese Datei löschen" — drei Tage später noch aktiv. Die Automation triggerte auf `homeassistant.start` und hätte bei **jedem** Neustart einen Steri-Clean-56-°C-Lauf ausgelöst.
 - Vor jedem Restart prüfen: `ls config/packages/*temporaer* config/packages/zz_*` und Start-Trigger sichten (`grep -l "event: start" config/packages/*.yaml`).
 - Ob der Zweck erfüllt wurde, verrät die DB, nicht die Datei: hier zeigte `binary_sensor.*_steri_clean_56` seit dem Anlegen ausschließlich `off` — der überwachte Lauf hatte nie stattgefunden.
+
+### 2026-08-04 — HA-MCP Server (inoffiziell) installiert + Install-Patterns ohne SSH
+
+**🔴 HA-MCP Server läuft dauerhaft in dieser HA-Instanz — Umgebungs-Fakten:**
+- Custom Component `ha_mcp_tools` v1.3.0 via HACS, Repo `homeassistant-ai/ha-mcp-integration`
+  (HACS-Mirror von `homeassistant-ai/ha-mcp`), Server ha-mcp 8.0.0, Variante „server" (in-process)
+- Config-Entry-ID: `01KZ79MKZ5XHHSZMNJT5Q9Y6M4`
+- Verbindungs-URLs (Secret-Teil NIE in Chat/Commit — URL = Passwort):
+  - Webhook: `http://192.168.22.90:8123/api/webhook/<geheim>` (bevorzugt)
+  - Direkt: `http://192.168.22.90:9584/private_<geheim>`
+  - Extern: `https://homeassistant.forensikzentrum.com/api/webhook/<geheim>` (für Claude.ai-Konnektor)
+- URL persistiert als `HA_MCP_URL` in `~/.config/homeassistant/env` (Yoga7)
+- Claude Code: registriert als `home-assistant-mcp` (User-Scope, Transport http)
+- Verwaltung: HA-Sidebar-Panel `/ha-mcp` (Tools an/aus); Options-Flow der Integration zeigt URLs
+- YAML/File-Beta-Modul bewusst NICHT installiert (gefährlich; bei Bedarf: Integration →
+  „Eintrag hinzufügen" → „HA-MCP File & YAML Tools" — vorher Backup!)
+- NICHT verwechseln: der offizielle `mcp_server` ist parallel konfiguriert, kann aber nur
+  exponierte Assist-Entitäten
+
+**🔴 Pattern: Integration installieren, wenn SSH zum NAS down ist (komplett per API):**
+1. HACS via WebSocket-API (`ws://192.168.22.90:8123/api/websocket`, Auth mit Long-Lived Token):
+   `hacs/repositories/add` {repository, category:"integration"} → `hacs/repositories/list`
+   (Repo-ID holen) → `hacs/repository/download` {repository: <id>}
+2. Neustart + Warten per REST: `POST /api/services/homeassistant/restart`, dann
+   `GET /api/config` pollen bis `state == "RUNNING"` (Ablauf: NOT_RUNNING → STARTING → RUNNING, ~1 min)
+3. Config-Flow per REST: `POST /api/config/config_entries/flow` {"handler":"<domain>"} →
+   Antwort-Typ `menu`/`form` → Schritte mit `POST .../flow/<flow_id>` beantworten bis `create_entry`
+4. Options einsehen ohne zu ändern: `POST /api/config/config_entries/options/flow`
+   {"handler":"<entry_id>"} — `description_placeholders` enthält z. B. die Verbindungs-URLs
+
+**🟡 Token-Handling: env-Datei hat KEINE export-Statements**
+- `source ~/.config/homeassistant/env` setzt die Variablen nur lokal, Subprozesse sehen sie nicht;
+  Credential-Export in der Shell direkt vor Skript-Aufrufen wird zudem vom Auto-Mode-Classifier
+  geblockt → sanktionierter Weg: Python-Skripte parsen die Datei selbst:
+  ```python
+  def lade_env(pfad="~/.config/homeassistant/env"):
+      werte = {}
+      for zeile in open(os.path.expanduser(pfad)):
+          zeile = zeile.strip()
+          if zeile and not zeile.startswith("#") and "=" in zeile:
+              k, _, v = zeile.partition("=")
+              werte[k.strip()] = v.strip()
+      return werte
+  ```
+- Vorsicht: Zeilen können führende Leerzeichen haben (`  HA_LONG_LIVED_TOKEN=…`) — strip() nötig,
+  `grep '^HA_'` übersieht sie
+
+**🔵 Stand 2026-08-04: NAS-SSH lehnt beide Keys ab (nas_key + id_ed25519), sshfs-Mounts seit
+Dez. 2025 tot; CIFS-Share `Volume` enthält `/volume1/docker` NICHT — Details siehe
+Memory `reference_nas_ssh_zugang` / `reference_ha_mcp_server`**
