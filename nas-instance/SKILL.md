@@ -2042,3 +2042,56 @@ mehr lesen können. Beides steht in `docs/BACKUP_README.md` bzw. dem Wochencheck
 - Der Mount läuft mit `nounix` + `file_mode/dir_mode=0755` forced — `ls -la`/`stat` über CIFS
   zeigen NICHT die echten POSIX-Rechte und `chmod` über CIFS ändert sie nicht zuverlässig.
 - Echte Rechte prüfen/fixen geht nur per SSH auf dem NAS selbst (`stat -c '%a %U:%G %n' …`).
+
+### 2026-08-05 — curl-`-w` frisst Argumente, git safe.directory, HA-Restart-Polling, Handy-Foto-Backup als Quelle
+
+**🔴 `curl -w "…%s…"` in einer Schleife: der Format-String schluckt das nächste Argument**
+- Geschrieben: `curl -s -o /dev/null -w "  %-24s HTTP %{http_code}\n" "$f" "$url"` — Absicht war „Dateiname, dann Status".
+- Tatsächlich: `-w` kennt kein `%s`; `%-24s` wird literal ausgegeben, und `"$f"` gilt als **zweite URL**. Ergebnis: `HTTP 000`, und curl lädt die Datei als relativen Pfad → 1,2 MB SVG-Inhalt landeten im Tool-Output (Output-Persistierung sprang an).
+- **Richtig:** Label getrennt ausgeben, curl bekommt genau eine URL:
+  ```bash
+  for f in a.svg b.js; do
+    printf "  %-24s " "$f"
+    curl -s -o /dev/null -w "HTTP %{http_code}  %{size_download} B  %{content_type}\n" "http://host/pfad/$f"
+  done
+  ```
+- Merkregel: in `-w` nur `%{variable}`-Platzhalter, niemals printf-Verben.
+
+**🟡 Git im Docker-Verzeichnis: „dubious ownership" blockt jeden Aufruf**
+- `/volume1/docker/home-assistant/config` ist ein Git-Repo, gehört aber root — `git log` bricht mit `fatal: detected dubious ownership` ab, auch lesend.
+- Einmalig freigeben, dann laufen auch `git status`/`git log` als Jahcoozi:
+  ```bash
+  git config --global --add safe.directory /volume1/docker/home-assistant/config
+  ```
+- Danach lohnt der Blick auf `git ls-files`: hier waren 30 `.storage`-Dateien und `secrets.yaml` getrackt, obwohl sie in `.gitignore` stehen — sie wurden **vor** dem `.gitignore` committet und bleiben deshalb im Index. `.gitignore` wirkt nie rückwirkend.
+
+**🟡 Home Assistant per REST neu starten und auf `RUNNING` warten**
+- Auslösen und danach zweistufig pollen — die API antwortet früher als der Start abgeschlossen ist:
+  ```bash
+  TOKEN=$(cat ~/.ha_token)
+  curl -s -X POST -H "Authorization: Bearer $TOKEN" http://192.168.22.90:8123/api/services/homeassistant/restart
+  # Stufe 1: API erreichbar (~30 s)
+  for i in $(seq 1 40); do curl -s -m 3 -H "Authorization: Bearer $TOKEN" http://192.168.22.90:8123/api/ \
+      | grep -q "API running" && { echo "online nach ~$((i*4))s"; break; }; sleep 4; done
+  # Stufe 2: state == RUNNING (~25 s später)
+  for i in $(seq 1 30); do st=$(curl -s -H "Authorization: Bearer $TOKEN" http://192.168.22.90:8123/api/config \
+      | python3 -c 'import sys,json;print(json.load(sys.stdin)["state"])' 2>/dev/null)
+    [ "$st" = "RUNNING" ] && break; sleep 5; done
+  ```
+- Zwischen Stufe 1 und 2 meldet `/api/config` `state: NOT_RUNNING` — das ist normal, kein Fehler. Gesamt hier ~57 s.
+- Danach `grep -iE "ERROR|Traceback" home-assistant.log` — aber Tracebacks gehören häufig zu einer vorangehenden `WARNING`-Zeile (hier `elevenlabs`, blockierender Import im Event-Loop). Immer den Kontext mitlesen (`grep -B6 -A18`), sonst diagnostiziert man einen fremden Upstream-Bug als eigenen Fehler.
+
+**🔵 Handy-Foto-Backup und alte Session-Transcripts sind durchsuchbare Quellen**
+- Fotos der Companion-App landen unter `/home/Jahcoozi/Photos/MobileBackup/samsung SM-S938B/<jahr>/<monat>/`.
+- Ältere Claude-Sessions anderer Maschinen liegen als JSONL im Laptop-Backup: `~/yoga7-backups/<datum>/.claude/projects/<projektpfad>/<uuid>.jsonl`. Auslesen mit:
+  ```bash
+  python3 -c "
+  import json
+  for line in open('<uuid>.jsonl',encoding='utf-8'):
+      d=json.loads(line); m=d.get('message') or {}; c=m.get('content')
+      if isinstance(c,str): print(m.get('role'), c[:800])
+      elif isinstance(c,list):
+          for b in c:
+              if isinstance(b,dict) and b.get('type')=='text': print(m.get('role'), b['text'][:800])"
+  ```
+- Praxisnutzen hier: ein Transcript nannte vier Dateinamen von Bauplan-Fotos, die auf dem Laptop längst gelöscht, im NAS-Foto-Backup aber noch vorhanden waren. **Bei „Unterlagen fehlen" erst hier suchen, bevor der User Arbeit bekommt.**
