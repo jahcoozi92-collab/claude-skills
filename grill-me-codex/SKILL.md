@@ -23,8 +23,7 @@ Qualitätssicherung durch Modell-Trennung (der Prüfer ist nie der Autor).
 
 - Codex CLI installiert (`codex --version`) mit ChatGPT-Auth — siehe Memory `reference_codex_plugin`
 - 🔴 **Der Agent `codex:codex-rescue` existiert auf der NAS NICHT** (verifiziert 2026-08-02). Ein
-  `Agent`-Aufruf mit diesem `subagent_type` schlägt fehl. Stattdessen die CLI direkt aufrufen —
-  siehe Phase 4.
+  `Agent`-Aufruf mit diesem `subagent_type` schlägt fehl. Stattdessen die CLI direkt aufrufen — siehe Phase 4.
 - **Fallback**: Ist Codex nicht verfügbar → Nutzer informieren und im Ein-Modell-Modus (Claude macht alles)
   fortfahren, aber explizit sagen, dass der Arbeiter-Schritt lokal läuft.
 
@@ -65,49 +64,55 @@ ganz neuen Projekten: kurzes Pre-Mortem vor Phase 2.
 Auftrag als **Datei** schreiben (`CODEX_TASK.md` im Projektordner), dann die CLI direkt aufrufen:
 
 ```bash
-codex exec -s workspace-write --skip-git-repo-check -C <projektverzeichnis> "$(cat CODEX_TASK.md)"
+codex exec -s workspace-write --skip-git-repo-check -m gpt-5.6-luna -C <projektverzeichnis> "$(cat CODEX_TASK.md)"
 ```
+
+**Modellwahl Arbeiter (Stand 2026-08-04):** `gpt-5.6-luna` — laut Frontier-Code-Benchmark für viele Aufgaben
+auf Opus-5-Niveau (Extra High) bei ~17× geringerem Preis (nach der 80%-Preissenkung: ~0,20 $/Mio Input-Token).
+Das globale Codex-Default (`gpt-5.6-sol` in `~/.codex/config.toml`) bleibt unverändert für interaktive
+Nutzung; das `-m`-Flag überschreibt nur pro Aufruf. Smoke-Test am 2026-08-04 verifiziert (`-m gpt-5.6-luna`
+wird akzeptiert). Bei komplexen Aufgaben, an denen Luna in der Revisionsschleife scheitert: auf `gpt-5.6-sol`
+hochschalten.
 
 🔴 **Flag-Fallen (alle 2026-08-02 verifiziert):**
 
 - `--full-auto` **gibt es nicht** — der Schreibmodus kommt allein über `-s workspace-write`
-- `codex exec resume` akzeptiert **weder `-s` noch `-C`**; diese Flags gehören nur an `exec` selbst.
-  Für Revisionsrunden deshalb entweder aus dem Zielverzeichnis heraus `resume` aufrufen oder eine
-  frische `exec`-Runde mit Verweis auf den Stand starten.
-- Der Auto-Modus-Classifier blockt `codex exec` mit **Pipes oder `$(cat …)`** in manchen Formen.
-  Robuster Weg: Auftragsdatei schreiben, Codex per Auftragstext auf sie verweisen lassen
-  („Lies CODEX_TASK.md in diesem Verzeichnis und arbeite sie ab").
+- `codex exec resume` akzeptiert **weder `-s` noch `-C`**; diese Flags gehören nur an `exec` selbst. Für
+  Revisionsrunden deshalb entweder aus dem Zielverzeichnis heraus `resume` aufrufen oder eine frische
+  `exec`-Runde mit Verweis auf den Stand starten.
+- Der Auto-Modus-Classifier blockt `codex exec` mit **Pipes oder `$(cat …)`** in manchen Formen. Robuster Weg:
+  Auftragsdatei schreiben, Codex per Auftragstext auf sie verweisen lassen („Lies CODEX_TASK.md in diesem
+  Verzeichnis und arbeite sie ab").
 
 Der Auftragstext enthält:
 
 - Den vollständigen Plan aus Phase 2 (Dateistruktur, Entscheidungen aus dem Interview)
-- Den Hinweis: „Die Tests unter <pfad> definieren das Soll-Verhalten. Implementiere, bis alle Tests grün
-  sind. **Schränkt dich ein Test ein, ändere das Design — nicht den Test.**"
+- Den Hinweis: „Die Tests unter <pfad> definieren das Soll-Verhalten. Implementiere, bis alle Tests grün sind.
+  **Schränkt dich ein Test ein, ändere das Design — nicht den Test.**"
 - Harte Constraints: keine Platzhalter, keine :latest Tags, keine erfundenen APIs
-- 🟡 **Echte Umlaute schreiben.** ASCII-Ersatz (`fuer`, `loeschen`) wandert sonst wörtlich in
-  nutzersichtbaren Produkttext — passiert, sobald Codex Beschriftungen aus dem Auftrag übernimmt.
+- 🟡 **Echte Umlaute schreiben.** ASCII-Ersatz (`fuer`, `loeschen`) wandert sonst wörtlich in nutzersichtbaren
+  Produkttext — passiert, sobald Codex Beschriftungen aus dem Auftrag übernimmt.
 
 Ein Aufruf pro Übergabe. Nicht parallel selbst implementieren — der Architekt wartet.
 
-**🟢 Bewährt (3 Zyklen, 242 Tests, 0 veränderte Testdateien):** Der Satz „ändere das Design, nicht den
-Test" hielt durchgehend. Er gehört wörtlich in jeden Auftrag.
+**🟢 Bewährt (3 Zyklen, 242 Tests, 0 veränderte Testdateien):** Der Satz „ändere das Design, nicht den Test"
+hielt durchgehend. Er gehört wörtlich in jeden Auftrag.
 
 ### Phase 5 — Validierung (Architekt) + Revisionsschleife
 
 1. Tests ausführen (`npm test` / `pytest` etc.) und Build prüfen (`npm run build`)
 
-   🔴 **Codex' Testbericht ist KEIN Nachweis — der Architekt misst immer selbst nach.**
-   Am 2026-08-02 meldete Codex „166/166 grün", dieselbe Suite zeigte bei mir **63 Fehlschläge**
-   (alle 401-Sicherheitstests). Ursache war weder Code noch Lüge, sondern die Umgebung: Codex'
-   Sandkasten läuft auf **Node 18**, meine Shell auf **Node 24** — `better-sqlite3` war für die
-   falsche ABI gebaut (`NODE_MODULE_VERSION 108` vs. `137`). **Der Code war korrekt.**
-   Fix: `npm rebuild better-sqlite3`. Ein `require()` allein entlarvt das nicht — die native
-   Bindung lädt erst, wenn tatsächlich eine Datenbank geöffnet wird. Ein Vorab-Check muss
-   also wirklich `new Database(':memory:')` aufrufen.
+   🔴 **Codex' Testbericht ist KEIN Nachweis — der Architekt misst immer selbst nach.** Am 2026-08-02 meldete
+   Codex „166/166 grün", dieselbe Suite zeigte bei mir **63 Fehlschläge** (alle 401-Sicherheitstests). Ursache
+   war weder Code noch Lüge, sondern die Umgebung: Codex' Sandkasten läuft auf **Node 18**, meine Shell auf
+   **Node 24** — `better-sqlite3` war für die falsche ABI gebaut (`NODE_MODULE_VERSION 108` vs. `137`). **Der
+   Code war korrekt.** Fix: `npm rebuild better-sqlite3`. Ein `require()` allein entlarvt das nicht — die
+   native Bindung lädt erst, wenn tatsächlich eine Datenbank geöffnet wird. Ein Vorab-Check muss also wirklich
+   `new Database(':memory:')` aufrufen.
 
-2. **Rot** → Revisionsschleife: Fehlerausgabe + präzise Korrekturanweisung an Codex (Flags siehe
-   Phase 4 — `resume` verträgt kein `-s`/`-C`). Max. 3 Runden; danach übernimmt Claude die Restfixes
-   selbst und vermerkt das im Report.
+2. **Rot** → Revisionsschleife: Fehlerausgabe + präzise Korrekturanweisung an Codex (Flags siehe Phase 4 —
+   `resume` verträgt kein `-s`/`-C`). Max. 3 Runden; danach übernimmt Claude die Restfixes selbst und vermerkt
+   das im Report.
 3. **Grün** → Code-Review durch den Architekten (code-reviewer Agent bei größeren Diffs): Plan eingehalten?
    Keine Secrets? Keine Test-Manipulation? Coverage ≥ 80 %?
 4. Funktional verifizieren, nicht nur Tests: App starten, Kernflows durchklicken (bei Web: responsive per
