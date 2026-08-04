@@ -2015,3 +2015,30 @@ docker exec uptime-kuma sh -c 'sqlite3 /app/data/kuma.db \
 Zeilenzahlen gegen die Erwartung, niemals über Live-Daten schreiben) — halbjährlich wiederholen.
 49 `.env` von 777 auf 600; 23 davon brauchten vorher ein `chown`, sonst hätte compose sie nicht
 mehr lesen können. Beides steht in `docs/BACKUP_README.md` bzw. dem Wochencheck.
+
+### 2026-08-04 — SSH-Ausfall-Playbook (UGOS-Toggle + StrictModes) & CIFS-Fernadministration
+
+**🔴 SSH-Ausfall-Playbook — Diagnose-Reihenfolge einhalten:**
+1. **„Connection refused"** → sshd läuft nicht. ERST den SSH-Toggle in der UGOS-Weboberfläche
+   prüfen (Systemeinstellungen → Terminal) — UGOS deaktiviert sshd selbstständig (nach
+   Updates/Neustarts). NICHT bei den Keys suchen. Gegenprobe, ob das NAS sonst gesund ist:
+   Ports 8123 (HA), 9443 (Portainer), 445 (SMB) antworten weiter.
+2. **„Permission denied (publickey,password)" trotz korrekt eingetragener authorized_keys** →
+   StrictModes-Rechteproblem. Fix: `bash fixssh.sh` (liegt in `/home/Jahcoozi`; setzt Home 755,
+   `.ssh` 700, `authorized_keys` 600; bei „Operation not permitted" mit sudo). Verifiziert:
+   danach funktionierten beide Yoga7-Keys (`nas_key`, `id_ed25519`) sofort wieder.
+3. Danach auf Yoga7 sshfs wiederherstellen: `bash ~/scripts/mount-nas.sh` — Zielordner unter
+   `~/nas-mounts/` müssen existieren, sonst `bad mount point` (mkdir -p vorher).
+
+**🟡 CIFS-Share „personal_folder" = `/home/Jahcoozi` → Fernadministration ohne SSH möglich**
+- Über `/mnt/autofs/nas-personal` (Yoga7) ist das komplette NAS-Home erreichbar — inklusive
+  `.claude.json`, `.claude/`, `.config/`. Damit lassen sich NAS-Claude-Configs auch bei totem SSH
+  patchen (verifiziert: MCP-Server-Registrierung per Python-Edit der `.claude.json`).
+- IMMER vorher Backup anlegen (`.claude.json.bak-<datum>`), JSON nach dem Schreiben re-parsen.
+- MCP-Registrierungen (`mcpServers` in `~/.claude.json`) gelten PRO Maschine/User — sie syncen
+  nicht. Jede Maschine braucht ihren eigenen Eintrag (Yoga7 ✓, NAS ✓, Rest bei Bedarf).
+
+**🟡 CIFS-Diagnose-Grenze: Rechte-Anzeige ist Fantasie**
+- Der Mount läuft mit `nounix` + `file_mode/dir_mode=0755` forced — `ls -la`/`stat` über CIFS
+  zeigen NICHT die echten POSIX-Rechte und `chmod` über CIFS ändert sie nicht zuverlässig.
+- Echte Rechte prüfen/fixen geht nur per SSH auf dem NAS selbst (`stat -c '%a %U:%G %n' …`).
