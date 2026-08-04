@@ -2489,3 +2489,52 @@ User-Report „feste Lamellenposition geht nicht mehr, schwenkt immer weiter" (b
 **🔵 Stand 2026-08-04: NAS-SSH lehnt beide Keys ab (nas_key + id_ed25519), sshfs-Mounts seit
 Dez. 2025 tot; CIFS-Share `Volume` enthält `/volume1/docker` NICHT — Details siehe
 Memory `reference_nas_ssh_zugang` / `reference_ha_mcp_server`**
+
+### 2026-08-05 — MCP-Best-Practices ersetzen diesen Skill nicht; resource_mode-yaml-Fallen; Custom-Card-Deploy
+
+**🔴 Der ha-mcp-Server serviert eigene Best Practices — das ist NICHT dieser Skill**
+- `ha_get_skill_guide` / `skill://home-assistant-best-practices/**` liefert generische HA-Regeln und verlangt einen Lesebeleg (`BestPracticeKey`). Das fühlt sich nach „Doku gelesen" an und verdeckt, dass der **installationsspezifische** Skill hier ungelesen bleibt.
+- Konkreter Schaden in dieser Session: Im Audit als Befund gemeldet „7 Batterien leer" — obwohl dieser Skill die Falle seit 2026-06-28 dokumentiert. Gegenprobe:
+  ```
+  sensor.*_batterietyp        = "Replace Batteries"   → Matter-Enum BatReplaceability = „wechselbar"
+  binary_sensor.*_batteriestand (device_class: battery) = off → Batterie IN ORDNUNG
+  ```
+- **Regel: bei jeder HA-Arbeit BEIDE laden.** MCP-Guide für generische Muster + Schreibfreigabe, dieser Skill für alles Anlagenspezifische (Entity-Namen, Matter-Migration, hOn-Patches, bekannte Falsch-Positive).
+
+**🔴 `BestPracticeKey` rotiert stündlich**
+- Mitten in einer langen Session schlägt der nächste Schreibvorgang mit `BPS_ACKNOWLEDGMENT_REQUIRED` fehl, obwohl der Key vorher akzeptiert wurde.
+- Fix: irgendeine Skill-Datei erneut lesen (`ha_get_skill_guide(skill=…, file=…)`), der aktuelle Key steht in Zeile 1 des Contents. Nie einen alten Key wiederverwenden.
+- `MandatoryBPS=false` unterdrückt nur das erneute Inline-Ausliefern der Referenzdateien — den Key braucht es trotzdem.
+
+**🔴 `lovelace: resource_mode: yaml` ⇒ Custom Cards NUR über `configuration.yaml` + Neustart**
+- `ha_config_set_dashboard_resource` schreibt nach `.storage/lovelace_resources`, das in diesem Modus **komplett ignoriert** wird. Tückisch: `ha_config_list_dashboard_resources` liest trotzdem die YAML-Liste und meldet `success` — der fehlende Eintrag fällt nicht auf.
+- Erkennen: die gelistete Resource-Anzahl deckt sich exakt mit den `- url:`-Einträgen unter `lovelace: resources:` in `configuration.yaml`.
+- Resources werden **nur beim Start** eingelesen. Kein Reload-Service, auch nicht über Entwicklerwerkzeuge → `homeassistant.restart` ist Pflicht. Vorher `ha_get_system_health(include="config_check")` → muss `{"result":"valid"}` liefern.
+- Gegenstück, das oft übersehen wird: **`ha_config_set_dashboard` funktioniert auch bei `resource_mode: yaml`** und legt ein *Storage*-Dashboard an, ohne `configuration.yaml` oder bestehende YAML-Dashboards anzufassen. Beide Modi koexistieren problemlos (hier: 13 YAML-Dashboards + 1 Storage-Dashboard). Für Neubauten neben einem gewachsenen YAML-Setup ist das der saubere Weg — nur die Custom-Card-Registrierung bleibt der eine Punkt, der zwingend in die `configuration.yaml` muss.
+
+**🔴 Grundriss-/Gebäudedaten immer gegen Areas und Floors gegenprüfen, bevor gebaut wird**
+- Eine Memory verwies auf ein Blender-Modell als „das Wohnhaus" — es war das Haus der Schwester. Zwei fertige Entwürfe später kam die Korrektur.
+- Die Widersprüche waren vorher sichtbar und hätten die Frage sofort ausgelöst: Raumnamen ohne Gegenstück in den Areas (Büro, Ankleide, Kind 1/2), Etagenzahl des Modells ≠ Anzahl der Floors, Flächen ohne Bezug zu den Entity-Verteilungen.
+- Belastbare Quelle war am Ende der Original-Bauplan als Handyfotos — gefunden über ein altes Claude-Projektverzeichnis im Laptop-Backup (`yoga7-backups/*/.claude/projects/*/[uuid].jsonl`), das die Dateinamen nannte, und die Bilder selbst im Handy-Foto-Backup (`Photos/MobileBackup/`). **Bei „Unterlagen fehlen" erst Transcripts und Foto-Backups durchsuchen, dann den User fragen.**
+
+**🟡 `ha_config_get_dashboard` durchsucht `picture-elements` → `elements` NICHT**
+- Suche nach `card_type` / `entity_id` liefert `matches: []` und `match_count: 0` — sieht aus wie „nicht vorhanden", obwohl 18 Elemente dort liegen.
+- Der Hinweis steht in `warnings[]` mit dem konkreten Pfad (`.views[0].cards[0].elements`). Immer lesen.
+- Verifikation stattdessen direkt: `python3 -c "…json.load(open('.storage/lovelace.<dashboard_id>'))…"` oder Vollabruf ohne Suchparameter.
+
+**🟡 Eigene Custom Card: vor dem Deploy Syntax prüfen, im Code eine lesbare Fehlerkarte**
+- ES-Module lassen sich nur mit `.mjs`-Endung prüfen: `cp card.js /tmp/x.mjs && node --check /tmp/x.mjs`. Fängt Syntaxfehler, die man sonst erst als roten Kasten im Browser sieht.
+- Im Kartencode den Aufbau in `try/catch` legen und im Fehlerfall eine `ha-card` mit `e.message` + Prüfhinweisen rendern statt einer weißen Fläche. Unverzichtbar, wenn das Rendering nicht selbst kontrolliert werden kann.
+- Bibliotheken **lokal nach `www/`** legen, nicht per CDN: hier `three.module.js` (r160, 1,3 MB) neben der Karte. Relativer ES-Import (`import * as THREE from './three.module.js'`) funktioniert, sobald die Karte als `type: module` registriert ist. Vorteil: läuft ohne Internet, keine Fremd-Abhängigkeit zur Laufzeit.
+- Beachten: `www/` treibt die Backup-Größe (siehe Lektion 2026-08-03) — 1,3 MB sind vertretbar, GLB-Sammlungen nicht.
+
+**🔵 `python_transform` mit Lambdas bei vielen gleichartigen Elementen**
+- 18 `picture-elements` einzeln als Dict-Literale sind unnötig umfangreich. Lambdas stehen ausdrücklich auf der Whitelist:
+  ```python
+  R = lambda e,n,l,t,top,left,w,h: {'type':'custom:button-card','template':'raum','entity':e,
+        'name':n,'label':l,'tap_action':{'action':'more-info','entity':t} if t else {'action':'none'},
+        'style':{'top':top,'left':left,'width':w,'height':h,'transform':'translate(-50%, -50%)'}}
+  config['views'][1]['cards'][0]['elements'] = [R(...), R(...), ...]
+  ```
+- `button_card_templates` gehören an die **Wurzel** der Lovelace-Config (Geschwister von `views`) — funktioniert auch im Storage-Modus.
+- Vor Umbenennen/Verschieben von Floors prüfen, wer sie referenziert: `grep -rn "floor_id\|<floor_name>" packages/ dashboards/ *.yaml .storage/lovelace.*` — war hier leer, die Umstellung damit folgenlos.
