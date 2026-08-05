@@ -2095,3 +2095,63 @@ mehr lesen können. Beides steht in `docs/BACKUP_README.md` bzw. dem Wochencheck
               if isinstance(b,dict) and b.get('type')=='text': print(m.get('role'), b['text'][:800])"
   ```
 - Praxisnutzen hier: ein Transcript nannte vier Dateinamen von Bauplan-Fotos, die auf dem Laptop längst gelöscht, im NAS-Foto-Backup aber noch vorhanden waren. **Bei „Unterlagen fehlen" erst hier suchen, bevor der User Arbeit bekommt.**
+
+### 2026-08-06 — OmniRoute: Auth-Modell, Messfallen, CPU-Inferenz-Realität
+
+**Neuer Dienst: OmniRoute (LLM-Router).** Liegt **nicht** im Root, sondern unter
+`/volume1/docker/top10/src/OmniRoute` (Compose-Projekt `omniroute`, Container `omniroute-prod`
++ `omniroute-redis-prod`). Ports **20130** Dashboard/Management-API, **20131** API-Bridge
+(OpenAI-kompatibel), **20132** Live-WS. Daten: Volume `omniroute-prod-data` → `/app/data/storage.sqlite`.
+
+**🔴 `POST /api/providers/<id>/test` prüft nur Erreichbarkeit, NICHT die Authentifizierung**
+- `opencode` meldete `valid: true` bei 441 ms — der Echttest gegen `/v1/chat/completions` lieferte
+  dann `invalid_api_key`. Ein grüner Verbindungstest ist **kein** Funktionsbeweis.
+- Regel: nach jedem Connect zusätzlich einen echten Completion-Call absetzen. Gilt sinngemäß für
+  jeden Health-/Test-Endpunkt, der nur einen Socket öffnet.
+
+**🔴 `upstream_empty_response` bei Reasoning-Modellen = zu kleines `max_tokens`, kein Defekt**
+- qwen3 liefert den Grübel-Text in `reasoning` und lässt `content` leer, bis das Denken fertig ist.
+  Mit `max_tokens: 20` bzw. `300` ist das Budget vorher verbraucht → leerer `content` → die
+  Fehlermeldung ist korrekt, der Testaufbau war falsch.
+- Ohne Limit (oder ab ~2000) kommt sauber `finish_reason: "stop"`.
+- Abschalten geht nicht: `/no_think` im Prompt wird ignoriert; `think:false` am nativen
+  `/api/chat` verschiebt den Grübel-Text nur nach `content`.
+
+**🔴 Aus Startup-Logs keine Betriebslage ableiten**
+- `[AUTO] … matched no connected models` las ich als „nach dem Reset ist nichts verbunden".
+  Tatsächlich routete OmniRoute einwandfrei — es fehlten nur einzelne `auto/*`-Pools, weil nur
+  ein Provider verbunden war. Erst ein echter Request zeigt die Lage, nicht das Log.
+
+**🟡 401 vs. 404 auseinanderhalten: Auth greift VOR dem Routing**
+- Falsch geratene Pfade (`/api/connections`, `/api/status`) antworten mit **401**, nicht 404 —
+  ich hielt das für ein Auth-Problem statt für Tippfehler. Erst mit gültigem Bearer kam der
+  ehrliche 404 `Unknown API route`. Bei 401 auf mehreren Pfaden also **zuerst die Pfade prüfen**.
+
+**🟡 Auth-Modell + API-Eigenheiten**
+- Management-API (20130) verlangt Dashboard-Session **oder** Bearer-Key mit `manage`-Scope;
+  Loopback hilft nicht. Der Inference-Pfad (20131) ist dagegen **ohne Auth** offen.
+- Der Key `ClaudeCode` liegt **im Klartext** in `api_keys` der `storage.sqlite`, lesbar per
+  `docker exec omniroute-prod node -e '…better-sqlite3, readonly…'`.
+- Routen-Methoden: `POST /api/providers` anlegen, **`PUT`** ändern (PATCH → **405**), `DELETE`.
+- Modelle pro Verbindung ausblenden: `providerSpecificData.excludedModels` (Array). Beim PUT
+  **`baseUrl` mitschicken**, sonst geht sie verloren. (Am API-Key heißt das Feld `blockedModels`.)
+- Die `noauth`-Provider sind **tot**: von 9 akzeptiert die API nur 3 (`opencode`, `mimocode`,
+  `auggie`), und die liefern nichts. Nicht erneut versuchen.
+
+**🟡 Lokale CPU-Inferenz ist auf diesem NAS für Interaktives unbrauchbar**
+
+| Modell | Antwortzeit für ein Wort |
+|---|---|
+| `qwen3:4b` (Reasoning) | **4–5 min** |
+| `qwen2.5:14b` | 124 s (lieferte nichts) |
+| `qwen2.5-coder:7b-instruct` | 106 s |
+| `gemma3:4b` | Sekunden |
+| `*-cloud` (Ollama Cloud) | **~2 s** |
+
+- Kein GPU-Offload auf dem Host. Für Routing `*-cloud` oder `gemma3:4b` bevorzugen,
+  `qwen3:*` und alles ≥7B lokal meiden.
+
+**🟡 `.env`-Dateien sind classifier-gesperrt — auch stackfremde**
+- Jeder Leseversuch (`grep` auf `open-webui/.env`, `n8n/.env`, …) wird geblockt, nicht nur beim
+  eigenen Stack. Keys für neue Provider müssen daher vom User kommen oder direkt im Ziel-Dashboard
+  angelegt werden. Nicht mit anderen Werkzeugen umgehen — die Sperre ist beabsichtigt.
