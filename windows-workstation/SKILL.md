@@ -77,6 +77,7 @@ Die `.bashrc` lädt SSH-Aliases beim Start:
 | `openpyxl` | 3.1.5 | .xlsx Bearbeitung |
 | `pdfplumber` | latest | PDF-Textextraktion (auch für UNC-Pfade) |
 | `python-pptx` | 1.0.2 | .pptx Bearbeitung |
+| `Pillow` | 11.0.0 | Bildbearbeitung (Skalieren, Zuschneiden, DPI, PNG→PDF) |
 | `faster-whisper` | latest | Transkription (primaer, ersetzt openai-whisper seit 2026-04) |
 | `openai-whisper` | 20250625 | Transkription (Legacy, nicht mehr aktiv genutzt) |
 | `torch` | 2.8.0+cpu | PyTorch (CPU-only, GPU-Auto-Detection in whisper-direct-simple.py) |
@@ -96,6 +97,7 @@ Die `.bashrc` lädt SSH-Aliases beim Start:
 | `~/*.py` | QM-Handbuch Automatisierungs-Skripte |
 | `~/.claude/skills/` | Skills-Repository |
 | `Q:\Konzepte-Formulare BZWP\` | QM-Dokumente auf Server |
+| `\\SERVER2012R2\Dokumente\Diana Göbel\` | Dianas persoenlicher Arbeitsbereich auf Y: (Flyer, Aushaenge, laufende Projekte) — haeufiger echter Arbeitsort als der Desktop |
 | `\\192.168.2.215\arche\QM-Handbuch\` | QM-Dokumente auf NAS |
 | `D:\whisper_gui_portable\` | Whisper Transkriptions-Tool (faster-whisper + tkinter GUI) |
 
@@ -160,13 +162,16 @@ ping 192.168.2.215
 4. **Kein `cmd.exe` wenn CWD ein UNC-Pfad ist** (`\\SERVER...`) — cmd.exe unterstützt keine UNC-Pfade als Arbeitsverzeichnis. IMMER `powershell.exe -Command "..."` verwenden
 5. **Kein nacktes `npm` in PowerShell-Skripten** — der `npm.ps1`-Wrapper verschluckt in manchen Konstellationen das erste Argument-Zeichen (`npm install` → `pm install` → "Unknown command: 'pm'"). IMMER `npm.cmd install ...` (oder `npx.cmd`, `yarn.cmd`) explizit aufrufen
 6. **Kein `schtasks.exe` wenn der Pfad Umlaute enthält** (z.B. `C:\Users\D.Göbel\...`) — Git-Bash-Pfadkonvertierung + Quoting machen das unlösbar. IMMER via PowerShell-Modul (`Register-ScheduledTask` / `New-ScheduledTaskAction`) registrieren
+7. **Keine UNC-Pfade an `SendUserFile`** — wird hart abgelehnt (`is a UNC network path, which is not supported`). Datei erst nach lokal/Scratchpad kopieren, dann von dort senden
 
 ### BEVORZUGT
 1. Git Bash für Dateisystem-Operationen, PowerShell für Windows-spezifische Aufgaben (COM, Registry)
 2. Raw-Strings (`r"..."`) für alle Windows-/UNC-Pfade in Python
 3. Lokale Kopie vor NAS-Bearbeitung (tempfile → bearbeiten → zurückkopieren)
 4. **Bulk-Dokumentenanalyse via Python-Skript** — pdfplumber + python-docx + openpyxl, Output in UTF-8-Datei schreiben (nicht stdout)
-5. **Encoding-PFLICHT fuer alle Python-Skripte mit Unicode-Output** — Am Skriptanfang IMMER: `sys.stdout.reconfigure(encoding='utf-8', errors='replace')` + Dateien mit `open(..., encoding='utf-8')` schreiben. Windows-Konsole (cp1252) crasht sonst bei Unicode (z.B. koreanische Zeichen `\uac00` aus Whisper, oder Sonderzeichen `U+2610` aus PDFs)
+5. **Bei „liegt im Ordner" IMMER erst den Ablageort verifizieren** — Diana arbeitet zwischen Desktop und Netzlaufwerk `Y:` (`\\SERVER2012R2\Dokumente\Diana Göbel\`). Nicht annehmen, dass der Ordner der Vorsession gemeint ist. Schnellster Test: Recent-Verknuepfungen aufloesen (siehe Lektion 2026-08-05)
+6. **Skripte ortsunabhaengig schreiben** — `ORDNER = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent` statt hartkodiertem Pfad. Diana kopiert Skripte zwischen Desktop und Netzlaufwerk; feste Pfade erzeugen sonst genau die Divergenz, vor der CLAUDE.md bei `index.html` warnt
+7. **Encoding-PFLICHT fuer alle Python-Skripte mit Unicode-Output** — Am Skriptanfang IMMER: `sys.stdout.reconfigure(encoding='utf-8', errors='replace')` + Dateien mit `open(..., encoding='utf-8')` schreiben. Windows-Konsole (cp1252) crasht sonst bei Unicode (z.B. koreanische Zeichen `\uac00` aus Whisper, oder Sonderzeichen `U+2610` aus PDFs)
 
 ### GUT ZU WISSEN
 1. Docker Desktop ist installiert (v28.4), aber Docker-Workloads laufen primär auf NAS
@@ -312,3 +317,62 @@ Register-ScheduledTask -TaskName "..." -Action $action -Trigger $trigger `
 **Log-Rotation in PS-Skripten:**
 - Simple Pattern: Wenn Logfile > 1 MB → `Get-Content -Tail 200` + `Set-Content` zurückschreiben
 - Vermeidet unbegrenztes Log-Wachstum ohne externe Rotation-Tools
+
+### 2026-08-05 - Dateisuche über Netzlaufwerke, UNC-Grenzen, DIN-Aufbereitung
+
+**🔴 „Die Datei liegt im Ordner" heißt NICHT der Ordner aus der Vorsession**
+- Diana sagte zweimal „es befindet sich nun im Ordner", gemeint war `\\SERVER2012R2\Dokumente\Diana Göbel\Flyer\Herbstmarkt-Flyer\` — ich suchte beide Male in `C:\Users\D.Göbel\Desktop\Herbstmarkt-Flyer\`, wo wir am Vortag gearbeitet hatten. Kostete zwei Iterationen.
+- Ursache: Desktop ist bei ihr Zwischenablage, das Netzlaufwerk `Y:` ist der eigentliche Arbeitsort. Beide Ordner hießen gleich und enthielten gleichnamige Dateien.
+- **Regel:** Wenn eine angeblich neue Datei am erwarteten Ort fehlt → NICHT dort erneut suchen, sondern sofort Recent-Verknüpfungen auflösen.
+
+**🔴 Recent-Verknüpfungen auflösen = schnellster Weg zum echten Arbeitsordner**
+```powershell
+$sh = New-Object -ComObject WScript.Shell
+Get-ChildItem "$env:APPDATA\Microsoft\Windows\Recent\*.lnk" -Force |
+  Where-Object { $_.Name -match 'suchbegriff' } |
+  ForEach-Object {
+    $l = $sh.CreateShortcut($_.FullName)
+    [PSCustomObject]@{ Geoeffnet=$_.LastWriteTime; Ziel=$l.TargetPath; Existiert=(Test-Path $l.TargetPath) }
+  } | Sort-Object Geoeffnet -Descending | Format-Table -AutoSize -Wrap
+```
+- Zeigt Pfad UND Öffnungszeitpunkt — verrät sofort, auf welcher Maschine/welchem Share Diana zuletzt gearbeitet hat.
+- Deutlich schneller als `Get-ChildItem -Recurse` über das Profil (das lief hier in Timeouts und lieferte nur AppData-Rauschen).
+
+**🔴 `SendUserFile` lehnt UNC-Pfade hart ab**
+- Fehler: `Attachment "\\SERVER2012R2\..." is a UNC network path, which is not supported.`
+- Workaround: erst in den Session-Scratchpad kopieren (`Copy-Item`), dann von dort senden.
+- Betrifft alle fünf gemappten Shares — auf WS44 der Normalfall, nicht die Ausnahme.
+
+**🟡 Outlook-Anhangs-Cache als Fundort für „geöffnet, nie gespeichert"**
+- Neues Outlook (Olk): `%LOCALAPPDATA%\Microsoft\Olk\Attachments\ooa-<guid>\<hash>\<Dateiname>`
+- Dateiname bleibt im Klartext erhalten, `LastWriteTime` = Öffnungszeitpunkt.
+- Nützlich, wenn Diana eine Datei per Mail bekommen/verschickt hat und sie „irgendwo" sucht.
+
+**🟡 Zeitstempel-Manipulation zerstört die Neu-Erkennung**
+- Auf Wunsch `CreationTime`/`LastWriteTime`/`LastAccessTime` auf einen Wunschzeitpunkt gesetzt (`$f.LastWriteTime = $ziel`).
+- Folge: „ist diese Datei neu?" ließ sich danach nicht mehr am Datum ablesen — die Diagnose der falschen Ordner lief ins Leere.
+- **Regel:** Vor/nach solchen Eingriffen SHA1 notieren (`Get-FileHash -Algorithm SHA1`), das ist danach das einzige verlässliche Identitätsmerkmal.
+- Nebenaspekt für Diana: Kopieren auf andere Ziele (Mail, Cloud, NAS) setzt Zeitstempel oft neu — die Angabe überlebt den Transport nicht zuverlässig.
+
+**🟡 Bildmaße + DPI in PowerShell ohne Zusatztools**
+```powershell
+Add-Type -AssemblyName System.Drawing
+$i = [System.Drawing.Image]::FromFile($pfad)
+"$($i.Width)x$($i.Height) @ $($i.HorizontalResolution) dpi"
+$i.Dispose()   # Dispose nicht vergessen, sonst bleibt die Datei gesperrt
+```
+- PDF-Seitengröße prüfen ohne PDF-Bibliothek: `/MediaBox`-Regex über den ASCII-gelesenen Dateiinhalt. 595.2 × 841.92 pt = A4, 419.52 × 595.2 pt = A5.
+
+**🔵 Rezept: KI-Flyer druckfertig auf DIN-Format bringen**
+- Ausgangslage: Bildgeneratoren liefern PNGs um 1055 × 1491 px @ 96 dpi — Seitenverhältnis ist fast √2, aber die physische Größe stimmt nicht (27,9 × 39,4 cm statt A4).
+- Zielmaße bei 300 dpi: **A4 = 2480 × 3508 px**, **A5 = 1748 × 2480 px**.
+- Verfahren: „Cover"-Skalierung (`faktor = max(ziel_b/quell_b, ziel_h/quell_h)`) + LANCZOS + mittiges Zuschneiden → kein Verzerren, keine weißen Ränder. Der Beschnitt liegt typisch bei 2–7 px (< 0,6 mm).
+- Immer PNG **und** PDF ausgeben: das PDF trägt die Seitengröße im `/MediaBox` und verhindert, dass der Druckertreiber auf „An Seite anpassen" skaliert.
+- Skript: `auf_din_format.py`, liegt im jeweiligen Flyer-Ordner (Desktop + Netzlaufwerk).
+- Ehrlich bleiben: 1055 px Breite sind real ~128 dpi auf A4. Das Hochrechnen auf 300 dpi erzeugt keine Schärfe, die nicht da war — auf A5 (~181 dpi) unkritisch, auf A4 aus der Nähe leicht weich.
+- Für Druckereien fehlt der Anschnitt: 3 mm umlaufend → A4 = 216 × 303 mm. Nur auf Nachfrage anlegen.
+
+**🔵 KI-generierte Flyer haben keine Quelldatei**
+- Text ist ins Foto eingebrannt; es gibt kein Canva/PSD/InDesign-Original. Inhaltliche Änderungen sind Retusche und nicht sauber machbar.
+- Richtiger Beitrag stattdessen: verdichtete **Textfassung** + fertiger **Generator-Prompt** (Stil, Farben, Bildelemente, exakte Texte), Diana erzeugt neu, ich mache die Druckaufbereitung.
+- Nach jeder Generierung Umlaute Wort für Wort prüfen — Bildgeneratoren verschlucken Punkte auf ä/ö/ü und verdrehen ß.
