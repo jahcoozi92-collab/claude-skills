@@ -734,3 +734,28 @@ SET LOCAL hnsw.ef_search = 100;
   0 heißt: falscher Store, via SSH zur VM gehen.
 - Fund-Weg: OBSERVATIONS.md-Eintrag aus Vorsession (User: „korrigiere beim nächsten Reflect") —
   der OBSERVATIONS-Mechanismus (Step 5 bei Ablehnung/Vertagung) funktioniert wie designed.
+
+### 2026-08-06 — `related` zeigt nur AUSGEHENDE Kanten (Verifikation von der Quellseite)
+
+**🔴 Relations-Verifikation vom Ziel aus liefert falsch-negative Ergebnisse**
+- Lektion 2026-06-01 sagt „Verifikation IMMER ans Skript-Ende: `ont related --id <task>`" — das
+  greift zu kurz. `related` listet **ausschließlich ausgehende** Relationen des abgefragten Knotens.
+- Konkret hier: 8 frisch angelegte Relationen, `related --id sw_omniroute` zeigte nur die eine
+  ausgehende (`uses`), und `related --id soft_18bae91a` zeigte **gar nichts** — obwohl zwei Kanten
+  darauf zeigten. Sah nach dangling edges aus, war aber korrekt.
+- **Regel:** immer über die **Quell**-IDs iterieren, nie über das Ziel:
+  ```bash
+  for id in p_foo p_bar t_baz; do
+    printf '%-42s' "$id"
+    $O related --id $id | python3 -c 'import json,sys
+  r=json.load(sys.stdin)
+  print(" -> " + ", ".join("%s:%s" % (x["relation"], x["entity"]["id"]) for x in r) if r else " -> KEINE (dangling!)")'
+  done
+  ```
+- Merkhilfe: `relate --from A --rel r --to B` ist gerichtet; nur `related --id A` sieht diese Kante.
+
+**🟡 Vor dem Anlegen prüfen, ob der Graph veraltete Werte enthält**
+- Der Graph nannte `NAS-Ollama (192.168.22.90:11436)` — der Port ist seit Längerem **11437**.
+  Ein Reflect-Durchlauf ist der richtige Moment, solche Drift per `update --id … -p '{…}'` zu
+  korrigieren, statt eine zweite Entity mit dem richtigen Wert danebenzustellen.
+- `update` ersetzt die `properties` vollständig — Felder, die erhalten bleiben sollen, mitschicken.
