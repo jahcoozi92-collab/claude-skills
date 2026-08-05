@@ -1533,3 +1533,36 @@ eingreifen**
 - ssh-copy-id/Passwort-Login aus Claude-Session heraus geht nicht (kein TTY, `ssh-askpass` fehlt auf Kali) →
   User macht das im echten Terminal; `-o PubkeyAuthentication=no` verhindert dabei
   `Too many authentication failures` durch die 4 Agent-Keys.
+
+### 2026-08-06 — Container im isolierten Netz erreicht Host-Dienste nur über die Bridge-IP
+
+**🔴 Compose-DNS-Namen funktionieren nur im gemeinsamen Netz — sonst `172.17.0.1`**
+- `omniroute-prod` hängt allein in `omniroute_default`. Der naheliegende Versuch, Ollama als
+  `http://ollama:11434` anzusprechen, scheiterte mit `fetch failed`; `http://172.17.0.1:11437`
+  (Docker-Bridge-Gateway + **Host**-Port) lieferte sofort 200.
+- Merke: der DNS-Name braucht das Container-Netz und den **Container**-Port, die Bridge-IP
+  braucht den **Host**-Port. Die beiden Portnummern unterscheiden sich hier (11434 vs. 11437).
+- Vor jeder Cross-Stack-URL die Netz-Zugehörigkeit prüfen:
+  ```bash
+  docker inspect <container> --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}'
+  ```
+- Zwei saubere Alternativen, wenn der DNS-Name gewünscht ist: den Container zusätzlich ins
+  Zielnetz hängen (`docker network connect shared-services <container>`) oder beide Stacks auf
+  ein gemeinsames externes Netz legen.
+
+**🟡 Schlanke Images haben kein `curl` — `node -e 'fetch(...)'` als Ersatz**
+- `docker exec … curl` scheiterte mit `sh: 1: curl: not found`. In Node-basierten Images ist
+  `fetch` seit Node 18 global verfügbar:
+  ```bash
+  docker exec <c> node -e '(async()=>{const r=await fetch("http://172.17.0.1:11437/api/tags");
+    console.log(r.status, (await r.json()).models.length)})()'
+  ```
+- Für SQLite in solchen Images: `node -e 'require("better-sqlite3")'` mit `{readonly:true}`,
+  wenn das Paket ohnehin eine Abhängigkeit der App ist — kein `sqlite3`-Binary nötig.
+
+**🟡 Quoting-Falle bei `docker exec … node -e` mit SQL**
+- Bash-Single-Quotes außen + SQL-Literale in Single-Quotes (`WHERE type='table'`) beißen sich:
+  die Shell beendet den String vorzeitig, SQLite meldet dann irreführend
+  `no such column: "table" - should this be a string literal in single-quotes?`.
+- Lösung: im JS ausschließlich Double-Quotes verwenden (ggf. `\"` escapen) und SQL-Literale
+  vermeiden — z. B. `SELECT name FROM sqlite_master` ohne `WHERE type=…` abfragen und in JS filtern.
