@@ -564,6 +564,81 @@ asyncio.run(run())
 
 `onOffStatus=1` ist die Wahrheit, `climate.X.state` ist der HA-State-Machine-Cache.
 
+### Lamellen bewegen sich nicht — ancillaryParameters sind der Aktor (2026-08-05)
+
+Symptom: `climate.set_swing_mode` läuft ohne Fehler durch, HA und die hOn-App zeigen den neuen Swing-Modus, aber der Lamellenmotor steht still.
+
+Ursache: hOn trennt **Telemetrie** von **Aktuierung**. Der Command-Payload hat zwei Blöcke — `parameters` (Anzeige/Sollwert) und `ancillaryParameters` (Steuerung). Der Motor fährt nur, wenn `ancillaryParameters.windDirectionVerticalPositionSequence` den Zielwert trägt. `gvigroux/hon` setzt ausschließlich `parameters.windDirectionVertical` und lässt die Sequence auf `0` → Anzeige ändert sich, Hardware nicht. (`Andre0512/pyhon` machte das früher automatisch über seine Rules-Engine — deshalb fällt es beim Fork-Wechsel auf.)
+
+```python
+# /config/custom_components/hon/climate.py — Helper, von BEIDEN Pfaden nutzen
+def _apply_vertical_position_sequence(self, command, value):
+    if value is None:
+        return
+    seq = command._ancillary_parameters.get('windDirectionVerticalPositionSequence')
+    if seq is None:
+        return
+    try:
+        seq.value = str(value)
+    except Exception as e:
+        _LOGGER.warning("windDirectionVerticalPositionSequence=%s rejected (%s)", value, e)
+
+# Aufrufer: async_set_wind_direction_vertical UND async_set_swing_mode
+command = self._device.settings_command(parameters)
+self._apply_vertical_position_sequence(command, parameters.get('windDirectionVertical'))
+await command.send()
+```
+
+**Fallenstellung:** Der Fix wurde 2026-06-20 nur im Custom-Service `hon.climate_set_wind_direction_vertical` eingebaut. Der normale Weg über Climate-Karte / Sprachbefehl / Automation geht aber durch `async_set_swing_mode` — der blieb kaputt. **Beim Patchen einer Integration immer prüfen, welche Methoden denselben Gerätebefehl absetzen**, nicht nur die, über die man den Bug gemeldet bekommen hat.
+
+Enum-Werte aus `const.py`, `ClimateSwingVertical`: AUTO/Swing=`8`, VERY_HIGH=`2`, HIGH=`4`, MIDDLE=`5`, LOW=`6`, VERY_LOW=`7`. Die Sequence akzeptiert `[2,4,5,6,7,8]`. Horizontal (`ClimateSwingHorizontal`, AUTO=`7`, MIDDLE=`0`) hat **keine** Sequence — dort reicht `parameters`.
+
+### Payload-Debugging bei Cloud-Integrationen
+
+Nicht raten, welcher Feldname der Aktor ist — den echten Payload mitlesen:
+
+```bash
+# Debug nur für die eine Integration, ohne configuration.yaml anzufassen
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"custom_components.hon":"debug"}' "$HA_URL/api/services/logger/set_level"
+
+# Aktion auslösen, dann NUR die gesendeten Commands filtern
+docker logs homeassistant --since 15s 2>&1 | grep 'Command sent (send_command)'
+
+# Danach wieder leise stellen
+curl -s -X POST ... -d '{"custom_components.hon":"warning"}' "$HA_URL/api/services/logger/set_level"
+```
+
+Zwei Fallen dabei:
+- `logger.set_level` will `{"custom_components.hon":"debug"}` — die Form `{"integration":"hon","level":"debug"}` gibt **400 Bad Request**.
+- Ohne den `grep 'Command sent'`-Filter mischen sich Coordinator-Telemetrie-Updates unter die Treffer und man liest Geräte-Rückmeldungen als gesendete Werte. Umgekehrt sind genau diese Zwischenwerte der beste Aktuierungsbeweis: wandert `windDirectionVertical` in der Telemetrie über `2 → 4 → 5`, läuft der Motor wirklich.
+
+## Lokale Patches an HACS-Integrationen (Deploy & Überlebensregeln)
+
+Custom Components liegen im Container unter `/config/custom_components/<domain>/`. Patches dort sind **HACS-Update-flüchtig** — jedes Update überschreibt sie kommentarlos.
+
+Ablauf, der sich bewährt hat:
+
+```bash
+# 1. Raus, backuppen, lokal editieren (Edit-Tool auf der Kopie, nicht sed im Container)
+docker cp homeassistant:/config/custom_components/hon/climate.py "$SCRATCH/climate.py"
+docker exec homeassistant cp /config/custom_components/hon/climate.py \
+  /config/custom_components/hon/climate.py.bak-$(date +%Y%m%d)-<kurzbeschreibung>
+
+# 2. Syntax VOR dem Deploy prüfen — spart einen kaputten HA-Start
+python3 -m py_compile "$SCRATCH/climate.py"
+
+# 3. Rein und neu starten
+docker cp "$SCRATCH/climate.py" homeassistant:/config/custom_components/hon/climate.py
+docker restart homeassistant
+```
+
+Regeln:
+- **Backup-Namensschema** `<datei>.bak-YYYYMMDD-<zweck>` — die alten `.bak`-Dateien im hon-Ordner (`_attic_init_andre_*`, `climate.py.bak-*-vane-seq`) sind die Chronik der bisherigen Patches und der schnellste Einstieg in „was wurde hier schon repariert".
+- **Patch-Grund als Kommentar in den Code**, nicht nur in die Session. Der Kommentar von 2026-06-20 hat den Swing-Bug 2026-08-05 in Minuten statt Stunden erklärt.
+- **Nach jedem HACS-Update der Integration** prüfen, ob die lokalen Helper noch da sind (`grep -n '_apply_vertical_position_sequence' climate.py`).
+- Custom Component neu geladen wird **nur** per HA-Neustart — `homeassistant.reload_config_entry` reicht bei geändertem Python-Code nicht.
+
 ## Mehrquellen-State-Check bei „Wert stimmt nicht"-Reports
 
 Wenn der User sagt „Sensor X zeigt falschen Wert" oder „Gerät ist aus, aber HA sagt an": **nie blind einer einzelnen Quelle vertrauen**. Diskrepanzen sind häufiger als Bugs.
