@@ -3202,3 +3202,47 @@ for (t,i,n),k in c.most_common(20): print(f"{k:4}x {t:26} {i}  {n}")'
 **🔵 Node-Anzahl nach PUT immer gegenprüfen** (Regel #25) — hier bestätigt: 10 gesendet, 10 gespeichert.
   Danach `activeVersion.nodes` mit `nodes` vergleichen und bei Abweichung ein zweites PUT mit
   `activeVersion.nodes` fahren (Lektion 2026-06-05).
+
+### 2026-08-06 — API-Key-Fundort auf dem NAS, v2.33.5, Start-vs-Update
+
+**🔴 n8n mit `docker compose start`, NICHT `up -d` wieder anfahren**
+- `n8n-n8n-1` war gestoppt (SIGTERM, Exit 0). `docker compose up -d` im Verzeichnis `/volume1/docker/n8n` zog `n8n:latest` **neu** und versuchte ein Recreate → abgebrochen mit `No such container`, Leichen-Container blieb liegen, und n8n lief danach auf einer **neueren Version** — ohne das in der Update-Prozedur vorgesehene SQLite-Backup (die DB ist inzwischen 2,79 GB).
+- Richtig: `docker compose start n8n` bzw. `docker start n8n-n8n-1`. `up -d` nur bewusst zum Updaten, dann mit Backup davor.
+- Nach jedem Recreate gegenprüfen, dass die Workflows wieder registriert sind:
+  ```bash
+  curl -s -H "X-N8N-API-KEY: $KEY" "$BASE/workflows?limit=250" \
+    | python3 -c "import json,sys; d=json.load(sys.stdin)['data']; print(len(d),'gesamt,',sum(1 for w in d if w['active']),'aktiv')"
+  ```
+  (Referenz 2026-08-06: 131 Workflows, davon 34 aktiv.)
+
+**🔴 Auf dem NAS fehlt `~/.config/n8n-mcp/n8n-api-config.sh`**
+- Der API-Key liegt dort nur in den Workflow-Skripten:
+  ```bash
+  KEY=$(grep -hoE 'eyJ[A-Za-z0-9_.-]{40,}' \
+    /volume1/docker/n8n/workflows/test-n8n.sh \
+    /volume1/docker/n8n/workflows/import-workflow.sh | head -1)
+  BASE="http://192.168.22.90:5678/api/v1"
+  ```
+- Nicht blind `source ~/.config/n8n-mcp/…` annehmen — auf den anderen Maschinen existiert die Datei, auf dem NAS nicht.
+
+**🟡 Laufende Version ist 2.33.5** (die Doku oben nennt teils 2.9.2 / 2.19.x). Vor Node-typeVersion-Entscheidungen kurz `docker exec n8n-n8n-1 n8n --version` prüfen.
+
+**🟡 Empfänger-Workflow für externe Dienste — Muster (Beispiel „OpenShip Alerts", `FDJsUQnHjuCfpQKr`)**
+- Kette: Webhook (`POST`, Pfad `openship-alerts`, `responseMode: lastNode`) → Code „Meldung aufbereiten" → Telegram.
+- **Bestehende Credentials wiederverwenden statt neue anlegen** — welche tatsächlich im Einsatz sind, ermittelt man aus den vorhandenen Workflows statt aus der Doku:
+  ```bash
+  curl -s -H "X-N8N-API-KEY: $KEY" "$BASE/workflows?limit=200" | python3 -c "
+  import json,sys,collections
+  c=collections.Counter()
+  for w in json.load(sys.stdin)['data']:
+      for n in w.get('nodes',[]):
+          if 'telegram' in n.get('type','').lower():
+              cr=(n.get('credentials') or {}).get('telegramApi') or {}
+              if cr: c[(cr.get('id'),cr.get('name'))]+=1
+  print(c.most_common())"
+  ```
+  Ergebnis hier: `V5Uu10rEX9pFxQr2` („n8n KI-Assistenz") mit 18 Verwendungen = der Haupt-Bot; Chat-ID über `={{ $env.TELEGRAM_AGENT_CHAT_ID }}` (im Container gesetzt: 2061281331), wie in acht anderen Workflows.
+- Telegram-Text-Node: **kein** `operation`-Feld, nur `chatId` + `text` + `additionalFields.parse_mode`. Bei HTML alle Fremdwerte escapen (`&`, `<`, `>`).
+- Der POST-Body liegt beim Webhook-Node unter **`$json.body`**, nicht direkt in `$json`.
+- Verifikation nicht beim Sender stehenlassen: nach dem Test-Aufruf die Execution prüfen —
+  `GET /executions?workflowId=<id>&limit=3&includeData=true` → jeder Node `status ok`, und den erzeugten Text gegenlesen.
