@@ -110,11 +110,17 @@ Diese Änderungen anwenden? [J]a / [N]ein / oder Anpassungen beschreiben
 
 1. Lies die aktuelle Skill-Datei von `~/.claude/skills/[skill-name]/SKILL.md`
 2. Wende die Änderungen mit dem Edit-Tool an
-2a. **🔴 Vor `git add`: Rebase-Zustand prüfen** — eine andere Session kann einen `git pull --rebase` mittendrin stehengelassen haben. `git status --short` zeigt das **nicht**:
+2a. **🔴 Vor `git add`: Rebase-Zustand prüfen** — eine andere Session kann einen `git pull --rebase` mittendrin stehengelassen haben. `git status --short` zeigt das **nicht**.
+   Primäres Signal ist der Verzeichnis-Test, weil er auf allen Plattformen gleich funktioniert:
    ```bash
-   git -C ~/.claude/skills status | head -3     # "interactive rebase in progress"?
-   test -d ~/.claude/skills/.git/rebase-merge && echo "REBASE OFFEN"
+   test -d ~/.claude/skills/.git/rebase-merge && echo "REBASE OFFEN"   # Linux/NAS/VM
+   git -C ~/.claude/skills status                                      # Langform, ungepipet
    ```
+   ```powershell
+   if (Test-Path "$HOME\.claude\skills\.git\rebase-merge") { "REBASE OFFEN" }   # Windows
+   $out = git -C "$HOME\.claude\skills" status; $out[0..2]
+   ```
+   **Nicht** `git status | head -3` bzw. `| Select-Object -First 3` nutzen: PowerShell bricht die Pipeline ab, das native `git.exe` bekommt einen Broken Pipe, und der Aufruf meldet **Exit 255 trotz korrekter Ausgabe** (verifiziert 2026-08-06 auf WS44).
    Bei Fund: **`GIT_EDITOR=true git rebase --continue`**, niemals `--abort` oder `--skip` — die ausstehenden `pick`s stammen von anderen Instanzen und gingen sonst still verloren. Welche noch offen sind, steht in `.git/rebase-merge/git-rebase-todo`, die erledigten in `.git/rebase-merge/done`.
    Ohne diese Prüfung landet der Commit im **detached HEAD** und sammelt die Working-Tree-Reste der Vorsession als Fremdinhalt mit ein (verifiziert 2026-08-06 auf WS44: `reflect/SKILL.md` landete unbeabsichtigt im `windows-workstation`-Commit).
 3. **Commit lokal** (Push als separater Schritt, siehe 3b):
@@ -805,6 +811,16 @@ SET LOCAL hnsw.ef_search = 100;
 - **Auflösung:** `GIT_EDITOR=true git rebase --continue`. Der ausstehende `pick` (`ff2f87a`) wurde damit sauber angewendet. Hätte ich `--abort` oder `--skip` genommen, wäre diese Lektion einer anderen Instanz spurlos verschwunden.
 - **Diagnose-Reihenfolge**, wenn der Commit unerwartet mehr Dateien meldet als gestaged: `git status` (Langform) → `git branch --show-current` (leer = detached) → `.git/rebase-merge/git-rebase-todo` + `done` lesen → erst dann handeln.
 - Merke: `git status --short` ist für „was ist geändert" gedacht, nicht für „in welchem Zustand ist das Repo". Für Letzteres immer Langform.
+
+**🟡 Verwertbares Ergebnis einbauen, nicht anbieten**
+- Ich hatte ein aus einem PDF extrahiertes Portraitfoto nur **gezeigt** und gefragt „soll ich es einbauen?". Diana ging danach zu `/reflect` über — die Frage ging im Turn-Wechsel unter, und sie musste später eigens nachfassen („Gab es nun Portraitfotos oder nicht?", dann „Dann füge das Foto hinzu").
+- Der laufende Auftrag lautete ohnehin auf Prüfen **und Aktualisieren** der Übersicht. Das Einbauen war die Fortsetzung dieses Auftrags, keine neue Entscheidung — und mit Backup jederzeit rücknehmbar.
+- **Regel:** Liegt ein verwertbares Ergebnis vor und deckt der bestehende Auftrag die Verwendung ab → einbauen und das Ergebnis zeigen. Rückfragen nur, wenn die Entscheidung wirklich offen ist (mehrere gleichwertige Varianten, irreversibler Eingriff, Scope-Erweiterung).
+- Nebeneffekt: eine unbeantwortete Rückfrage kostet nicht nur einen Turn, sie geht bei einem Themenwechsel schlicht verloren.
+
+**🔵 Zweiter Reflect-Durchlauf derselben Session: an das bestehende pending-Skript anhängen**
+- Ist die Ontology-VM noch offline und liegt bereits ein `ontology-pending/<maschine>-<datum>.sh` von heute, kommen die neuen Entities **dort hinein** — keine dritte Datei mit demselben Datum.
+- Sonst wächst die Warteschlange schneller, als sie abgearbeitet wird, und die Reihenfolge beim späteren Ausführen wird unnötig heikel (`relate` braucht existierende Endpunkte).
 
 **🔵 Von Windows committete `.sh`-Dateien: Zeilenenden verifizieren**
 - `core.autocrlf=true` — ein Shell-Skript aus `ontology-pending/` muss auf der Linux-VM laufen.
