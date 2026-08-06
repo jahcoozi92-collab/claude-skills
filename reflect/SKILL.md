@@ -132,6 +132,15 @@ Diese Änderungen anwenden? [J]a / [N]ein / oder Anpassungen beschreiben
    - User: nur "ja" oder "J" → Classifier kann erneut blocken (Mehrdeutigkeit)
 4. Bestätige: "Skill aktualisiert und zu GitHub gepusht (Commit-Hash)"
 5. **Ontology aktualisieren** — PFLICHT nach jedem Reflect:
+   - **🔴 ZUERST Erreichbarkeit pruefen, dann erst SSH versuchen** — die VM ist nicht immer erreichbar. Reihenfolge:
+     1. Subnetz vergleichen: WS44 liegt im Arbeitsnetz `192.168.2.0/24`, das Heimlabor (VM, NAS, Yoga7) im `192.168.22.0/24`. **Von WS44 gibt es KEINE direkte Route** — nur Tailscale.
+     2. Tailscale-Knotenstatus lesen: `tailscale status` (Windows: `& "C:\Program Files\Tailscale\tailscale.exe" status`). Zeigt pro Knoten `-` (online) oder `offline, last seen …`.
+     3. Erst wenn der Zielknoten online ist: `Test-NetConnection <ip> -Port 22` bzw. direkt SSH.
+   - **Wenn die VM NICHT erreichbar ist: NICHT ersatzweise lokal schreiben** (erzeugt einen Fork, siehe unten). Stattdessen das Update als lauffaehiges Skript nach `ontology-pending/<maschine>-<datum>.sh` im Skills-Repo ablegen, committen und pushen. Jede Maschine mit Route kann es spaeter ausfuehren:
+     ```bash
+     ssh -o BatchMode=yes moltbotadmin@192.168.22.206 'bash -s' < ontology-pending/<datei>.sh
+     ```
+     Nach erfolgreichem Lauf die Datei loeschen und den Loeschvorgang committen — `ontology-pending/` ist eine Warteschlange, kein Archiv. Beim naechsten Reflect immer zuerst nachsehen, ob dort noch etwas offen liegt.
    - **Kanonischer Graph liegt NUR auf der Clawbot VM (192.168.22.206)** — ALLE Maschinen schreiben via SSH dorthin. Lokale Stores (z. B. Yoga7 `~/clawd`) sind LEER; lokales Schreiben erzeugt einen divergenten Fork (verifiziert 2026-08-04: Yoga7 0 Entities, VM 213 Software-Entities).
    - Aufruf: `ssh moltbotadmin@192.168.22.206 'cd ~/clawd && python3 skills/ontology/scripts/ontology.py [command]'`
    - Batch bevorzugt per stdin-Pipe: `ssh -o BatchMode=yes moltbotadmin@192.168.22.206 'bash -s' < skript.sh` (von Yoga7 passwortlos verifiziert)
@@ -263,7 +272,7 @@ reflect status  # Aktuellen Status anzeigen
 
 **Systeme:**
 - Yoga7: `~/claude-skills` (Original) + Symlink `~/.claude/skills` → Instanz-Skill: `yoga7-admin`
-- Windows: `$HOME\.claude\skills` → Instanz-Skill: `windows-admin`
+- Windows: `$HOME\.claude\skills` → Instanz-Skill: `windows-workstation`
 - NAS: `/home/Jahcoozi/.claude/skills` → Instanz-Skill: `nas-instance`
 - Clawbot VM: `/home/moltbotadmin/.claude/skills` → Instanz-Skill: `clawdbot-admin`
 
@@ -286,7 +295,7 @@ reflect status  # Aktuellen Status anzeigen
 | `clawdbot-admin` | Clawbot VM | 192.168.22.206 | moltbotadmin |
 | `nas-instance` | NAS DXP4800 | 192.168.22.90 | Jahcoozi |
 | `yoga7-admin` | Yoga7 Laptop | 192.168.22.86 | yoga7 |
-| `windows-admin` | Windows 11 PC | 192.168.2.38 | Diana |
+| `windows-workstation` | Windows 11 PC (WS44) | 192.168.2.38 | D.Göbel |
 
 **CLAUDE.md Schutz-Eskalation:**
 - `chmod 444` — Basis, Owner kann umgehen
@@ -392,7 +401,7 @@ SET LOCAL hnsw.ef_search = 100;
 
 **Instanz-Skill als Fallback:**
 - Wenn eine Session keinen expliziten Skill nutzt (z.B. reine Config-Optimierung, System-Administration), ist der jeweilige **Instanz-Skill** der richtige Ziel-Skill fuer Reflect
-- Instanz-Skills: `clawdbot-admin`, `nas-instance`, `yoga7-admin`, `windows-admin`
+- Instanz-Skills: `clawdbot-admin`, `nas-instance`, `yoga7-admin`, `windows-workstation`
 - Heuristik: Betrifft die Arbeit eine bestimmte Maschine? → Instanz-Skill. Betrifft sie ein Fach-Thema? → Fach-Skill
 
 **JSON-Config und Learn-by-Doing:**
@@ -759,3 +768,30 @@ SET LOCAL hnsw.ef_search = 100;
   Ein Reflect-Durchlauf ist der richtige Moment, solche Drift per `update --id … -p '{…}'` zu
   korrigieren, statt eine zweite Entity mit dem richtigen Wert danebenzustellen.
 - `update` ersetzt die `properties` vollständig — Felder, die erhalten bleiben sollen, mitschicken.
+
+### 2026-08-06 — Reflect von WS44: Ontology unerreichbar, Skill-Name war falsch
+
+**🔴 Step 5 hatte keinen Zweig für „VM nicht erreichbar" — jetzt ergänzt**
+- Reflect lief von WS44. Clawbot VM seit 8 Tagen offline (`tailscale status` → `moltbot-vm … offline, last seen 8d ago`), zusätzlich keine direkte Route: WS44 im Arbeitsnetz `192.168.2.0/24`, Heimlabor im `192.168.22.0/24`.
+- Der Schritt war als PFLICHT deklariert, ohne zu sagen, was bei Unerreichbarkeit gilt. Ohne Regel löst das jede Instanz anders — oder lässt es still weg.
+- **Jetzt in Step 5:** Erreichbarkeit prüfen (Subnetz → `tailscale status` → SSH), bei Ausfall Skript nach `ontology-pending/<maschine>-<datum>.sh` committen statt lokal zu schreiben. Warteschlange, kein Archiv: nach erfolgreichem Lauf löschen und den Löschvorgang committen.
+- Erster Eintrag dieser Art: `ontology-pending/ws44-2026-08-05.sh` (11 Entities, 11 Relationen).
+
+**🔴 Der Skill nannte den Windows-Instanz-Skill an drei Stellen falsch**
+- Stand überall `windows-admin`, tatsächlich heißt er `windows-workstation` (verifiziert per `Get-ChildItem ~/.claude/skills`).
+- Betroffen: Systeme-Liste (Setup-Session), Instanz-Skills-Tabelle (2026-02-08), Abschnitt „Reflect auf Nicht-Skill-Sessions".
+- Wer Step 1 wörtlich folgt, greift damit ins Leere. Bei Instanz-Skill-Fallback künftig den Namen einmal gegen das Verzeichnis prüfen, statt aus der Tabelle zu übernehmen.
+
+**🟡 Rebase-Konflikt-Regel war zu pauschal formuliert**
+- Lektion 2026-06-01 sagt, Reflect-Commits kollidierten „fast immer" an der Lektionen-Endregion.
+- Hier: 9 fremde Commits (home-assistant, nas-instance, reflect, grill-me-codex) → Rebase komplett konfliktfrei.
+- **Präzisierung:** Der Konflikt entsteht nur, wenn zwei Instanzen **dieselbe Skill-Datei** anfassen. Parallelität allein reicht nicht. `git log --oneline HEAD..origin/main` vorher zeigt anhand der Commit-Präfixe, ob überhaupt Überschneidung droht.
+
+**🟡 Auto-Push-Flow auf WS44 bestätigt**
+- Lektion 2026-06-01 („Auto-Push ist Standard, keine Rückfrage") gilt auch hier: `git push origin main` lief prompt-frei durch, kein Classifier-Block, kein 403.
+- Auf Windows Git-Befehle mit `git -C <pfad>` absetzen statt `cd` — das PowerShell-Tool setzt die CWD nach dem Aufruf zurück (`Shell cwd was reset to …`).
+
+**🔵 Von Windows committete `.sh`-Dateien: Zeilenenden verifizieren**
+- `core.autocrlf=true` — ein Shell-Skript aus `ontology-pending/` muss auf der Linux-VM laufen.
+- Prüfung per `Out-String` über `git cat-file` ist WERTLOS: PowerShell fügt beim Rejoin selbst CRLF ein (meldete 53 CR, obwohl der Blob sauber war).
+- Verlässlich: `git ls-files --eol <datei>` → muss `i/lf w/lf` zeigen (i = Index/Repository, w = Working Copy).

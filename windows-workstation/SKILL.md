@@ -98,6 +98,7 @@ Die `.bashrc` lädt SSH-Aliases beim Start:
 | `~/.claude/skills/` | Skills-Repository |
 | `Q:\Konzepte-Formulare BZWP\` | QM-Dokumente auf Server |
 | `\\SERVER2012R2\Dokumente\Diana Göbel\` | Dianas persoenlicher Arbeitsbereich auf Y: (Flyer, Aushaenge, laufende Projekte) — haeufiger echter Arbeitsort als der Desktop |
+| `\\SERVER2012R2\Dokumente\Auszubildende BZ+WP\` | Azubi-Verwaltung (auf Y:) — `Azubi-Übersicht.html` als Dashboard, je Person ein Ordner unter `Betreuungszentrum\|Wohnpark\` × `1-jährig\|3-jährig\` |
 | `\\192.168.2.215\arche\QM-Handbuch\` | QM-Dokumente auf NAS |
 | `D:\whisper_gui_portable\` | Whisper Transkriptions-Tool (faster-whisper + tkinter GUI) |
 
@@ -163,6 +164,8 @@ ping 192.168.2.215
 5. **Kein nacktes `npm` in PowerShell-Skripten** — der `npm.ps1`-Wrapper verschluckt in manchen Konstellationen das erste Argument-Zeichen (`npm install` → `pm install` → "Unknown command: 'pm'"). IMMER `npm.cmd install ...` (oder `npx.cmd`, `yarn.cmd`) explizit aufrufen
 6. **Kein `schtasks.exe` wenn der Pfad Umlaute enthält** (z.B. `C:\Users\D.Göbel\...`) — Git-Bash-Pfadkonvertierung + Quoting machen das unlösbar. IMMER via PowerShell-Modul (`Register-ScheduledTask` / `New-ScheduledTaskAction`) registrieren
 7. **Keine UNC-Pfade an `SendUserFile`** — wird hart abgelehnt (`is a UNC network path, which is not supported`). Datei erst nach lokal/Scratchpad kopieren, dann von dort senden
+8. **Kein `.ps1` mit Nicht-ASCII-Zeichen ohne UTF-8-BOM ausführen** — das Write-Tool schreibt BOM-los, PowerShell 5.1 liest solche Dateien als cp1252. `Übersicht` wird zu `Ãœbersicht`, jeder Umlaut-Pfad läuft in `FileNotFoundException`, und Sonderzeichen in String-Literalen landen verstümmelt in der Zieldatei. BOM vor dem Aufruf ergänzen (siehe Lektion 2026-08-06)
+9. **Kein `-Include` ohne Wildcard im `-Path`** — `Get-ChildItem -LiteralPath X -Recurse -Include *.jpg` filtert NICHT, sondern liefert den gesamten Baum. Entweder `-Path "X\*" -Include *.jpg` oder nachgelagert `Where-Object { $ext -contains $_.Extension.ToLower() }`
 
 ### BEVORZUGT
 1. Git Bash für Dateisystem-Operationen, PowerShell für Windows-spezifische Aufgaben (COM, Registry)
@@ -376,3 +379,83 @@ $i.Dispose()   # Dispose nicht vergessen, sonst bleibt die Datei gesperrt
 - Text ist ins Foto eingebrannt; es gibt kein Canva/PSD/InDesign-Original. Inhaltliche Änderungen sind Retusche und nicht sauber machbar.
 - Richtiger Beitrag stattdessen: verdichtete **Textfassung** + fertiger **Generator-Prompt** (Stil, Farben, Bildelemente, exakte Texte), Diana erzeugt neu, ich mache die Druckaufbereitung.
 - Nach jeder Generierung Umlaute Wort für Wort prüfen — Bildgeneratoren verschlucken Punkte auf ä/ö/ü und verdrehen ß.
+
+### 2026-08-06 - Azubi-Übersicht: PS-Encoding, HTML-Dashboard-Pflege, PDF-Bilder
+
+**🔴 Vom Write-Tool erzeugte `.ps1` läuft in PowerShell 5.1 als cp1252 — BOM ist Pflicht**
+- Write schreibt UTF-8 **ohne** BOM. PS 5.1 (`powershell.exe`) interpretiert BOM-lose Dateien als ANSI/cp1252.
+- Symptom 1: `\\SERVER2012R2\...\Azubi-Übersicht.html` → `Azubi-Ãœbersicht.html` → `FileNotFoundException`.
+- Symptom 2 (heimtückischer): Sonderzeichen in **String-Literalen** werden mitverstümmelt. Ein `·` im Ersetzungstext hätte Mojibake in die Zieldatei geschrieben — der Fehler wäre erst beim Betrachten der HTML aufgefallen.
+- **Immer vor `& $skript` voranstellen:**
+  ```powershell
+  $b = [System.IO.File]::ReadAllBytes($p)
+  if (-not ($b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF)) {
+    [System.IO.File]::WriteAllBytes($p, ([byte[]](0xEF,0xBB,0xBF) + $b))
+  }
+  & $p
+  ```
+- Zweiter Schutz für Umlaut-Pfade: gar nicht erst literal schreiben, sondern auflösen —
+  `$f = (Get-ChildItem -LiteralPath $root -Filter "Azubi-*bersicht.html").FullName`
+- Beim Zurückschreiben das Original-BOM beibehalten: BOM-Zustand vorher prüfen, dann `New-Object System.Text.UTF8Encoding($hasBom)`.
+- Nebenbei: der Typ heißt `[System.Text.Encoding]`, **nicht** `[System.IO.Text.Encoding]`.
+
+**🔴 `-Include` ohne Wildcard im Pfad filtert stillschweigend gar nicht**
+- `Get-ChildItem -LiteralPath $root -Recurse -File -Include *.jpg,*.png` gab den **kompletten** Baum zurück — 96 KB Output, abgeschnitten, kein Fehler.
+- Verlässlich: `Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $ext -contains $_.Extension.ToLower() }`
+- Als Gegenprobe immer die Trefferzahl mitloggen. „8 Bilddateien gefunden" hätte den Fehlschlag sofort gezeigt.
+
+**🔴 Rabbit-Hole-Stopp: CCITTFax-Scans sind mit Bordmitteln nicht dekodierbar**
+- Nach dem ersten Fund (ein Portraitfoto) habe ich vier weitere PDFs mit vier Skript-Iterationen bearbeitet — alle Bilder darin waren `/CCITTFaxDecode` (S/W-Fax-Kompression der Dokumentenscanner). Ohne poppler/Ghostscript prinzipiell nicht dekodierbar.
+- **Regel:** Filter-Typ **zuerst** erheben, dann entscheiden, ob sich Extraktion überhaupt lohnt:
+  ```powershell
+  $s = [System.Text.Encoding]::GetEncoding(28591).GetString([System.IO.File]::ReadAllBytes($pdf))
+  ([regex]::Matches($s, '/Subtype\s*/Image')).Count      # wie viele Bilder?
+  ([regex]::Matches($s, '/CCITTFaxDecode')).Count        # davon S/W-Scans?
+  ```
+- Überwiegt CCITT → aufhören und dem User sagen, dass die Quelle nichts hergibt. Das war hier nach dem zweiten Fehlschlag klar.
+
+**🟡 Rezept: Bilder aus PDF holen ohne poppler**
+| Filter | Bedeutung | Vorgehen |
+|--------|-----------|----------|
+| `/DCTDecode` | eingebettetes JPEG | Bytes zwischen `FF D8 FF` und `FF D9` direkt rausschneiden, ist eine fertige .jpg |
+| `/FlateDecode` | zlib-komprimiertes Raw-Bitmap | 2 Byte zlib-Header überspringen, `DeflateStream` → Rohpixel |
+| `/CCITTFaxDecode` | S/W-Fax-Scan | nicht mit Bordmitteln machbar |
+
+- Kanalzahl aus der Länge ableiten: `raw.Length / (Width * Height)` → 3 = RGB, 1 = Graustufen. Stimmt es nicht auf, ist `/BitsPerComponent` < 8.
+- **GDI+ erwartet BGR, PDF liefert RGB** — beim Befüllen von `Format24bppRgb` die Kanäle tauschen, sonst sind Gesichter blau.
+- Bild-Dictionary finden: **nicht** `<<[^<>]*?/Subtype/Image[^<>]*?>>` — scheitert an verschachtelten `/DecodeParms<<…>>`. Stattdessen auf `/Subtype\s*/Image` matchen und ein Kontextfenster (~900 Zeichen rückwärts bis `stream` vorwärts) auswerten.
+- Downsampling beim Auslesen (`$step = [int]($w / $zielbreite)`, nur jeden n-ten Pixel) macht Sichtprüfungen 4–16× schneller — der Pixel-Loop in PS ist der Flaschenhals.
+- Ein Bewerbungsfoto steckt oft im Lebenslauf-Scan, nicht als eigene Datei. Vorschau rendern → Foto-Rechteck ablesen → auf Originalmaße hochrechnen (`Faktor = Originalbreite / Vorschaubreite`) → zuschneiden.
+
+**🟡 Rezept: Single-File-HTML-Dashboards mit Riesen-Datenzeile pflegen**
+- Die `Azubi-Übersicht.html` hält alle Daten als JS-Array in **einer** 940-KB-Zeile (base64-Fotos inline). Read zeigt dort nur `[Omitted long matching line]`, das Edit-Tool ist damit unbrauchbar.
+- **Analysieren** (Fotos maskieren, dann ist es sauberes JSON):
+  ```powershell
+  $c = $zeile -replace '"foto":\s*"data:image[^"]*"', '"foto": true'
+  $s = $c.IndexOf('['); $e = $c.IndexOf('];', $s)
+  $d = $c.Substring($s, $e - $s + 1) | ConvertFrom-Json
+  ```
+  Ohne das `];`-Ende schnappt sich `ConvertFrom-Json` die Folgezeilen mit und wirft „Ungültiger JSON-Primitiv".
+- **Einfügen** per String-Splice direkt hinter `const DATA=[` — Reihenfolge egal, die Seite sortiert selbst.
+- **Verifizieren** mit dem installierten Node: `<script>`-Block herausschneiden → `node --check`. Fängt jeden Quoting-Fehler ab, bevor Diana die Seite öffnet.
+- Vorher **Backup neben die Datei legen** (`_Backup_<datum>.html`) — bei Netzlaufwerken ohne Git die einzige Rückfalloption.
+
+**🟡 Vor dem Nachtragen von Daten prüfen, ob die Darstellung sie abbilden kann**
+- In der Karten-Funktion stand `'<span class="tag neu">ab 09/2026</span>'` **fest verdrahtet**. Die neuen Azubis starten 08/26 und 10/26 — stumpfes Einfügen hätte drei Karten mit falschem Startmonat erzeugt.
+- Fix: Datenfeld `start` einführen, Anzeige auf `esc(d.start||"09/2026")` umstellen, Bestandseinträge mit dem bisherigen Wert nachrüsten. Fallback erhalten, damit ältere Einträge ohne Feld nicht leer rendern.
+- **Regel:** In generierten Dashboards immer erst die Render-Funktion lesen. Was als Konstante im Code steht, war zum Generierungszeitpunkt für alle gleich — genau das ändert sich beim ersten Nachtrag.
+
+**🔵 Namens-Schreibweisen driften zwischen Ordner, Word-Liste und Dashboard**
+- Gefunden: `Aarirsse`/`Aarisse`, `Schamo Karo`/`Schamo Caro`, `Dia Malekuly`/`Dia Malekudy`, `El Malih`/`El Mahli`, `Oumaima`/`Oumayma`.
+- Naiver Substring-Abgleich erzeugt dadurch beides — Geister-Treffer und übersehene Personen. Beim Abgleich auf den Nachnamen-Stamm gehen und die Trefferliste einmal von Hand gegenlesen.
+- **Ordnername als Kanon** verwenden, Abweichungen dem User melden statt still zu vereinheitlichen. Welche Schreibweise die amtliche ist, steht in keiner der drei Quellen.
+
+**🔵 DOCX-Tabellen ohne Word-COM und ohne python-docx lesen**
+```powershell
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[System.IO.Compression.ZipFile]::ExtractToDirectory($docx, $tmp)
+$xml = Get-Content "$tmp\word\document.xml" -Raw -Encoding UTF8
+$t = $xml -replace '</w:p>', "`n" -replace '</w:tc>', ' | ' -replace '</w:tr>', "`n" -replace '<[^>]+>', ''
+```
+- Reicht für Tabellen-Übersichten und ist schneller als COM (kein Word-Start, keine Prozess-Leiche).
+- Für saubere Zell-Struktur ist das installierte `python-docx` die bessere Wahl — der Regex-Weg plättet verbundene Zellen und leere Spalten zu `| | |`.
