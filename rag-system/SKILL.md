@@ -2793,3 +2793,61 @@ grep -n -i -A40 "Stichwort" "<tool-results-dir>/out.txt"
 **🔵 Quellen-URLs vor DB-Eintrag per WebFetch verifizieren**
 
 Geratene/aus dem Modellwissen rekonstruierte Doku-URLs sind oft 404 (Realfall: erfundene Blog-URL `…/ereignismanagement-in-der-stationaeren-pflege/` war tot, korrekt war `…/workflows-mit-dem-ereignismanager-standardisieren/`). Vor dem Schreiben einer Quellenangabe in einen Chunk: URL per WebFetch laden, Titel + Kerninhalt bestätigen. Inhaltlich autoritativ ist ohnehin die Update-Info-PDF, nicht der Blog.
+
+### 2026-08-05 — Produktivtabelle richtiggestellt, Gratis-Embeddings, psql-ARG_MAX, Domänentrennung
+
+**🔴 `documents` ist LEER — produktiv ist `rag_chunks`**
+- Ältere Notizen (auch MEMORY.md) nannten `documents` als RAG-Tabelle. Falsch: 0 Zeilen.
+- Produktiv: `rag_chunks` (2723 Zeilen), Vektorspalte **`embedding_bge`** vom Typ `halfvec(1024)`,
+  Modell **bge-m3**. Die Spalte `embedding` ist dort leer.
+- Vor jeder RAG-Arbeit kurz gegenprüfen statt aus dem Gedächtnis:
+  ```sql
+  SELECT (SELECT count(*) FROM rag_chunks) AS produktiv,
+         (SELECT count(*) FROM documents)  AS legacy;
+  ```
+
+**🔴 Embeddings kosten NICHTS — Ollama mit bge-m3 läuft auf dem NAS**
+- `http://192.168.22.90:11437/api/embed`, Modell `bge-m3` → exakt das Modell des produktiven RAG.
+- Kein OpenAI nötig für Einbettungen. Aufruf:
+  ```bash
+  curl -s http://192.168.22.90:11437/api/embed \
+    -d '{"model":"bge-m3","input":"Frage"}' | jq '.embeddings[0] | length'   # 1024
+  ```
+- Bei laufender Bulk-Ingestion ist Ollama ausgelastet → Timeouts großzügig setzen (180 s), nicht 30 s.
+- Durchsatz auf NAS-CPU: ~11 Chunks/Minute (1020 Chunks ≈ 90 Minuten). Vorher realistisch schätzen.
+
+**🔴 `psql -c` sprengt ARG_MAX bei Vektor-Inserts**
+- `OSError: [Errno 7] Argument list too long` bereits bei 16 Zeilen × 1024 halfvec-Werten.
+- Lösung: SQL in Datei schreiben, `psql -f datei.sql` statt `-c "..."`. Gilt für JEDE Bulk-Ingestion
+  mit Embeddings.
+- Ingestion-Skripte idempotent bauen: `content_hash` der bereits eingelesenen Chunks vorab laden und
+  überspringen → Abbruch mittendrin kostet keine Rechenzeit.
+
+**🟡 Neue Wissensdomäne = eigene Tabelle + eigene Suchfunktion (nicht in `rag_chunks` mischen)**
+- Umgesetzt für ein Technik-Fachbuch: Tabelle `rag_chunks_tech`, Funktion `search_tech_rag`,
+  englischer FTS (`to_tsvector('english', …)`), gleiche Vektorbauart (halfvec 1024, bge-m3).
+- Begründung: Pflege-/MediFox-Suchen dürfen keine Technik-Treffer ziehen. Ein `source_type`-Filter in
+  einer gemeinsamen Tabelle reicht nicht, weil die Vektor-Nachbarschaft trotzdem gemischt wird.
+- Hybride Suche per RRF-Fusion (Volltext-Rang + Vektor-Rang), Muster analog `hybrid_search_v3`:
+  ```sql
+  COALESCE(1.0/(rrf_k + v.rang),0) + COALESCE(1.0/(rrf_k + f.rang),0) AS score
+  ```
+- Verifikation der Trennung nach dem Einlesen:
+  ```sql
+  SELECT count(*) FILTER (WHERE metadata->>'source'='<neue-quelle>') FROM rag_chunks;  -- muss 0 sein
+  ```
+
+**🟡 RLS-Konvention dieser Datenbank: öffentlich lesen, nur `service_role` schreiben**
+- Bestehende Policies (`rag_chunks`, `click_paths`) nutzen `roles: {public}` mit Bedingung
+  `current_setting('request.jwt.claims')::json->>'role' = 'service_role'` für Schreibrechte
+  plus separate `USING (true)`-Policy fürs Lesen.
+- Von n8n automatisch angelegte Tabellen (z. B. `n8n_chat_histories`) kommen **ohne RLS** →
+  `anon` hatte dort SELECT/INSERT/UPDATE/DELETE/TRUNCATE. Absicherung ohne Ausfall:
+  ```sql
+  ALTER TABLE public.<tabelle> ENABLE ROW LEVEL SECURITY;
+  CREATE POLICY "Service manage <tabelle>" ON public.<tabelle> FOR ALL
+    USING ((SELECT ((current_setting('request.jwt.claims', true))::json ->> 'role')) = 'service_role');
+  REVOKE ALL ON public.<tabelle> FROM anon, authenticated;
+  ```
+- n8n schreibt über `service_role`/Tabelleneigentümer → bricht nicht. Verifiziert: Zeilenzahl wuchs
+  während des Umbaus weiter. Rollback: `ALTER TABLE … DISABLE ROW LEVEL SECURITY;`
