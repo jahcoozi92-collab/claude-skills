@@ -3156,3 +3156,49 @@ curl -s -H "X-N8N-API-KEY: $KEY" \
 - Token-basiertes Design ändert man über die ~11 Surface/Border/Bubble-Variablen, NICHT an einzelnen Elementen.
 - Patch-Vorteil: jede light-spezifische Deklaration (`--bg-base: #f8fafc;`) ist im File **eindeutig** (light-Werte ≠ dark/medium) → ganze Deklaration als Anker per `str.replace` sicher (assert count==1).
 - **Achtung Doppelwerte:** innerhalb des Light-Blocks können zwei Variablen denselben Wert haben (z. B. `--bg-elevated` und `--bg-input` beide `rgba(255,255,255,0.98)`) → IMMER die vollständige `--var: …;`-Zeile matchen, nie nur den Farbwert.
+
+### 2026-08-05 — Supabase-RPC + OpenRouter per HTTP-Node-Credential, Credential-Inventar
+
+**🟡 Supabase-Funktionen (RPC) direkt aus dem HTTP-Request-Node aufrufen**
+- Der Supabase-Node kann KEINE RPC-Funktionen, und der Vector-Store-Node erwartet die feste Signatur
+  `(query_embedding, match_count, filter)`. Für eigene Suchfunktionen mit abweichender Signatur:
+  ```json
+  {
+    "method": "POST",
+    "url": "https://<projekt>.supabase.co/rest/v1/rpc/<funktionsname>",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "supabaseApi",
+    "sendBody": true, "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.rpcBody) }}"
+  }
+  ```
+- n8n injiziert `apikey` + `Authorization` aus dem Credential → **kein Dienst-Schlüssel im Workflow**.
+- Gleiches Muster für OpenRouter: `nodeCredentialType: "openRouterApi"` statt Bearer-Header von Hand.
+  Body als Objekt-Expression `"jsonBody": "={{ $json.requestBody }}"` (Code-Node baut ihn) —
+  vermeidet zugleich Regel #32 (`contentType: raw` bricht JSON-Parsing) und #41 (`}}`-Kollision).
+- halfvec-Parameter als String übergeben: `'[' + werte.map(z => z.toFixed(6)).join(',') + ']'`.
+
+**🟡 Credential-Inventar in einer Zeile (statt raten — `GET /credentials` gibt 403)**
+```bash
+curl -s -H "X-N8N-API-KEY: $N8N_API_KEY" \
+  "http://192.168.22.90:5678/api/v1/workflows?limit=200" | python3 -c '
+import json,sys,collections
+c=collections.Counter()
+for w in json.load(sys.stdin)["data"]:
+    for n in w.get("nodes") or []:
+        for t,cr in (n.get("credentials") or {}).items():
+            c[(t,cr.get("id"),cr.get("name"))]+=1
+for (t,i,n),k in c.most_common(20): print(f"{k:4}x {t:26} {i}  {n}")'
+```
+- Liefert Typ, ID, Name und Nutzungshäufigkeit — die meistgenutzte ID ist praktisch immer die richtige.
+
+**🟡 Neue Workflows: POST erstellt INAKTIV — Webhook-only darf zum Test aktiviert werden**
+- `POST /workflows` legt immer inaktiv an (`active` ist read-only). Aktivierung separat per
+  `POST /workflows/{id}/activate`.
+- Die Regel „keine Routinen bis verifiziert" zielt auf **Schedule/Cron**. Ein reiner Webhook-Workflow
+  löst nichts von selbst aus → aktivieren ist der vorgesehene Weg, ihn überhaupt testen zu können.
+- Nach dem Aktivieren ~4 s warten, sonst 404 (Webhook-Registrierung hinkt nach).
+
+**🔵 Node-Anzahl nach PUT immer gegenprüfen** (Regel #25) — hier bestätigt: 10 gesendet, 10 gespeichert.
+  Danach `activeVersion.nodes` mit `nodes` vergleichen und bei Abweichung ein zweites PUT mit
+  `activeVersion.nodes` fahren (Lektion 2026-06-05).
