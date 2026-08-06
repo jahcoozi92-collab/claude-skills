@@ -110,6 +110,13 @@ Diese Änderungen anwenden? [J]a / [N]ein / oder Anpassungen beschreiben
 
 1. Lies die aktuelle Skill-Datei von `~/.claude/skills/[skill-name]/SKILL.md`
 2. Wende die Änderungen mit dem Edit-Tool an
+2a. **🔴 Vor `git add`: Rebase-Zustand prüfen** — eine andere Session kann einen `git pull --rebase` mittendrin stehengelassen haben. `git status --short` zeigt das **nicht**:
+   ```bash
+   git -C ~/.claude/skills status | head -3     # "interactive rebase in progress"?
+   test -d ~/.claude/skills/.git/rebase-merge && echo "REBASE OFFEN"
+   ```
+   Bei Fund: **`GIT_EDITOR=true git rebase --continue`**, niemals `--abort` oder `--skip` — die ausstehenden `pick`s stammen von anderen Instanzen und gingen sonst still verloren. Welche noch offen sind, steht in `.git/rebase-merge/git-rebase-todo`, die erledigten in `.git/rebase-merge/done`.
+   Ohne diese Prüfung landet der Commit im **detached HEAD** und sammelt die Working-Tree-Reste der Vorsession als Fremdinhalt mit ein (verifiziert 2026-08-06 auf WS44: `reflect/SKILL.md` landete unbeabsichtigt im `windows-workstation`-Commit).
 3. **Commit lokal** (Push als separater Schritt, siehe 3b):
    ```bash
    cd ~/.claude/skills
@@ -790,6 +797,14 @@ SET LOCAL hnsw.ef_search = 100;
 **🟡 Auto-Push-Flow auf WS44 bestätigt**
 - Lektion 2026-06-01 („Auto-Push ist Standard, keine Rückfrage") gilt auch hier: `git push origin main` lief prompt-frei durch, kein Classifier-Block, kein 403.
 - Auf Windows Git-Befehle mit `git -C <pfad>` absetzen statt `cd` — das PowerShell-Tool setzt die CWD nach dem Aufruf zurück (`Shell cwd was reset to …`).
+
+**🔴 Stehengebliebener Rebase einer Vorsession — `git status --short` verschweigt ihn**
+- Beim Commit dieser Reflect-Runde lief im Skills-Repo noch ein `git pull --rebase` von gestern: 1 von 2 `pick`s erledigt, HEAD detached auf `fddb363`.
+- Ich hatte mit `git -C $s status --short` geprüft — die Kurzform gibt **keinen** Hinweis auf `interactive rebase in progress`. Erst `git status` in Langform (oder `test -d .git/rebase-merge`) zeigt es.
+- Zwei Folgeschäden: (1) der Commit landete im detached HEAD statt auf `main`; (2) die uncommitteten Reste der Vorsession (`reflect/SKILL.md`, +42 Zeilen) wurden als Fremdinhalt in den `windows-workstation`-Commit gezogen — sichtbar nur an „3 files changed", obwohl 2 gestaged waren.
+- **Auflösung:** `GIT_EDITOR=true git rebase --continue`. Der ausstehende `pick` (`ff2f87a`) wurde damit sauber angewendet. Hätte ich `--abort` oder `--skip` genommen, wäre diese Lektion einer anderen Instanz spurlos verschwunden.
+- **Diagnose-Reihenfolge**, wenn der Commit unerwartet mehr Dateien meldet als gestaged: `git status` (Langform) → `git branch --show-current` (leer = detached) → `.git/rebase-merge/git-rebase-todo` + `done` lesen → erst dann handeln.
+- Merke: `git status --short` ist für „was ist geändert" gedacht, nicht für „in welchem Zustand ist das Repo". Für Letzteres immer Langform.
 
 **🔵 Von Windows committete `.sh`-Dateien: Zeilenenden verifizieren**
 - `core.autocrlf=true` — ein Shell-Skript aus `ontology-pending/` muss auf der Linux-VM laufen.
