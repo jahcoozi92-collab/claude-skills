@@ -480,6 +480,55 @@ $i.Dispose()   # Dispose nicht vergessen, sonst bleibt die Datei gesperrt
 - Naiver Substring-Abgleich erzeugt dadurch beides — Geister-Treffer und übersehene Personen. Beim Abgleich auf den Nachnamen-Stamm gehen und die Trefferliste einmal von Hand gegenlesen.
 - **Ordnername als Kanon** verwenden, Abweichungen dem User melden statt still zu vereinheitlichen. Welche Schreibweise die amtliche ist, steht in keiner der drei Quellen.
 
+**🔴 Farbstich per Referenzmessung diagnostizieren — Auto-Levels raten nur**
+- Erster Versuch war eine Perzentil-Streckung pro Kanal (Auto-Levels). **Wirkungslos**, weil Schwarz- und Weißpunkt bereits neutral waren: Papier maß `R=253 G=253 B=254`, Passbild-Hintergrund `254/255/254`. Der Stich saß ausschließlich in den Mitteltönen.
+- Erst das Messen der **Hauttöne** brachte die Diagnose: Wange `R=246 G=221 B=240` → **B/R = 0,97**. Der Blaukanal war massiv überhöht.
+- **Sollwerte für neutrale Haut:** `G/R ≈ 0,80–0,85`, `B/R ≈ 0,70–0,78`. Weicht ein Verhältnis stark ab, ist der Kanal die Ursache.
+- Messfunktion (Mittelwert über ein Rechteck im Rohbild):
+  ```powershell
+  function Probe($nx,$ny,$nw,$nh,$label) {
+    $sr=0.0;$sg=0.0;$sb=0.0;$c=0
+    for ($y=$ny; $y -lt $ny+$nh; $y++) { for ($x=$nx; $x -lt $nx+$nw; $x++) {
+      $i=($y*$W+$x)*3; $sr+=$raw[$i]; $sg+=$raw[$i+1]; $sb+=$raw[$i+2]; $c++ } }
+    "{0,-20} R={1,3:N0} G={2,3:N0} B={3,3:N0}  G/R={4:N2} B/R={5:N2}" -f $label,($sr/$c),($sg/$c),($sb/$c),($sg/$sr),($sb/$sr)
+  }
+  ```
+- **Reihenfolge:** immer erst mehrere Referenzflächen messen (Papier, neutraler Hintergrund, Hautton), dann über die Korrektur entscheiden. Eine pauschale Auto-Korrektur verdeckt, wo das Problem wirklich sitzt.
+
+**🟡 Irreparabler Farbstich → entsättigen statt Farbe erfinden**
+- Ursache hier: das Original war ein **Farbausdruck mit ausgefallenem Gelb**. Die Information für echte Hauttöne existiert im Scan schlicht nicht — jede „Korrektur" hätte sie erfunden.
+- Ein Gamma- oder Weißpunkt-Eingriff auf den Blaukanal hätte den Faktor 3,8–5,1 gebraucht; das zerstört die dunklen Bereiche (Haar) vollständig.
+- **Robuster Weg:** Luminanz berechnen und auf niedrige Restsättigung ziehen —
+  ```powershell
+  $lum = 0.299*$r + 0.587*$g + 0.114*$b
+  $nr = $lum + ($r - $lum) * 0.22      # 0.22 = Restsaettigung
+  $nr = 128 + ($nr - 128) * 1.12       # leichter Kontrast danach
+  ```
+- Ergebnis ist ein fast neutrales Passbild — neben Farbfotos erkennbar anders, aber sachlich und ohne erfundene Information. Das dem User auch so sagen.
+
+**🟡 Rezept: base64-Foto in eine Kartei der Übersicht einsetzen**
+- Format wie im Bestand: `"foto": "data:image/jpeg;base64,<…>"`. JPEG bei Quality 82, ~330×400 px → 19 KB → 25.920 base64-Zeichen. Bleibt im Rahmen der übrigen Einträge.
+- JPEG-Encoder in PowerShell (GDI+ speichert sonst mit Default-Qualität):
+  ```powershell
+  $enc = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
+  $par = New-Object System.Drawing.Imaging.EncoderParameters(1)
+  $par.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, 82)
+  $bmp.Save($pfad, $enc, $par)
+  ```
+- **Ankereindeutigkeit vor der Ersetzung erzwingen** — bei 77 gleichförmigen Einträgen trifft ein zu kurzer Anker sonst mehrere:
+  ```powershell
+  $treffer = ([regex]::Matches($t, [regex]::Escape($alt))).Count
+  if ($treffer -ne 1) { throw "Anker nicht eindeutig: $treffer Treffer" }
+  ```
+  Als Anker mehrere Felder zusammen nehmen (`"nach"` + `"schule"` + `"foto": ""`), nicht nur den Namen.
+
+**🔵 `git status | Select-Object -First N` liefert Exit 255 trotz Erfolg**
+- PowerShell bricht die Pipeline ab, sobald `Select-Object` genug Elemente hat; das native `git.exe` bekommt einen Broken Pipe und der Tool-Aufruf meldet Exit 255 — obwohl die Ausgabe korrekt und vollständig ist.
+- Betrifft jedes native Programm hinter `Select-Object -First`. Bei Prüfschritten daher entweder ungepipet aufrufen oder das Ergebnis in eine Variable nehmen und danach filtern:
+  ```powershell
+  $out = git -C $repo status; $out[0..2]
+  ```
+
 **🔵 DOCX-Tabellen ohne Word-COM und ohne python-docx lesen**
 ```powershell
 Add-Type -AssemblyName System.IO.Compression.FileSystem
