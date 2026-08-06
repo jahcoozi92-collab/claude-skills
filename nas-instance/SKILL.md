@@ -2155,3 +2155,41 @@ mehr lesen können. Beides steht in `docs/BACKUP_README.md` bzw. dem Wochencheck
 - Jeder Leseversuch (`grep` auf `open-webui/.env`, `n8n/.env`, …) wird geblockt, nicht nur beim
   eigenen Stack. Keys für neue Provider müssen daher vom User kommen oder direkt im Ziel-Dashboard
   angelegt werden. Nicht mit anderen Werkzeugen umgehen — die Sperre ist beabsichtigt.
+
+### 2026-08-05 — SMB-Volume liegt auf USB (kein chmod), Docker-Volume-Pfade, Tailscale-SSH untauglich
+
+**🔴 Der SMB-Share „Volume" ist eine USB-Platte OHNE Unix-Rechte — git/docker scheitern dort**
+- `/etc/samba/smbshare.conf`: `[Volume] path = /mnt/@usb/sdc2`. Von Yoga7 gemountet als
+  `/mnt/autofs/nas` — sieht aus wie normaler Speicher, ist aber exFAT/NTFS-artig.
+- Symptom beim Klonen: `error: chmod on …/.git/config.lock failed: Operation not permitted` →
+  `fatal: could not set 'core.filemode' to 'false'`.
+- **Für Builds/Repos immer die interne Platte nutzen:** `/volume1/docker/…` (bcache0, 7,3 T, 33 % belegt).
+- Der Share `personal_folder` ist dagegen `path = %H`, also **das Home-Verzeichnis selbst** — deshalb
+  fassen Samba, SSH und die UGOS-Benutzerverwaltung dieselben Rechte an (siehe SSH-Rezidiv unten).
+
+**🟡 Docker-Volume-Pfad auf dem Host ermitteln**
+```bash
+docker inspect <container> --format '{{range .Mounts}}{{.Type}} {{.Source}} -> {{.Destination}}{{println}}{{end}}'
+# z.B. volume /volume1/@docker/volumes/omniroute-prod-data/_data -> /app/data
+```
+- Nützlich, wenn ein CLI-Werkzeug IM Container fehlt (schlanke Prod-Images!) und man es vom Host aus
+  gegen die Daten laufen lassen will. Dann Container vorher stoppen — sonst SQLite-WAL-Konflikt.
+
+**🟡 Tailscale-SSH ist KEIN Ersatz für den normalen SSH-Zugang**
+- `tailscale ssh Jahcoozi@ugreen` scheitert immer („failed to look up local user"); nur `root@ugreen`
+  verbindet — landet aber im **Tailscale-Container**: kein Docker, kein `/volume1`, leeres Dateisystem.
+- Bei SSH-Problemen also nicht auf Tailscale ausweichen, sondern `bash ~/fixssh.sh` (liegt im NAS-Home)
+  bzw. den SSH-Schalter in der UGOS-Oberfläche prüfen.
+
+**🟡 Home-Rechte springen wiederholt auf 777 (UGOS-Benutzerverwaltung)**
+- Dritter Vorfall in dieser Woche. `fixssh.sh` setzt 755/700/600 zurück und behebt es sofort.
+- Dauerhafte Entschärfung: `authorized_keys` aus dem Home herausnehmen, damit StrictModes nicht mehr
+  an den Home-Rechten hängt:
+  ```
+  /etc/ssh/authorized_keys/<user>        root:root, Ordner 755, Datei 644
+  sshd_config: AuthorizedKeysFile /etc/ssh/authorized_keys/%u .ssh/authorized_keys
+  ```
+  Alten Pfad als zweite Option stehen lassen. Vorher `sudo cp -n /etc/ssh/sshd_config …bak`,
+  Änderung mit `sudo sshd -t` prüfen, dann `systemctl reload sshd` (wirft laufende Sitzungen NICHT raus).
+  Nach UGOS-Firmware-Updates kann `sshd_config` überschrieben werden — Schlüsseldatei bleibt.
+- `sudo` läuft auf dem NAS ohne Passwort (User Jahcoozi, Gruppe admin).
