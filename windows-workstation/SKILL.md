@@ -166,6 +166,7 @@ ping 192.168.2.215
 7. **Keine UNC-Pfade an `SendUserFile`** — wird hart abgelehnt (`is a UNC network path, which is not supported`). Datei erst nach lokal/Scratchpad kopieren, dann von dort senden
 8. **Kein `.ps1` mit Nicht-ASCII-Zeichen ohne UTF-8-BOM ausführen** — das Write-Tool schreibt BOM-los, PowerShell 5.1 liest solche Dateien als cp1252. `Übersicht` wird zu `Ãœbersicht`, jeder Umlaut-Pfad läuft in `FileNotFoundException`, und Sonderzeichen in String-Literalen landen verstümmelt in der Zieldatei. BOM vor dem Aufruf ergänzen (siehe Lektion 2026-08-06)
 9. **Kein `-Include` ohne Wildcard im `-Path`** — `Get-ChildItem -LiteralPath X -Recurse -Include *.jpg` filtert NICHT, sondern liefert den gesamten Baum. Entweder `-Path "X\*" -Include *.jpg` oder nachgelagert `Where-Object { $ext -contains $_.Extension.ToLower() }`
+10. **Kein `git commit -m` mit Anführungszeichen in der Nachricht** — PowerShell 5.1 reicht auch ein Here-String (`@'…'@`) an `git.exe` weiter, wo die inneren `"` das Argument neu zerlegen (`error: pathspec '…' did not match any file(s)`). Nachricht in eine Datei schreiben und `git commit -F <datei>` nutzen
 
 ### BEVORZUGT
 1. Git Bash für Dateisystem-Operationen, PowerShell für Windows-spezifische Aufgaben (COM, Registry)
@@ -417,6 +418,16 @@ $i.Dispose()   # Dispose nicht vergessen, sonst bleibt die Datei gesperrt
   `$f = (Get-ChildItem -LiteralPath $root -Filter "Azubi-*bersicht.html").FullName`
 - Beim Zurückschreiben das Original-BOM beibehalten: BOM-Zustand vorher prüfen, dann `New-Object System.Text.UTF8Encoding($hasBom)`.
 - Nebenbei: der Typ heißt `[System.Text.Encoding]`, **nicht** `[System.IO.Text.Encoding]`.
+
+**🔴 `git commit -m` scheitert an Anführungszeichen in der Nachricht — auch im Here-String**
+- Das Here-String `@'…'@` schützt nur vor **PowerShell-eigener** Interpolation. Beim Weiterreichen an das native `git.exe` wird der String erneut nach Quoting-Regeln zerlegt, und jedes eingebettete `"` startet dort ein neues Argument.
+- Symptom: `error: pathspec 'rebase' did not match any file(s) known to git` — git sieht Bruchstücke der Commit-Message als Dateinamen. Der vorangehende `git add` ist dann schon durch, der Commit fehlt.
+- **Immer bei mehrzeiligen oder zitatehaltigen Nachrichten:**
+  ```powershell
+  # Message per Write-Tool in den Scratchpad, dann:
+  git -C $repo commit -F "$scratch\msg.txt"
+  ```
+- Gleiche Familie wie die BOM- und `-Include`-Falle: der Fehler entsteht **zwischen** PowerShell und dem nativen Programm, nicht in einem der beiden.
 
 **🔴 `-Include` ohne Wildcard im Pfad filtert stillschweigend gar nicht**
 - `Get-ChildItem -LiteralPath $root -Recurse -File -Include *.jpg,*.png` gab den **kompletten** Baum zurück — 96 KB Output, abgeschnitten, kein Fehler.
