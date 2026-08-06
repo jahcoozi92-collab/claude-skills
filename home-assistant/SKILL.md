@@ -2613,3 +2613,73 @@ Memory `reference_nas_ssh_zugang` / `reference_ha_mcp_server`**
   ```
 - `button_card_templates` gehören an die **Wurzel** der Lovelace-Config (Geschwister von `views`) — funktioniert auch im Storage-Modus.
 - Vor Umbenennen/Verschieben von Floors prüfen, wer sie referenziert: `grep -rn "floor_id\|<floor_name>" packages/ dashboards/ *.yaml .storage/lovelace.*` — war hier leer, die Umstellung damit folgenlos.
+
+### 2026-08-06 — Kartenversionierung, .storage-Rechte, Treppen-Geometriepruefung (grundriss-3d-card)
+
+**🔴 Versionssprung liefert NICHT automatisch eine sichtbare Aenderung**
+- Fall: `grundriss-3d-card-v4.js` -> `v5` erzeugt, Ressource umgestellt, HA neu gestartet, Datei per
+  `curl` mit Versionsmarker verifiziert — User meldete trotzdem „immer noch die alte Karte".
+- Ursache war KEIN Fehler: v5 hatte nur den `landing`-Zweig erweitert, die Treppendefinition im
+  Dashboard nutzte aber ausschliesslich `run` und `winder`. Ohne `landing` ist v5 verhaltensgleich zu v4.
+- **Regel:** Nach einem Versionssprung nicht nur pruefen, OB die Datei ausgeliefert wird, sondern OB die
+  Konfiguration den neuen Codepfad ueberhaupt betritt:
+  ```bash
+  # 1. wird die neue Datei ausgeliefert?
+  curl -s http://localhost:8123/local/<pfad>/<datei>-v5.js | grep -m1 'v5'
+  # 2. nutzt die Konfiguration die neue Eigenschaft ueberhaupt?
+  python3 -c "import json;s=open('.storage/lovelace.<dashboard>',encoding='utf-8').read();print(s.count('landing'))"
+  ```
+  Zaehler 0 bedeutet: Datei neu, Darstellung identisch — und das ist korrekt, kein Bug.
+
+**🔴 Kartentyp und Dateiname sind zwei verschiedene Dinge**
+- `custom:grundriss-3d-card` traegt KEINE Versionsnummer, nur der Dateiname (`…-vN.js`).
+- Beim Versionssprung ist deshalb **nur die Ressourcen-URL** zu aendern; Dashboards bleiben unberuehrt.
+- Vorher pruefen, welcher Typ ueberhaupt verwendet wird:
+  ```bash
+  grep -o '"type": *"custom:[a-z0-9-]*"' .storage/lovelace.<dashboard> | sort -u
+  ```
+- Traegt der Typ doch eine Version (manche Karten registrieren `custom:foo-v2`), muessen zusaetzlich alle
+  Kartendefinitionen angefasst werden.
+
+**🔴 `.storage/*` gehoert root und wird von HA im Speicher gehalten**
+- Rechte: `644 root:root` — Schreiben nur mit `sudo` (auf dem NAS passwortlos verfuegbar).
+  Ohne sudo: `PermissionError: [Errno 13] Permission denied`.
+- HA liest `.storage` beim Start und schreibt beim Speichern aus der Oberflaeche zurueck →
+  Aenderungen an der Datei erscheinen erst nach `docker restart homeassistant`, und ein paralleles
+  Speichern im UI wuerde sie ueberschreiben.
+- Ablauf: `shutil.copy(p, p+'.bak-<zeit>')` → mit sudo schreiben → Neustart → gegenlesen.
+  Besitzrechte danach kontrollieren (`stat -c '%a %U:%G'`), damit HA weiter schreiben kann.
+
+**🔴 Treppen-Geometrie gegen die Geschosshoehen gegenrechnen, BEVOR man baut**
+- Die Kartenkonfiguration hat `levels: [{name,y,wall_h}, …]`. Die Steighoehe einer Treppe muss die
+  Differenz benachbarter `y`-Werte exakt treffen.
+- Konkret: Nutzerangabe „11 Stufen vor dem Podest, 4 danach" = 15 Stufen × 0,1935 m = 2,90 m, die
+  Geschosshoehe betraegt aber 3,29 m → Treppe haette 39 cm unter der Decke geendet. Korrekt sind 17
+  Stufen (13 + 4), was 3,290 m exakt trifft.
+- **Pruefung:**
+  ```python
+  stufen = sum(s.get("run",0) + s.get("winder",0) for s in t["segments"])   # landing zaehlt NICHT
+  assert abs(stufen * t["rise"] - (levels[t["level"]+1]["y"] - levels[t["level"]]["y"])) < 0.02
+  ```
+- `landing`-Segmente erzeugen KEINE Steighoehe (kein `y += rise` im Kartencode) — beim Umbau von
+  `winder` auf `landing` gehen die Stufen dieses Segments also verloren und muessen anderswo dazu.
+- Beim Zaehlen vor Ort werden regelmaessig 1–2 Stufen uebersehen (Antrittsstufe, Podestkante).
+  Kleine Zahlen (4) sind verlaesslicher als grosse (11) — im Zweifel die kleine uebernehmen und die
+  grosse aus der Geschosshoehe zurueckrechnen.
+
+**🟡 Lovelace-Ressourcen im YAML-Modus werden NUR beim Start gelesen**
+- Bei `lovelace: resources:` in `configuration.yaml` (statt Storage-Modus) taucht der Eintrag NICHT in
+  `.storage/lovelace_resources` auf — dort nur die per UI/HACS installierten.
+- Deploy-Kette fuer eine neue Kartenversion:
+  1. `cp -n configuration.yaml configuration.yaml.bak-$(date +%Y%m%d-%H%M)`
+  2. URL-Zeile auf die neue Datei setzen (Versionskommentar im bestehenden Stil ergaenzen)
+  3. YAML validieren, bevor neu gestartet wird — HA-Tags mit einem Multi-Constructor abfangen:
+     ```python
+     class L(yaml.SafeLoader): pass
+     L.add_multi_constructor('!', lambda l,s,n: None)
+     yaml.load(open('configuration.yaml',encoding='utf-8'), Loader=L)
+     ```
+  4. `docker restart homeassistant`, dann `until curl -sf http://localhost:8123/` warten
+  5. Auslieferung pruefen: `curl -o /dev/null -w '%{http_code} %{size_download}'`
+- Versionierte Dateinamen sind Absicht (Browser cachen `/local/` hartnaeckig) — deshalb NIE die alte
+  Datei ueberschreiben, sondern eine neue danebenlegen und die alte als Rueckfallebene behalten.
