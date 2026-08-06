@@ -2193,3 +2193,43 @@ docker inspect <container> --format '{{range .Mounts}}{{.Type}} {{.Source}} -> {
   Änderung mit `sudo sshd -t` prüfen, dann `systemctl reload sshd` (wirft laufende Sitzungen NICHT raus).
   Nach UGOS-Firmware-Updates kann `sshd_config` überschrieben werden — Schlüsseldatei bleibt.
 - `sudo` läuft auf dem NAS ohne Passwort (User Jahcoozi, Gruppe admin).
+
+### 2026-08-06 — Cloudflare-Routen additiv, Loopback-Bindung, Browser-Diagnose (OpenShip-Einrichtung)
+
+**🔴 Tunnel-Routen NUR additiv ändern — `api-upload-routes-v2.sh` überschreibt korrigierte Routen**
+- Das Skript macht ein **PUT der kompletten Ingress-Liste** aus `cloudflared/config.yml`. Im Token-Modus ist aber das Dashboard maßgeblich, und mehrere Live-Routen weichen bewusst von der Datei ab (Vaultwarden 8094, openclaw → VM 192.168.22.206, searxng 8087).
+- Ein Lauf des Skripts würde genau diese Korrekturen auf veraltete Dateiwerte zurücksetzen — dieselbe Drift, die 2026-08-02 über 12.000 Fehlanfragen/Tag verursacht hat.
+- **Richtiges Vorgehen:** Live-Config per GET holen → neue Regel **vor** der catch-all einfügen → PUT.
+  ```bash
+  CUR=$(cf "$API/accounts/$ACC/cfd_tunnel/$TUN/configurations" | jq '.result.config')
+  NEW=$(echo "$CUR" | jq --arg h "$HOST" --arg s "$TARGET" \
+    '.ingress = ((.ingress[:-1]) + [{hostname:$h, service:$s}] + [.ingress[-1]])')
+  cf -X PUT ".../configurations" -d "$(jq -n --argjson c "$NEW" '{config:$c}')"
+  ```
+- Danach Stichprobe auf bestehende Hostnamen (nas-dashboard, vaultwarden, n8n, nextcloud, searxng), um zu belegen, dass nichts kaputtging.
+- Nebenbefund: die CLAUDE.md-Warnung „searxng zeigt noch auf 8081" war **veraltet** — live steht korrekt 8087. Vor dem Reparieren immer den Live-Zustand prüfen, nicht der Doku glauben.
+
+**🔴 Cloudflare-API-Token: Access ist ein eigener Rechtebereich**
+- Der Token in `cloudflared/.env` durfte Tunnel-Config **und** DNS schreiben, Access aber nur **lesen** (`POST /access/apps` → `10000 Authentication error`, obwohl GET 200 lieferte).
+- Ein Rechte-Test durch Anlegen/Löschen eines Probe-DNS-Records wird vom Auto-Mode-Classifier geblockt — nicht darauf ausweichen, sondern die fehlende Berechtigung benennen.
+- Für den User am einfachsten: **bestehenden Token bearbeiten** statt neuen anlegen (Berechtigung *Access: Apps and Policies → Edit* ergänzen). Der Token-Wert bleibt dabei gleich, `cloudflared/.env` muss nicht angefasst werden.
+
+**🔴 Container mit Loopback-Bindung brauchen `127.0.0.1` in der Tunnel-Route**
+- Alle gewachsenen Routen zeigen auf `192.168.22.90:<port>`. Dienste, die ihren Port nur an **127.0.0.1** binden (z. B. von OpenShip deployte Apps: `127.0.0.1:20000->80/tcp`), sind darüber **nicht** erreichbar.
+- Für die gilt `http://127.0.0.1:<port>` — das trägt, weil `cloudflared` im Netzwerkmodus `host` läuft und den Loopback des Hosts direkt sieht.
+- Prüfen statt annehmen: `curl` gegen beide Adressen; `docker ps` zeigt in der Ports-Spalte, ob eine Bind-Adresse davorsteht.
+
+**🔴 `curl` beweist NICHT, dass eine Weboberfläche funktioniert**
+- Fehlerbild: Nutzer landete nach dem Aufruf auf `localhost … ERR_CONNECTION_REFUSED`. Serverseitig sah alles gesund aus — `307 → /login → 200`, keine `localhost`-Zeichenkette im HTML, in **keiner** der 741 Bundle-Dateien und in keiner API-Antwort.
+- Ursache war ein **clientseitiger** Sprung: die App hielt sich wegen `auth_mode=none` für eine lokale Desktop-Installation und leitete per JavaScript auf `http://localhost:4000/api/auth/desktop-login`. Die URL wird zur Laufzeit zusammengesetzt und ist deshalb in keinem Bundle grep-bar.
+- **Lektion:** Bei „im Browser kaputt, per curl heil" nicht weiter greppen, sondern die Seite in einem echten Browser öffnen und die Zieladresse auslesen (`mcp__claude-in-chrome`: `navigate` + `tabs_context_mcp` zeigt die tatsächliche URL). Das kostete hier zwei Fehlrunden.
+- Zusatz: Prüfmuster sauber wählen — ein `grep -i openship` traf auch auf der Cloudflare-Access-Anmeldeseite, weil dort der App-Name steht. Auf eindeutige Marker prüfen (`_next/static`, `__NEXT_DATA__`), sonst produziert man Fehlalarme.
+
+**🟡 n8n-API-Key liegt auf dem NAS in den Workflow-Skripten**
+- `~/.config/n8n-mcp/n8n-api-config.sh` existiert hier **nicht** (anders als auf den anderen Maschinen).
+- Fundort: `/volume1/docker/n8n/workflows/{test-n8n,import-workflow,deploy-n8n-mcp}.sh` — JWT per `grep -hoE 'eyJ[A-Za-z0-9_.-]{40,}'` extrahierbar.
+- Interne API `http://192.168.22.90:5678/api/v1` nutzen; extern blockt Cloudflare Schreibzugriffe.
+
+**🟡 Von OpenShip deployte Container: Aufräumen scheitert ohne Edge**
+- Ein Projekt mit Custom-Domain lässt sich nicht normal löschen (`PROJECT_TEARDOWN_FAILED`, weil OpenResty fehlt). Abhilfe: `DELETE /api/projects/<id>?forceOrphan=true`.
+- Danach **selbst nachsehen**: der Container verschwindet, das Docker-Netzwerk `openship-<slug>` bleibt liegen und muss mit `docker network rm` weg. Die Antwort listet unter `orphaned` alles Übriggebliebene.
