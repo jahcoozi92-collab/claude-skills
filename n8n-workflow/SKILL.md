@@ -3206,7 +3206,8 @@ for (t,i,n),k in c.most_common(20): print(f"{k:4}x {t:26} {i}  {n}")'
 ### 2026-08-06 — API-Key-Fundort auf dem NAS, v2.33.5, Start-vs-Update
 
 **🔴 n8n mit `docker compose start`, NICHT `up -d` wieder anfahren**
-- `n8n-n8n-1` war gestoppt (SIGTERM, Exit 0). `docker compose up -d` im Verzeichnis `/volume1/docker/n8n` zog `n8n:latest` **neu** und versuchte ein Recreate → abgebrochen mit `No such container`, Leichen-Container blieb liegen, und n8n lief danach auf einer **neueren Version** — ohne das in der Update-Prozedur vorgesehene SQLite-Backup (die DB ist inzwischen 2,79 GB).
+- `n8n-n8n-1` war gestoppt (SIGTERM, Exit 0). `docker compose up -d` im Verzeichnis `/volume1/docker/n8n` zog `n8n:latest` **neu** und versuchte ein Recreate → abgebrochen mit `No such container`, Leichen-Container blieb liegen.
+- ⚠ **Korrektur 2026-08-07:** Die ursprüngliche Annahme „n8n lief danach auf einer neueren Version" war **falsch**. Der abgebrochene Recreate ließ den alten Container weiterlaufen — n8n blieb auf **2.32.7**, nur das Image war gepullt. Verifiziert beim echten Update am 2026-08-07: `Recorded version change: 2.32.7 -> 2.33.5`. Merksatz: **ein gescheiterter Recreate pullt, tauscht aber nicht.** Nach so einem Abbruch also immer `docker exec <container> n8n --version` prüfen statt aus dem Pull auf die laufende Version zu schließen.
 - Richtig: `docker compose start n8n` bzw. `docker start n8n-n8n-1`. `up -d` nur bewusst zum Updaten, dann mit Backup davor.
 - Nach jedem Recreate gegenprüfen, dass die Workflows wieder registriert sind:
   ```bash
@@ -3214,6 +3215,11 @@ for (t,i,n),k in c.most_common(20): print(f"{k:4}x {t:26} {i}  {n}")'
     | python3 -c "import json,sys; d=json.load(sys.stdin)['data']; print(len(d),'gesamt,',sum(1 for w in d if w['active']),'aktiv')"
   ```
   (Referenz 2026-08-06: 131 Workflows, davon 34 aktiv.)
+- ⚠ **Diese „34 aktiv" sind als Soll-Wert irreführend** (Ergänzung 2026-08-07): 5 davon sind **archiviert** und werden von n8n bewusst nie aktiviert. Der belastbare Vergleich ist `active=1 AND isArchived=0` gegen die Zahl der `Activated workflow`-Logzeilen — beide müssen übereinstimmen (2026-08-07: 29 = 29). Wer gegen 34 prüft, sieht eine Lücke, die keine ist.
+  ```bash
+  sqlite3 data/database.sqlite "SELECT COUNT(*) FROM workflow_entity WHERE active=1 AND isArchived=0;"
+  docker compose logs n8n 2>&1 | grep -c 'Activated workflow'
+  ```
 
 **🔴 Auf dem NAS fehlt `~/.config/n8n-mcp/n8n-api-config.sh`**
 - Der API-Key liegt dort nur in den Workflow-Skripten:
@@ -3246,3 +3252,47 @@ for (t,i,n),k in c.most_common(20): print(f"{k:4}x {t:26} {i}  {n}")'
 - Der POST-Body liegt beim Webhook-Node unter **`$json.body`**, nicht direkt in `$json`.
 - Verifikation nicht beim Sender stehenlassen: nach dem Test-Aufruf die Execution prüfen —
   `GET /executions?workflowId=<id>&limit=3&includeData=true` → jeder Node `status ok`, und den erzeugten Text gegenlesen.
+
+### 2026-08-07 — Update 2.32.7 → 2.33.5: `latest` ≠ höchste Version, Deprecations, webhookId-Drift
+
+**🔴 `latest`/`stable` ist NICHT der höchste Versions-Tag — Digest vergleichen**
+- Docker Hub zeigte gleichzeitig `2.34.2` und `2.33.5`. Die höhere Nummer zu nehmen wäre falsch gewesen: `latest` **und** `stable` trugen den Digest von **2.33.5**; 2.34.x ist die `next`/`beta`-Linie.
+- Nach Tag-Datum sortieren hilft nicht (beide am selben Tag gepusht). Verlässlich ist nur der Digest-Abgleich:
+  ```bash
+  for t in latest stable 2.34.2 2.33.5; do
+    d=$(curl -s "https://hub.docker.com/v2/repositories/n8nio/n8n/tags/$t" \
+        | python3 -c "import json,sys; print(json.load(sys.stdin).get('digest'))")
+    echo "$t -> $d"
+  done
+  ```
+- Praktisch heißt das: `image: …/n8n:latest` + `pull_policy: always` landet **nie** automatisch auf der next-Linie. Wer 2.34.x will, muss den Tag explizit pinnen — und weiß dann, dass es Beta ist.
+
+**🟡 Deprecations in 2.33.5 und wie man sie sauber stilllegt**
+- Das Log listet sie beim Start unter „There are deprecations related to your n8n setup". Alle vier ohne Funktionsverlust behebbar (Ergebnis danach: keine Warnung mehr):
+
+  | Warnung | Maßnahme |
+  |---|---|
+  | `WEBHOOK_URL` | ersetzen durch `N8N_WEBHOOK_URL` (gleicher Wert, setzt Test- **und** Prod-Basis-URL) |
+  | `N8N_UNVERIFIED_PACKAGES_ENABLED` | explizit `true` setzen — Default kippt künftig auf `false` und würde die Community-Nodes aus `nodes/` abschalten |
+  | `N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES` | explizit `2147483648` (2 GiB); künftiger Default 256 MiB |
+  | `N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES` | explizit `5000`; künftiger Default 1000 |
+
+- **v3-Vorbereitung `binaryData/` → `storage/`**: einmalig `N8N_MIGRATE_FS_STORAGE_PATH=true` setzen. Auf diesem NAS unkritisch, **weil der Bind-Mount auf `.n8n`-Ebene liegt** (`./data:/home/node/.n8n`) und die Umbenennung damit innerhalb des Mounts passiert. Wäre `binaryData` direkt gemountet, müsste erst der Mount-Pfad nachgezogen werden. Lief in Sekunden durch (145 MB), Verzeichnis heißt danach `data/storage`.
+
+**🟡 webhookId aus `webhook_entity` lesen, nie aus der Doku übernehmen**
+- Die in `n8n/CLAUDE.md` dokumentierte Form-ID `122f6aa4-…` lieferte 404 — sie ändert sich, sobald der Trigger-Node neu angelegt wird. Aktuell gültig: `0101b81f-cbfd-4d03-b5e4-bb9f43d80150`.
+  ```bash
+  sqlite3 data/database.sqlite \
+    "SELECT webhookPath, method, node FROM webhook_entity WHERE workflowId='SJ47UX9mv8wh1Wwy';"
+  ```
+- **Ein 404 ist nicht automatisch ein Defekt**: der Chat-Trigger (`bf8b65c1-…/chat`) hat `public: false` und ist von außen planmäßig nicht erreichbar. Vor der Fehlersuche erst den Node-Parameter prüfen:
+  ```bash
+  sqlite3 data/database.sqlite "SELECT json_extract(j.value,'\$.parameters') FROM workflow_entity w, json_each(w.nodes) j WHERE w.id='SJ47UX9mv8wh1Wwy' AND json_extract(j.value,'\$.name')='Chat-Trigger';"
+  ```
+- Beim Bauen solcher Abfragen: in `json_each`-Joins die Spalten **qualifizieren** (`w.id`), sonst `ambiguous column name: id`.
+
+**🟡 `ops/n8n/backup_n8n.sh` wird von DB-Altlasten unbrauchbar gemacht**
+- Das Skript tarrt `data/` komplett. Dort hatten sich 7 alte `database.sqlite.*`-Kopien angesammelt (Nov 2025 – Apr 2026): **23 GB statt 2,6 GB**, jeder Backup-Lauf ~6 GB und entsprechend langsam.
+- Vor jedem Update kurz `ls -lh data/database.sqlite*` prüfen. Für ein reines Pre-Update-Backup genügt ohnehin ein gezielter Kopiervorgang (aktive DB **inkl. `-wal`/`-shm`**, `config`, `.env`, `docker-compose.yml`) — bei gestopptem Container konsistent und in Sekunden fertig.
+- Vor dem Löschen alter Kopien das frische Backup verifizieren: `sqlite3 <backup>/database.sqlite "PRAGMA quick_check;"` muss `ok` liefern.
+- **Eine Vorgänger-Kopie behalten**, die älter als die letzte Major ist (hier `database.sqlite.pre-2.30-…`): Schema-Migrationen laufen nicht rückwärts, ein Rollback auf < 2.30 ist ohne sie unmöglich.
