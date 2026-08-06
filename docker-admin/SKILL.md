@@ -1566,3 +1566,47 @@ eingreifen**
   `no such column: "table" - should this be a string literal in single-quotes?`.
 - Lösung: im JS ausschließlich Double-Quotes verwenden (ggf. `\"` escapen) und SQL-Literale
   vermeiden — z. B. `SELECT name FROM sqlite_master` ohne `WHERE type=…` abfragen und in JS filtern.
+
+### 2026-08-05 — Release-Tags statt Hauptzweig, Compose auf fehlende Secrets prüfen
+
+**🔴 Fremde Projekte auf einen Release-Tag festnageln — Hauptzweige sind oft kaputt**
+- OmniRoute `main` ließ sich nicht bauen: `[MDX] invalid frontmatter in docs/security/AGENTROUTER_WAF.md`
+  (fehlender Titel-Header). Kein Einzelfall — von 1311 Doku-Dateien fehlte er bei vielen.
+- Falscher Reflex: hunderte fremde Dateien patchen. Richtig: letzten Release nehmen.
+  ```bash
+  git fetch --tags --depth 1
+  git tag -l | sort -V | tail -5
+  git checkout -q tags/v3.8.49
+  ```
+- Dort existierte die defekte Datei gar nicht → Build lief durch (27 s statt Abbruch nach 580 s).
+- Passt zur Always-On-Regel „keine :latest-Tags": eine feste Version statt eines beweglichen Standes.
+
+**🔴 Compose-Dateien VOR dem Start auf Pflichtvariablen abklopfen**
+```bash
+grep -oE '\$\{[A-Z_]+:\?[^}]*\}' docker-compose.yml | grep -oE '^\$\{[A-Z_]+' | tr -d '${' | sort -u
+```
+- Findet alle `${VAR:?fehler}`-Pflichtvariablen. worldmonitor brauchte `REDIS_PASSWORD` **zusätzlich**
+  zum dokumentierten `REDIS_TOKEN` — sonst bricht `docker compose up` sofort ab.
+
+**🔴 Prüfen, ob Secrets auch an ALLE Dienste durchgereicht werden, die sie brauchen**
+- worldmonitors `ais-relay` verlangte `RELAY_SHARED_SECRET`, das in der Compose-Datei bei KEINEM Dienst
+  stand → Container im Dauer-Neustart (`FATAL: RELAY_SHARED_SECRET is not set`).
+- Das Projekt bot als „Lösung" `I_UNDERSTAND_THIS_DISABLES_AUTH=true` an → hätte alle Routen offen
+  ins Netz gestellt. **Nicht nehmen.** Stattdessen Geheimnis erzeugen und in beiden Diensten ergänzen
+  (Original vorher als `.orig` sichern, danach `docker compose config -q` zur Syntaxprüfung).
+- Merksatz: Ein Crashloop-Container ist ein Hinweis auf eine Lücke in der Compose-Datei, kein Grund,
+  die Sicherheitsprüfung des Programms abzuschalten.
+
+**🟡 Freien Portbereich vor dem Deploy bestimmen (NAS läuft mit 56+ Containern)**
+```bash
+docker ps --format '{{.Ports}}' | grep -oE ':[0-9]+->' | tr -d ':->' | sort -un | awk '$1>=20100 && $1<=20200'
+```
+- Vergebener Block dieser Session: 20130/20131 OmniRoute, 20140 worldmonitor, 20150–20152 openship.
+
+**🟡 Lange Builds im Hintergrund starten und Log gezielt beobachten**
+```bash
+nohup docker compose -f docker-compose.prod.yml up -d --build > /volume1/docker/<projekt>-build.log 2>&1 &
+# Fehler früh erkennen:
+grep -E 'ERROR: process|failed to solve|port is already allocated' <projekt>-build.log
+```
+- Node-Projekte mit nativen Modulen (better-sqlite3 o. ä.) brauchen auf NAS-CPU 10–30 Minuten.
