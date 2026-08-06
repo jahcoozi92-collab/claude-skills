@@ -1616,7 +1616,8 @@ grep -E 'ERROR: process|failed to solve|port is already allocated' <projekt>-bui
 **🔴 `docker compose up -d` zum STARTEN eines gestoppten Containers = ungeplantes Update**
 - Situation: `n8n-n8n-1` war per SIGTERM gestoppt (Exit 0). Zum Wiederanlaufen `cd /volume1/docker/n8n && docker compose up -d` benutzt.
 - Was tatsächlich passierte: Compose zog `n8n:latest` **neu** (`Image … Pulled`), versuchte ein **Recreate**, scheiterte mittendrin (`No such container: <hash>`) und hinterließ einen Leichen-Container im Status `Created` (`<hash>_n8n-n8n-1`).
-- Ergebnis: n8n lief danach auf einer **neueren Version** (2.33.5) als vorher — ohne das in der Update-Prozedur vorgesehene SQLite-Backup.
+- ⚠ **Korrektur 2026-08-07:** Der ursprünglich notierte Schluss „n8n lief danach auf 2.33.5" war **falsch**. Der abgebrochene Recreate ließ den **alten** Container weiterlaufen — die Version blieb 2.32.7, gepullt war lediglich das Image. Belegt beim echten Update am Folgetag: `Recorded version change: 2.32.7 -> 2.33.5`.
+- Merksatz: **ein gescheiterter Recreate pullt, tauscht aber nicht.** Aus einem `Image … Pulled` in der Ausgabe darf man nie auf die laufende Version schließen — immer am Container selbst nachsehen (`docker exec <c> <tool> --version` oder `docker inspect <c> --format '{{.Image}}'` gegen `docker images` halten). Die gute Nachricht dabei: ein Abbruch an dieser Stelle ist folgenlos, der Dienst läuft unverändert weiter.
 - **Richtig, wenn nur gestartet werden soll:**
   ```bash
   docker compose start <service>     # oder: docker start <container>
@@ -1650,3 +1651,51 @@ grep -E 'ERROR: process|failed to solve|port is already allocated' <projekt>-bui
 - `docker update --memory` wirkt nur zur Laufzeit; jedes `compose up`, das den Container neu erzeugt, verwirft es.
 - In Compose `mem_limit` **und** `memswap_limit` zusammen setzen (`memswap_limit` > `mem_limit` lässt bewusst etwas Swap zu; gleich groß = gar kein Swap).
 - Bei einem Fremd-Stack, dessen Datei man nicht ändern will: eigene `docker-compose.override.yml` danebenlegen — Compose lädt sie automatisch, und `git pull` am Upstream bleibt konfliktfrei.
+
+### 2026-08-07 — Namens-Cache überlebt den Leichen-Container: Recreate blockiert dauerhaft
+
+**🔴 `name is already in use by container "<id>"` — und `docker inspect <id>` sagt `no such object`**
+- Folgeschaden des abgebrochenen Recreates vom Vortag (siehe 2026-08-06): der Leichen-Container war aufgeräumt, aber der Docker-Daemon hielt **den Namen, unter dem er beim Rename registriert war**, weiter im Cache. Beim nächsten regulären Update schlug deshalb jedes `docker compose up -d` fehl:
+  ```
+  Conflict. The container name "/cf26b0ca15da_n8n-n8n-1" is already in use
+  by container "ca994ebd98c5…". You have to remove (or rename) that container…
+  ```
+- **Erkennungsmerkmal**: die genannte Container-ID existiert gar nicht mehr —
+  ```bash
+  docker inspect <die-genannte-id>          # -> error: no such object
+  docker ps -a --filter "name=<service>"    # listet den Konflikt-Namen NICHT
+  ```
+  Ein `docker ps -a` allein führt also in die Irre: dort steht nur der reguläre Container. Das ist dieselbe Klasse von Daemon-Cache-Fehler wie die bekannten Port-Belegungen durch verwaiste `docker-proxy`-Prozesse (siehe Recurring Issues in `/volume1/docker/CLAUDE.md`).
+- **Warum es überhaupt auftritt**: bei jedem Recreate benennt Compose den alten Container zu `<alte-id>_<name>` um. Bleibt dieser Alias-Name aus einem früheren Abbruch im Cache, kollidiert der nächste Recreate **so lange, wie der alte Container dieselbe ID behält** — das Problem verschwindet nicht von selbst.
+- **Lösung: den Rename gar nicht erst nötig machen** — alten Container vorher entfernen statt Compose umbenennen zu lassen:
+  ```bash
+  docker compose stop -t 120 <service>
+  docker compose rm -f <service>
+  docker compose up -d <service>
+  ```
+- **Vorher absichern, dass das verlustfrei ist** — nur bei reinen Bind-Mounts (bzw. Named Volumes, die der Service behält):
+  ```bash
+  docker inspect <container> --format '{{range .Mounts}}{{.Type}} {{.Source}} -> {{.Destination}}{{"\n"}}{{end}}'
+  ```
+  Alles `bind` → der Container ist zustandslos, `rm` kostet nichts. Steht dort `volume`, erst prüfen, ob das Volume am Service hängt.
+
+**🔴 Laufzeit-Limits nach JEDEM Recreate neu setzen — auch nach einem geplanten Update**
+- Die bekannte Regel (`docker update` wirkt nur zur Laufzeit) trifft hier zweimal hintereinander zu: einmal nach dem Versions-Update, und noch einmal nach dem Neustart für die Config-Änderung. Beide Male stand der Container ohne Limit da.
+- Vor dem Recreate den Ist-Zustand sichern, danach zurückschreiben:
+  ```bash
+  docker inspect <c> --format 'Memory={{.HostConfig.Memory}} MemorySwap={{.HostConfig.MemorySwap}} Restart={{.HostConfig.RestartPolicy.Name}}'
+  # … recreate …
+  docker update --memory 3g --memory-swap 4g <c>
+  ```
+- Dauerhaft löst das nur `mem_limit` + `memswap_limit` in der Compose-Datei (siehe Lektion 2026-08-06). Solange das nicht überall gepflegt ist, gehört der `docker update`-Schritt fest in jede Update-Prozedur.
+
+**🟡 Auf `Started` folgt nicht `bereit` — auf die Health-Bedingung warten, nicht auf eine Pauschal-Wartezeit**
+- Nach `up -d` meldet Compose sofort `Started`; n8n brauchte danach noch für DB-Migrationen. Feste `sleep`-Werte sind entweder zu kurz (falsches Ergebnis) oder verschenken Zeit.
+  ```bash
+  until curl -sf -o /dev/null http://192.168.22.90:5678/healthz; do sleep 3; done
+  ```
+- Anschließend die Logs gezielt auf `error|warn|migration|deprecat` filtern, statt sie nur zu überfliegen — die Deprecation-Hinweise stehen zwischen den Migrationszeilen und gehen sonst unter.
+
+**🟡 Aufräum-Löschungen einzeln und mit Namen ausführen, nicht als Schleife**
+- Ein `for f in …; do rm -f "$f"; done` über 7 Dateien wurde vom Berechtigungs-Guard abgelehnt; dieselben Löschungen als explizite `rm`-Aufrufe mit ausgeschriebenen Pfaden liefen durch.
+- Das ist auch sachlich die bessere Form: jeder Pfad steht sichtbar im Befehl, und ein Tippfehler trifft nur eine Datei statt einer ganzen Glob-Menge. Vorher immer `ls -lh` mit Größe und Datum zeigen und die Kandidatenliste benennen.
