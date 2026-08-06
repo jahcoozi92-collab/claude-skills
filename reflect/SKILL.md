@@ -810,3 +810,35 @@ SET LOCAL hnsw.ef_search = 100;
 - `core.autocrlf=true` — ein Shell-Skript aus `ontology-pending/` muss auf der Linux-VM laufen.
 - Prüfung per `Out-String` über `git cat-file` ist WERTLOS: PowerShell fügt beim Rejoin selbst CRLF ein (meldete 53 CR, obwohl der Blob sauber war).
 - Verlässlich: `git ls-files --eol <datei>` → muss `i/lf w/lf` zeigen (i = Index/Repository, w = Working Copy).
+
+### 2026-08-06 — Verifikation muss die sichtbare Wirkung treffen, nicht nur den Mechanismus
+
+**🔴 „Technisch lueckenlos geprueft" heisst nicht „geprueft, was der User sieht"**
+- Fall: Kartenversion v4 -> v5 deployt. Geprueft wurde: Datei erzeugt, Bezeichner im neuen Code existieren,
+  YAML gueltig, HA neu gestartet, Datei per `curl` ausgeliefert (HTTP 200, exakte Byte-Groesse,
+  Versionsmarker im Inhalt). Danach als „✅ v5 ist live" gemeldet.
+- User: „bislang ist es immernoch die alte karte". Berechtigt — die Konfiguration nutzte den neuen
+  Codepfad gar nicht, die Darstellung KONNTE sich also nicht aendern. Jede Einzelpruefung war korrekt,
+  die Kette endete nur eine Stufe zu frueh.
+- **Regel:** Die LETZTE Pruefung eines Deployments muss das vom Nutzer wahrnehmbare Ergebnis treffen.
+  Fuer jede Meldung „ist live/fertig" vorher beantworten: *Welche konkrete Beobachtung des Users waere
+  anders als vorher — und habe ich genau die geprueft?* Wenn die Antwort „das Artefakt ist geladen"
+  lautet, ist die Kette unvollstaendig.
+- Formulierungs-Konsequenz: Wenn nur der Mechanismus verifiziert ist, das auch so sagen — „ausgeliefert
+  und geladen, sichtbare Wirkung noch nicht geprueft" statt „live". Ehrlichkeit ueber den Pruefstand
+  kostet einen Halbsatz und spart eine Fehlmeldung.
+
+**🟡 Pruef- und Patch-Skripte in eine Datei, nicht in verschachtelte SSH-Einzeiler**
+- Zwei Selbstfehler derselben Ursache in einer Session:
+  - `ssh host "python3 -c \"… t[\"level\"] …\""` → `SyntaxError: f-string: unmatched '['`.
+    Drei Quoting-Ebenen (Shell → SSH → Python) sind nicht zuverlaessig beherrschbar.
+  - Ein per Write-Tool erzeugtes Python-Skript mit byte-genauen Suchblöcken wurde vom PostToolUse-
+    Formatter angefasst. Hier gutgegangen, weil ich die Marker danach gegengeprueft habe.
+- **Muster:** Skript lokal schreiben → `scp` → `ssh 'python3 /tmp/x.py'` → aufraeumen. Ein Quoting-Level.
+  Bei byte-genauem Inhalt nach dem Schreiben die kritischen Marker verifizieren
+  (`for m in [...]: print(m in s)`) oder per `cat > … << 'EOF'` am Formatter vorbei schreiben.
+
+**🔵 Zweiter Reflect-Durchlauf in derselben Session: Scope explizit abgrenzen**
+- Diese Session hatte zwei `/reflect`-Aufrufe. Der zweite darf nicht die bereits committeten Lektionen
+  des ersten wiederholen — Analysefenster ist alles SEIT dem letzten Reflect-Commit.
+- Schnellpruefung: `git log --oneline -5` im Skills-Repo zeigt, was in dieser Session schon geschrieben wurde.
