@@ -253,19 +253,18 @@ journalctl --user -u openclaw-gateway.service -f
 openclaw doctor
 ```
 
-### Gateway-Architektur (Stand 2026-04-09)
+### Gateway-Architektur (Stand 2026-08-06)
 
 Ein Gateway auf ugreen-gateway (192.168.22.206), erreichbar ueber Cloudflare Tunnel:
 
 | Komponente | Host | Details |
 |------------|------|---------|
-| **Gateway** | 192.168.22.206:18789 | npm v2026.5.12, systemd user-service (Auto-Update täglich 04:00) |
-| **Cloudflare Tunnel** | NAS (192.168.22.90) | Remote-managed, Container `cloudflared` |
-| **SSH-Forward** | NAS → ugreen | systemd `ssh-openclaw-forward.service` (18790→18789) |
+| **Gateway** | 192.168.22.206:18789 | npm-Paket, systemd user-service |
+| **Cloudflare Tunnel** | **VM selbst** (192.168.22.206) | `cloudflared.service` (system-systemd, root), `tunnel run --token …` |
 
-**Routing:** `openclaw.forensikzentrum.com` → Cloudflare (TLS) → NAS Tunnel-Connector → SSH-Forward (:18790) → ugreen Gateway (:18789)
+**Routing:** `openclaw.forensikzentrum.com` → Cloudflare (TLS) → cloudflared auf der VM → `http://127.0.0.1:18789` (direkt, kein NAS-Hop)
 
-**Warum SSH-Forward?** Proxmox VM-Firewall blockiert Port 18789 von der NAS. SSH (Port 22) funktioniert. Der Forward laeuft als systemd-Service auf der NAS.
+**Historie:** Bis 2026-07-18 lief der Tunnel-Connector auf dem NAS mit SSH-Forward (:18790→:18789). Dieser Hop ist ELIMINIERT — `ssh-openclaw-forward.service` auf dem NAS ist tot und Port 18790 gehoert jetzt der HA-Bridge (`~/bin/openclaw-ha-bridge.py`). Alte Doku, die den NAS-Hop beschreibt, ist veraltet.
 
 **Cloudflare Tunnel ist REMOTE-MANAGED:**
 - Lokale `config.yml` auf NAS wird IGNORIERT
@@ -2834,3 +2833,33 @@ Betrifft das **Claude-Code-CLI-Tool** auf der Clawbot VM — NICHT das OpenClaw-
 - Hooks alle schnell: UserPromptSubmit (activator.sh) Ø23ms, SessionStart Ø114ms; Bash-Hooks (codex-review-gate, error-detector) leichtgewichtig.
 - Plugin-Cleanup: `cli-anything` + `frontend-design` (je 0 Nutzungen) deaktiviert, `codex@openai-codex` (170) behalten.
 - `~/.claude/skills` ist Symlink → `~/claude-skills` (kein Duplikat). claude.ai-Connectors (Gmail, Supabase, …) sind deferred (~0 Kontext) und nur via claude.ai verwaltbar, nicht lokal.
+
+### 2026-08-06 — Port-Reservierung 18789–18899, Breaker schliesst Work-Admission, Provider-Key-Kette, Embedded-CLI-Falle
+
+**🔴 OpenClaw reserviert den Portbereich 18789–18899 — eigene Dienste muessen da raus**
+- Interne Reservierung (dist-Doku in `config-mutations-*.js`): 18789 Gateway, 18790 Bridge, 18791 Browser-Control, 18792–18799 one-off services (Canvas 18793), 18800–18899 Browser-CDP-Profile.
+- Seit v2026.7.2-beta bindet das Gateway zusaetzlich die **MCP-App-Sandbox auf Gateway-Port+1** (=18790). Kollision mit der HA-Bridge (`~/bin/openclaw-ha-bridge.py` auf 18790) → `EADDRINUSE` → Crash-Loop (18 unclean boots), Domain 502 obwohl Tunnel gesund.
+- **Fix:** `mcp.apps.sandboxPort: 18901` in `openclaw.json` (Aufloesung: `resolveSandboxHostPort()`, configuredPort ?? gatewayPort+1). HA-Bridge NICHT verschieben ohne HA-Anpassung — Home Assistant referenziert 18790.
+- Diagnose-Reihenfolge bei 502: IMMER erst `journalctl --user -u openclaw-gateway -n 80` (crasht das Gateway?), dann erst Tunnel/Ingress.
+
+**🔴 Crash-Loop-Breaker schliesst die Work-Admission — channels.start hebt das NICHT auf**
+- Solange der Breaker getript ist ("restart-loop breaker tripped: N unclean boots within 300000ms"), gilt: Channel-Autostart unterdrueckt UND Task-Dispatch verweigert (`GatewayDrainingError: Gateway is draining; new tasks are not accepted`).
+- Manueller `openclaw gateway call channels.start --params '{"channel":"telegram"}'` verbindet den Channel (connected!), aber eingehende Nachrichten scheitern weiter am Dispatch — sie bleiben im Ingress-Spool (`~/.openclaw/telegram/ingress-spool-default/`) und werden mit Backoff retried, nichts geht verloren.
+- **Aufloesung:** Warten bis der letzte unclean boot >5 min zurueckliegt, dann `systemctl --user restart openclaw-gateway.service`. Erfolgskriterium im Log: `restart-loop breaker recovered; channel auto-start restored`. Vorher gestartete Prozesse bleiben im Draining-Zustand haengen.
+
+**🟡 Provider-Key-Aufloesungskette: Klartext-apiKey in openclaw.json VERDECKT den .env-Auto-Fill**
+- Control-UI `config.patch` schreibt Provider-Keys als Klartext in `models.providers.<p>.apiKey` — das schlaegt den Auto-Fill aus `~/.openclaw/.env`. Ein kaputter UI-Key (Kopierfehler) maskiert so einen gueltigen .env-Key.
+- Diagnose bei Provider-Auth-Fehlern: (1) Config-Key vs. .env-Key diffen, (2) BEIDE Keys direkt per curl gegen die Provider-API testen (`{"type":"authentication_error","message":"API key is invalid"}` = Key kaputt; `"credit balance is too low"` = Key ok, Guthaben leer — zwei voellig verschiedene Probleme mit demselben Symptom im Gateway-Log).
+- Fix: invaliden Config-Key loeschen → Auto-Fill greift wieder. Neue Keys IMMER in `.env` eintragen, nie in die JSON.
+
+**🟡 `openclaw agent --message` ist KEIN Gateway-Healthcheck**
+- Der CLI-Call laeuft embedded in einem eigenen Prozess (laedt eigene Plugins, sichtbar an `[plugins] … plugin registered` in der CLI-Ausgabe). Ein erfolgreicher Agent-Run beweist NICHTS ueber den Admission-/Draining-Zustand des Gateway-Prozesses.
+- Echter Test: Telegram-Dispatch im Journal beobachten oder `openclaw gateway call` RPCs.
+
+**🟡 memory.search-Embeddings auf NAS-Ollama (kein OpenAI-Guthaben noetig)**
+- `memory.search.provider: "ollama"`, `model: "bge-m3"`, `remote.baseUrl: "http://192.168.22.90:11437"` — konsistent mit dem memory-lancedb-Plugin. Ollamas OpenAI-kompatible API laeuft auf **11437** (nicht 11436!).
+- Provider-Wechsel aendert die Vektor-Dimension (openai 1536 → bge-m3 1024) → voller Reindex, erste Suche danach langsam. Aenderung erfordert Gateway-Restart (kein Hot-Reload).
+
+**🔵 greps ueber ~/.local/lib/node_modules/openclaw/dist drosseln**
+- Ein ugrep mit backtracking-lastigem Pattern ueber die Bundles frass 3,6 GB RSS → Event-Loop-Starvation des Gateways (liveness heartbeat delayed 139s), Load 5,5 auf der 6-GB-VM. Vorher `wc -c` auf die Zieldatei, enge Patterns, `head` begrenzen, keine `.{0,120}`-Wildcards ueber Multi-MB-Bundles.
+- Release-Kanal pruefen: `npm view openclaw dist-tags --json` (latest vs. beta vs. extended-stable) gegen `openclaw --version`.
