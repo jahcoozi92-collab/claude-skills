@@ -46,8 +46,40 @@ ONT relate --from p_recent_lnk_aufloesung --rel relates_to --to sw_outlook_olk_c
 ONT relate --from t_herbstzauber_flyer_2026 --rel avoids --to ANTI_unc_an_senduserfile
 ONT relate --from t_herbstzauber_flyer_2026 --rel avoids --to ANTI_zeitstempel_ueberschreiben
 
+# ==========================================================================
+# Nachtrag aus dem zweiten Reflect am 2026-08-06 (Ziel: reflect-Workflow).
+# VM war weiterhin offline (last seen 8d), daher in dieselbe Warteschlangen-
+# Datei angehaengt statt eine zweite anzulegen.
+# ==========================================================================
+
+# ---------- Software ----------
+ONT create -t Software --id sw_tailscale_ws44 -p '{"name":"Tailscale auf WS44","desc":"Einziger Weg von WS44 (Arbeitsnetz 192.168.2.0/24) ins Heimlabor (192.168.22.0/24). Knoten ws44 = 100.115.38.98. Status je Knoten via tailscale status: - bedeutet online, sonst offline last seen."}'
+
+# ---------- Patterns ----------
+ONT create -t Pattern --id p_ontology_pending_queue -p '{"name":"ontology-pending Warteschlange","desc":"Wenn die Clawbot VM beim Reflect nicht erreichbar ist: Ontology-Update als lauffaehiges Skript nach ontology-pending/<maschine>-<datum>.sh im Skills-Repo committen statt lokal zu schreiben. Jede Maschine mit Route fuehrt es spaeter per stdin-Pipe aus. Nach Erfolg Datei loeschen und Loeschung committen."}'
+ONT create -t Pattern --id p_erreichbarkeit_vor_ssh -p '{"name":"Erreichbarkeit vor SSH pruefen","desc":"Reihenfolge vor jedem Cross-Netz-SSH: Subnetz vergleichen, dann tailscale status lesen, erst dann Test-NetConnection bzw. SSH. Spart fehlschlagende Verbindungsversuche und macht die Ursache sofort sichtbar."}'
+ONT create -t Pattern --id p_git_dash_c_auf_windows -p '{"name":"git -C statt cd auf Windows","desc":"Das PowerShell-Tool setzt die CWD nach jedem Aufruf zurueck (Shell cwd was reset to). Git-Befehle daher immer mit git -C <pfad> absetzen."}'
+ONT create -t Pattern --id p_eol_check_vor_linux_lauf -p '{"name":"Zeilenenden-Check vor Linux-Lauf","desc":"Von Windows committete .sh-Dateien mit git ls-files --eol pruefen, muss i/lf w/lf zeigen. Pruefung ueber git cat-file mit Out-String ist wertlos, weil PowerShell beim Rejoin selbst CRLF einfuegt."}'
+ONT create -t Pattern --id ANTI_lokaler_ontology_fork -p '{"name":"ANTI: lokaler Ontology-Fork","desc":"Bei unerreichbarer VM NICHT ersatzweise in einen lokalen Store schreiben. Lokale Stores sind leer, der kanonische Graph liegt nur auf der Clawbot VM. Lokales Schreiben erzeugt einen divergenten Fork."}'
+
+# ---------- Tasks ----------
+ONT create -t Task --id t_reflect_ws44_2026_08 -p '{"name":"Reflect-Workflow von WS44 haerten","desc":"Zweiter Reflect-Durchlauf am 2026-08-06: Step 5 um Erreichbarkeitspruefung und Warteschlangen-Fallback ergaenzt, Instanz-Skill-Name windows-admin auf windows-workstation korrigiert (3 Stellen), Rebase-Konflikt-Regel praezisiert."}'
+
+# ---------- Relationen (Nachtrag) ----------
+ONT relate --from t_reflect_ws44_2026_08 --rel uses --to p_ontology_pending_queue
+ONT relate --from t_reflect_ws44_2026_08 --rel uses --to p_erreichbarkeit_vor_ssh
+ONT relate --from t_reflect_ws44_2026_08 --rel avoids --to ANTI_lokaler_ontology_fork
+ONT relate --from p_erreichbarkeit_vor_ssh --rel uses --to sw_tailscale_ws44
+ONT relate --from p_ontology_pending_queue --rel relates_to --to p_eol_check_vor_linux_lauf
+ONT relate --from p_ontology_pending_queue --rel relates_to --to ANTI_lokaler_ontology_fork
+ONT relate --from t_reflect_ws44_2026_08 --rel uses --to p_git_dash_c_auf_windows
+
 # ---------- Verifikation (dangling edges sichtbar machen) ----------
 echo "--- related: t_herbstzauber_flyer_2026 ---"
 ONT related --id t_herbstzauber_flyer_2026
 echo "--- related: sw_auf_din_format ---"
 ONT related --id sw_auf_din_format
+echo "--- related: t_reflect_ws44_2026_08 ---"
+ONT related --id t_reflect_ws44_2026_08
+echo "--- related: p_ontology_pending_queue ---"
+ONT related --id p_ontology_pending_queue

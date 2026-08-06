@@ -375,6 +375,25 @@ $i.Dispose()   # Dispose nicht vergessen, sonst bleibt die Datei gesperrt
 - Ehrlich bleiben: 1055 px Breite sind real ~128 dpi auf A4. Das Hochrechnen auf 300 dpi erzeugt keine Schärfe, die nicht da war — auf A5 (~181 dpi) unkritisch, auf A4 aus der Nähe leicht weich.
 - Für Druckereien fehlt der Anschnitt: 3 mm umlaufend → A4 = 216 × 303 mm. Nur auf Nachfrage anlegen.
 
+**🟡 Git im Skills-Repo: `git -C <pfad>` statt `cd`**
+- Nach `cd "C:\Users\D.Göbel\.claude\skills"; git status` kam `Shell cwd was reset to …` — die CWD überlebt den PowerShell-Aufruf nicht.
+- Konsequent `git -C "C:\Users\D.Göbel\.claude\skills" <befehl>` verwenden. Gilt für add/commit/fetch/pull/push gleichermaßen.
+- Mehrzeilige Commit-Messages per single-quoted Here-String (`@'` … `'@`), schliessendes `'@` MUSS in Spalte 0 stehen.
+
+**🟡 Zeilenenden prüfen, bevor eine `.sh` von hier auf Linux läuft**
+- `core.autocrlf=true` auf WS44 → Working Copy bekommt CRLF, das Repository speichert LF. Für Shell-Skripte, die auf NAS/VM laufen sollen, muss das verifiziert werden (sonst `\r`-Fehler).
+- **Wertlos:** `git cat-file -p HEAD:datei | Out-String` und dann CR zählen — PowerShell fügt beim Rejoin selbst CRLF ein (meldete 53 CR bei sauberem Blob).
+- **Richtig:** `git -C <repo> ls-files --eol <datei>` → `i/lf w/lf` (i = Index/Repository, w = Working Copy).
+
+**🟡 Erreichbarkeit ins Heimlabor: nur über Tailscale**
+- WS44 hängt im Arbeitsnetz `192.168.2.0/24` (`192.168.2.38`). Clawbot VM, NAS DXP4800 und Yoga7 liegen im `192.168.22.0/24` — **keine direkte Route**, `Test-NetConnection 192.168.22.206 -Port 22` schlägt fehl.
+- Einziger Weg ist Tailscale (`100.115.38.98` = ws44). Vor jedem Cross-Netz-Versuch den Knotenstatus lesen:
+  ```powershell
+  & "C:\Program Files\Tailscale\tailscale.exe" status
+  ```
+  `-` = online, sonst `offline, last seen …`. Knoten: `ws44`, `yoga7-1`, `ugreen`, `moltbot-vm`, `lenovo-t450s`, `samsung-sm-s938b`.
+- **Offene Frage (nicht verifiziert):** Dieser Skill führt das NAS unter `192.168.2.215`, der `reflect`-Skill ein „NAS DXP4800" unter `192.168.22.90` — beide mit derselben Modellbezeichnung. Ob das ein Gerät mit zwei Adressen oder zwei Geräte sind, ist ungeklärt. Verifiziert ist nur: `192.168.2.215` antwortet auf SSH (Port 22 offen, ICMP geblockt → `Test-NetConnection` meldet `Ping False, SSH22 True`), `192.168.22.90` ist von WS44 nicht erreichbar. Vor Aussagen über „das NAS" klären, welches gemeint ist.
+
 **🔵 KI-generierte Flyer haben keine Quelldatei**
 - Text ist ins Foto eingebrannt; es gibt kein Canva/PSD/InDesign-Original. Inhaltliche Änderungen sind Retusche und nicht sauber machbar.
 - Richtiger Beitrag stattdessen: verdichtete **Textfassung** + fertiger **Generator-Prompt** (Stil, Farben, Bildelemente, exakte Texte), Diana erzeugt neu, ich mache die Druckaufbereitung.
