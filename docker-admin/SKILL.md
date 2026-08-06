@@ -1610,3 +1610,43 @@ nohup docker compose -f docker-compose.prod.yml up -d --build > /volume1/docker/
 grep -E 'ERROR: process|failed to solve|port is already allocated' <projekt>-build.log
 ```
 - Node-Projekte mit nativen Modulen (better-sqlite3 o. ä.) brauchen auf NAS-CPU 10–30 Minuten.
+
+### 2026-08-06 — `compose up -d` als Start-Befehl ist eine Update-Falle; Socket ohne CLI
+
+**🔴 `docker compose up -d` zum STARTEN eines gestoppten Containers = ungeplantes Update**
+- Situation: `n8n-n8n-1` war per SIGTERM gestoppt (Exit 0). Zum Wiederanlaufen `cd /volume1/docker/n8n && docker compose up -d` benutzt.
+- Was tatsächlich passierte: Compose zog `n8n:latest` **neu** (`Image … Pulled`), versuchte ein **Recreate**, scheiterte mittendrin (`No such container: <hash>`) und hinterließ einen Leichen-Container im Status `Created` (`<hash>_n8n-n8n-1`).
+- Ergebnis: n8n lief danach auf einer **neueren Version** (2.33.5) als vorher — ohne das in der Update-Prozedur vorgesehene SQLite-Backup.
+- **Richtig, wenn nur gestartet werden soll:**
+  ```bash
+  docker compose start <service>     # oder: docker start <container>
+  ```
+  `up -d` ist der Befehl für „Soll-Zustand herstellen" (inkl. Pull/Recreate bei `:latest`), NICHT für „lauf wieder an".
+- Aufräumen nach einem abgebrochenen Recreate: `docker ps -a` zeigt den Leichen-Container mit Hash-Präfix → `docker rm <hash>_<name>`.
+- Danach IMMER prüfen, ob alles wieder da ist: Container `Up`, Healthcheck grün, und bei Diensten mit eigener Objektliste (n8n-Workflows, Cron-Jobs) die **Anzahl aktiver Objekte** gegenprüfen — ein Recreate kann Registrierungen verlieren.
+
+**🔴 Docker-Socket allein macht keine Docker-out-of-Docker-Steuerung**
+- Ein gemounteter `/var/run/docker.sock` reicht nur für Programme, die die **HTTP-API** sprechen (dockerode, docker-py).
+- Werkzeuge, die intern `docker …` als **Prozess** aufrufen (viele PaaS-/Deploy-Tools bei Compose-Deployments), scheitern trotz Socket sofort mit:
+  ```
+  /bin/sh: 1: docker: not found
+  ```
+- Fix ohne eigenes Image: Host-Binaries read-only hineinmounten —
+  ```yaml
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock
+    - /usr/bin/docker:/usr/bin/docker:ro
+    - /usr/libexec/docker/cli-plugins/docker-compose:/usr/local/lib/docker/cli-plugins/docker-compose:ro
+  ```
+  Beides sind Go-Binaries und laufen in fremden Images unverändert (verifiziert: CLI 29.4.3 + Compose 5.1.3 in einem Bun/Debian-Image).
+- **Vorher in einem Wegwerf-Container testen**, nie direkt am laufenden Stack:
+  ```bash
+  docker run --rm --entrypoint sh -v /var/run/docker.sock:/var/run/docker.sock \
+    -v /usr/bin/docker:/usr/bin/docker:ro <image> -c 'docker version && docker compose version'
+  ```
+- Nach einem Docker-Update auf dem Host die Mount-Pfade prüfen — verschieben sie sich, ist der Fehler wieder „docker: not found".
+
+**🟡 Speicherlimits gehören in die Compose-Datei, nicht nur in `docker update`**
+- `docker update --memory` wirkt nur zur Laufzeit; jedes `compose up`, das den Container neu erzeugt, verwirft es.
+- In Compose `mem_limit` **und** `memswap_limit` zusammen setzen (`memswap_limit` > `mem_limit` lässt bewusst etwas Swap zu; gleich groß = gar kein Swap).
+- Bei einem Fremd-Stack, dessen Datei man nicht ändern will: eigene `docker-compose.override.yml` danebenlegen — Compose lädt sie automatisch, und `git pull` am Upstream bleibt konfliktfrei.
