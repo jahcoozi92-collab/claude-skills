@@ -842,3 +842,61 @@ SET LOCAL hnsw.ef_search = 100;
 - Diese Session hatte zwei `/reflect`-Aufrufe. Der zweite darf nicht die bereits committeten Lektionen
   des ersten wiederholen — Analysefenster ist alles SEIT dem letzten Reflect-Commit.
 - Schnellpruefung: `git log --oneline -5` im Skills-Repo zeigt, was in dieser Session schon geschrieben wurde.
+
+### 2026-08-07 — Neue Skills anlegen, `grep -a` nach Konfliktauflösung, Mehrfach-Konflikt
+
+**🔴 Der Workflow beschrieb nur das ÄNDERN bestehender Skills — nicht das Anlegen neuer**
+Wenn eine Session Wissen erzeugt, das in keinen vorhandenen Skill passt (hier: OpenShip-Betrieb),
+gehört ein **neuer** Skill angelegt. Format exakt wie die bestehenden:
+
+```
+~/.claude/skills/<name>/SKILL.md
+```
+
+```markdown
+# <Name> Skill – <Kurzbeschreibung>
+
+| name   | description                                    |
+| ------ | ---------------------------------------------- |
+| <name> | <Wann greift der Skill, was deckt er ab>       |
+
+## Was ist dieser Skill?
+
+**Für 12-Jährige erklärt:** …
+```
+
+- **KEIN YAML-Frontmatter.** Dianas Skills nutzen Titel + Markdown-Tabelle. Fremde Skills aus dem
+  Netz (z. B. `Rishflips/OpenShip-Hermes-Agent`) beginnen mit `---\nname: …\n---` — das ist ein
+  **anderes** Format (Hermes/Claude-Agent-Konvention). Nicht davon täuschen lassen.
+- Der Skill erscheint **sofort** in der Skill-Liste, ohne Neustart.
+- Danach wie gewohnt: `git add <name>/SKILL.md` → Commit → Rebase → Push.
+- Struktur, die sich bewährt hat: Installation/Umgebung → NIEMALS-Regeln (je eine pro realem
+  Fehlschlag) → Rezepte mit fertigen Befehlen → Betrieb → „Was hier NICHT geht" → Diagnose.
+
+**🔴 Verifikation nach Konfliktauflösung braucht `grep -a` — sonst stille Null-Treffer**
+- Nach dem Rebase prüfte ich, ob fremde und eigene Lektionen erhalten sind. Bei
+  `n8n-workflow/SKILL.md` lieferte `grep -c "<marker>"` **gar keine Ausgabe** — nicht einmal `0`,
+  Exit-Code 1. Auch für Zeilen, die ich zwei Minuten vorher selbst geschrieben hatte.
+- Ursache: Die Datei enthält ein Binärzeichen (sie dokumentiert u. a. NUL-Byte-Themen). GNU-grep
+  stuft sie als binär ein und schweigt.
+- Das sah nach Datenverlust durch die Konfliktauflösung aus. Mit `grep -a` (`--text`) war alles da.
+- **Regel:** Bei der Verifikation von SKILL.md-Inhalten **immer `grep -a`** verwenden. Wenn `grep -c`
+  gar nichts ausgibt (statt `0`), ist das das Binärdatei-Signal — kein fehlender Inhalt.
+- Die Lektion stand bereits seit Juni im `n8n-workflow`-Skill („Chat-HTML braucht `grep -a`") —
+  sie gilt genauso für die Skill-Dateien selbst.
+
+**🟡 Mehrfach-Konflikt: generische Schleife statt Datei-für-Datei**
+- Die Präzisierung vom 2026-08-06 („Konflikt nur, wenn zwei Instanzen dieselbe Datei anfassen")
+  stimmt — hier kollidierten aber **alle drei** Dateien, weil Clawbot und Yoga7 zufällig genau
+  dieselben Skills angefasst hatten. Drei einzelne Auflösungen sind fehleranfällig.
+- Muster: Auflösefunktion einmal definieren, dann über `git diff --name-only --diff-filter=U`
+  iterieren, bis nichts mehr offen ist:
+  ```bash
+  for i in 1 2 3 4; do
+    C=$(git diff --name-only --diff-filter=U); [ -z "$C" ] && break
+    for f in $C; do resolve "$f"; git add "$f"; done
+    GIT_EDITOR=true git rebase --continue >/dev/null 2>&1 || true
+  done
+  ```
+- Die `resolve`-Funktion selbst muss **mehrere Konfliktblöcke pro Datei** verarbeiten
+  (`while any(l.startswith("<<<<<<<"))`), nicht nur den ersten.
