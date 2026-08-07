@@ -2233,3 +2233,32 @@ docker inspect <container> --format '{{range .Mounts}}{{.Type}} {{.Source}} -> {
 **🟡 Von OpenShip deployte Container: Aufräumen scheitert ohne Edge**
 - Ein Projekt mit Custom-Domain lässt sich nicht normal löschen (`PROJECT_TEARDOWN_FAILED`, weil OpenResty fehlt). Abhilfe: `DELETE /api/projects/<id>?forceOrphan=true`.
 - Danach **selbst nachsehen**: der Container verschwindet, das Docker-Netzwerk `openship-<slug>` bleibt liegen und muss mit `docker network rm` weg. Die Antwort listet unter `orphaned` alles Übriggebliebene.
+
+### 2026-08-07 — Kein `gh` auf dem NAS; GitHub-Recherche per REST-API
+
+**🔴 `gh` ist auf dem NAS NICHT installiert — und eine fremde Statusmeldung führte mich in die Irre**
+- OpenShips GitHub-Status meldete `ghCli: { available: true, login: "jahcoozi92-collab" }`.
+  Ich las das als Host-Zustand und rief `gh api search/repositories` auf → `gh: command not found`.
+- **Die Meldung bezog sich auf den OpenShip-Container**, nicht auf die NAS. Generell: Statusangaben
+  eines Dienstes beschreiben dessen **eigene** Umgebung, nicht den Host. Vor der Nutzung eines
+  Werkzeugs immer `command -v <tool>` prüfen, statt einer fremden Meldung zu glauben.
+
+**🟡 GitHub-Recherche läuft hier per `curl` gegen die REST-API**
+- Ohne Token funktioniert die Suche (Rate-Limit ca. 10 Anfragen/Minute) — für Recherchen ausreichend.
+- `>` und Leerzeichen müssen kodiert werden, deshalb `-sG` mit `--data-urlencode`:
+  ```bash
+  curl -sG "https://api.github.com/search/repositories" \
+    --data-urlencode "q=topic:self-hosted stars:>4000" \
+    -d "sort=stars" -d "order=desc" -d "per_page=40" \
+    -H "Accept: application/vnd.github+json" --max-time 30
+  ```
+- **Immer das Lizenzfeld mitnehmen** (`.license.spdx_id`) — bei allem, was kommerziell genutzt
+  werden könnte, ist AGPL vs. MIT der entscheidende Unterschied.
+- Zwischen mehreren Suchen `sleep 3`, sonst greift das Rate-Limit und die Antwort enthält kein
+  `items` mehr (der JSON-Parser bricht dann mit einer irreführenden Meldung ab — vorher auf
+  `'items' not in d` prüfen).
+- Einzelne Repos gezielt: `curl -s https://api.github.com/repos/<owner>/<repo>` — schneller und
+  präziser als die Suche. Bei umbenannten Repos kommt `Moved Permanently`, dann `-L` nutzen.
+- Reifegrad eines Projekts einschätzen: `created_at`, `pushed_at` und vor allem
+  `/repos/<r>/contributors` — 44 Mitwirkende klingen gut, aber wenn einer 382 Commits hat und der
+  zweite 43, hängt das Projekt an einer Person.
