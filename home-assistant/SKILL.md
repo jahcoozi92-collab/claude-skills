@@ -2683,3 +2683,81 @@ Memory `reference_nas_ssh_zugang` / `reference_ha_mcp_server`**
   5. Auslieferung pruefen: `curl -o /dev/null -w '%{http_code} %{size_download}'`
 - Versionierte Dateinamen sind Absicht (Browser cachen `/local/` hartnaeckig) — deshalb NIE die alte
   Datei ueberschreiben, sondern eine neue danebenlegen und die alte als Rueckfallebene behalten.
+
+### 2026-08-08 — Lamellen „tot": hon-Setter schrieb den HA-State nie; int-Attribut; Verstellen schaltet EIN
+
+User-Report: „Lamellen lassen sich im Dashboard Klima Haier nicht mehr in einzelne Positionen bewegen."
+Diesmal war es WEDER Eco-Pilot (2026-07-10) NOCH die PositionSequence (2026-06-21) NOCH Mapping-Drift
+(2026-06-20) — sondern die fehlende Rückmeldung an HA.
+
+**🔴 hon-Setter schreiben den HA-State nicht — die Auswahl springt zurück, obwohl der Befehl ankam**
+- `async_set_wind_direction_{vertical,horizontal}` setzte nur `self._wind_direction_*` und sendete das
+  Command. **Kein `async_write_ha_state()`.** Der neue Wert erschien erst, wenn der Coordinator die
+  hOn-Cloud erneut pollte — **41 s gemessen**.
+- Die Template-Selects `select.lamelle_*` (Package `haier_lamellen.yaml`) leiten ihren State aus dem
+  climate-Attribut ab. Sie **spiegeln nur und können nichts festhalten** — im Dashboard sprang die
+  Auswahl deshalb sofort auf den alten Wert zurück und die Positionswahl wirkte tot.
+- **Fix:** beide Setter rufen am Ende `start_watcher(timedelta(seconds=45))`. Das schreibt den State
+  sofort **und** sperrt `_handle_coordinator_update` — ohne die Sperre schreibt der nächste Poll den
+  alten Wert zurück und das Zurückspringen bleibt. `async_write_ha_state()` allein genügt also NICHT.
+- Präzisierung zur Lektion 2026-06-20 („Select zeigt nativ den aktiven Zustand"): das stimmt nur,
+  solange die Integration den State auch schreibt. Der Select ist Anzeige, keine Quelle.
+
+**🔴 Die String-Regel gilt auch für die GESPEICHERTEN Attribute, nicht nur für gesendete Werte**
+- Lektion 2026-06-20 deckte `settings_command({...})` ab. Hier lag der int auf der Rückrichtung:
+  `self._wind_direction_vertical = value` (int) — während Gerät und `ClimateSwingVertical.AUTO` mit
+  Strings arbeiten (`"8"`, `"7"`). Folge: `update_swing_mode` rechnete nach jedem Verstellen falsch
+  (`5 == "5"` ist in Python False), bis der nächste Poll den String nachlieferte.
+- **Regel erweitert:** In `climate.py` ist `wind_direction_*` **überall** ein String — beim Senden UND
+  beim Zwischenspeichern. Nach einem Setter-Aufruf einmal `ha_get_state` prüfen: steht dort `5` statt
+  `"5"`, hat ein Setter einen int abgelegt.
+
+**🔴 Eine Lamellen-Verstellung schaltet eine AUSGESCHALTETE Anlage EIN**
+- `settings_command` sendet den kompletten Parametersatz inklusive `onOffStatus: '1'`. Die SZ-Anlage
+  sprang beim Test um 23:18 an (state `off` → `cool`), musste manuell wieder ausgeschaltet werden.
+- Am 2026-08-08 bewusst **nicht** behoben (Entscheidung Diana) — also Betriebsrealität, kein Bug-Backlog.
+- **Konsequenz für die Testmethodik:** Lamellen IMMER an einem Gerät testen, das **bereits läuft**.
+  Physisch bewegt sich der Vane ohnehin nur im Betrieb, und man vermeidet das ungewollte Einschalten.
+  Wenn doch an einem ausgeschalteten Gerät getestet wurde: Position zurücksetzen, DANN ausschalten
+  (die Reihenfolge umgekehrt schaltet es wieder ein).
+
+**🟡 Diagnose-Reihenfolge bei Lamellen-Problemen — erst das Symptom trennen**
+| Symptom | Erste Verdächtige |
+|---|---|
+| schwenkt weiter trotz Fixposition | Eco-Pilot (`eco_pilot_mode` > 0), s. 2026-07-10 |
+| Auswahl springt im UI zurück / keine Reaktion | State-Push fehlt (diese Lektion) |
+| Anzeige zeigt anderen Wert als gewählt | JS-Map-Drift im Dashboard, s. 2026-06-20 |
+| Telemetrie folgt, aber nichts bewegt sich | `windDirectionVerticalPositionSequence`, s. 2026-06-21 |
+
+**🟡 `select.select_option` mit `wait: true` ist der Schnelltest — der Timeout IST der Befund**
+- Vor dem Fix: „state change could not be verified within timeout" (10 s), Select unverändert.
+  Nach dem Fix: `verified_state: "Position 2"` sofort. Kein Log-Eintrag nötig, kein Debug-Logger.
+- **Zweite Stufe nicht vergessen:** ~90 s später erneut lesen. Bleibt der Wert stehen und meldet das
+  Gerät ihn zurück, ist die Kette dicht. Nur „reagiert sofort" könnte auch ein optimistisches
+  Update sein, das der nächste Poll wieder wegräumt. (Vgl. reflect-Lektion 2026-08-06: die letzte
+  Prüfung muss die sichtbare Wirkung treffen.)
+
+**🔵 `start_watcher()` hinterließ pro Befehl einen Timer**
+- `async_track_time_interval` liefert die Unsub-Funktion; sie landete in `self._watcher`, wurde aber nur
+  auf `None` gesetzt, nie aufgerufen — der Timer lief bis zum HA-Neustart weiter, und ein zweiter
+  `start_watcher()` überschrieb die Referenz des ersten. Bei Lamellen (häufig verstellt) summiert sich das.
+- Ergänzt: `stop_watcher()` (bestellt ab), aufgerufen in `start_watcher()`, im Intervall-Callback und in
+  `async_will_remove_from_hass`.
+
+**🔵 `http:`-Block: vor dem Entfernen `.storage/http` gegenlesen**
+- HA migriert die HTTP-Config in die UI (Einstellungen → System → Netzwerk) und ignoriert YAML danach
+  stillschweigend; ab **2027.2.0** ist der Block ein harter Fehler (Repairs-Warnung).
+- **Prüfmuster vor dem Löschen:** `.storage/http` muss `yaml_migration_done: true` zeigen UND die Werte
+  müssen übereinstimmen. Hier load-bearing: `use_x_forwarded_for` + die vier `trusted_proxies` — ohne
+  sie bricht der Weg Cloudflare → Caddy (:8124) → HA. Die migrierten Werte in einem Kommentar an der
+  alten Stelle festhalten, sonst steht die einzige Kopie nur noch in `.storage`.
+- Dasselbe Muster kommt bei jeder weiteren YAML→UI-Migration wieder: erst Zielzustand verifizieren,
+  dann die Quelle entfernen.
+
+**🔴 Alle hon-Patches sind lokal und HACS-flüchtig — nach jedem hon-Update prüfen**
+- Aktuell drei: `_apply_vertical_position_sequence` (2026-06-21), `_push_state_after_command` +
+  `stop_watcher` (2026-08-08). Schnellcheck:
+  ```bash
+  grep -c "_apply_vertical_position_sequence\|_push_state_after_command\|stop_watcher" \
+    /volume1/docker/home-assistant/config/custom_components/hon/climate.py   # erwartet: >= 6
+  ```
