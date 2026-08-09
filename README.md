@@ -18,6 +18,7 @@ Dieses Repository enthält selbst-verbessernde Skills für Claude Code, maßgesc
 | **[n8n-workflow-auditor](./n8n-workflow-auditor/SKILL.md)** | Workflow-Audit und -Validierung                                                                    | automatisch                   |
 | **[nas-homelab](./nas-homelab/SKILL.md)**                   | NAS Administration (UGREEN)                                                                        | automatisch                   |
 | **[open-webui](./open-webui/SKILL.md)**                     | Open WebUI Integration                                                                             | automatisch                   |
+| **[opencut](./opencut/SKILL.md)**                            | OpenCut Video-Editor Self-Hosting (Docker/NAS)                                                     | automatisch                   |
 | **[business-strategie](./business-strategie/SKILL.md)**     | Geschäftsstrategieplanung                                                                          | automatisch                   |
 | **[grill-me-codex](./grill-me-codex/SKILL.md)**             | Architekt-Arbeiter-Workflow: Claude plant (Interview + TDD), Codex implementiert, Claude validiert | `/grill-me-codex`, "grill me" |
 
