@@ -21,6 +21,9 @@ Dieses Repository enthält selbst-verbessernde Skills für Claude Code, maßgesc
 | **[opencut](./opencut/SKILL.md)**                            | OpenCut Video-Editor Self-Hosting (Docker/NAS)                                                     | automatisch                   |
 | **[business-strategie](./business-strategie/SKILL.md)**     | Geschäftsstrategieplanung                                                                          | automatisch                   |
 | **[grill-me-codex](./grill-me-codex/SKILL.md)**             | Architekt-Arbeiter-Workflow: Claude plant (Interview + TDD), Codex implementiert, Claude validiert | `/grill-me-codex`, "grill me" |
+| **[openship](./openship/SKILL.md)**                          | OpenShip-Deployment-Plattform auf der NAS (Apps deployen, Katalog-Dienste, Tunnel-Routen)          | automatisch                   |
+| **[songcrafter](./songcrafter/SKILL.md)**                    | SongCrafter Pro – AI-Music-Production-App (React/Vite, Gemini + fal.ai)                            | automatisch                   |
+| **[i-have-adhd](./i-have-adhd/SKILL.md)**                    | Output-Style: Antworten ADHD-gerecht formen (Aktion zuerst, nummerierte Schritte, sichtbare Wins)  | `/i-have-adhd`                |
 
 ### Instanz-Skills (maschinenspezifisch)
 
@@ -29,6 +32,13 @@ Dieses Repository enthält selbst-verbessernde Skills für Claude Code, maßgesc
 | **[windows-workstation](./windows-workstation/SKILL.md)** | WS44 (Win11) | Windows-Arbeitsplatz, Pfade, Netzlaufwerke, lokale Tools | automatisch |
 | **[win-docker](./win-docker/SKILL.md)**                   | WS44 (Win11) | Docker Desktop (Entwicklung/Test, nicht Produktion)      | automatisch |
 | **[qm-word-automation](./qm-word-automation/SKILL.md)**   | WS44 (Win11) | QM-Handbuch Word-Automatisierung via pywin32 COM         | automatisch |
+
+### Hilfsskripte (kein eigener Skill)
+
+| Ordner | Genutzt von | Zweck |
+| ------ | ----------- | ----- |
+| **[tools/n8n-sync](./tools/n8n-sync/)** | `n8n-workflow` | Python-Skripte zum Reparieren/Erstellen von n8n-Workflows, Supabase-RAG-Setup |
+| **[tools/open-webui-sync](./tools/open-webui-sync/)** | `open-webui`, `rag-system`, `nas-instance` | Cron/systemd-Timer, API-Key-Setup, DB-Inspektion, Skills→Knowledge-Sync für Open WebUI |
 
 ---
 
