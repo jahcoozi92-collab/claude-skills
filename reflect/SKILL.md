@@ -951,3 +951,11 @@ gehört ein **neuer** Skill angelegt. Format exakt wie die bestehenden:
   `nas-instance`-Skill — sonst waeren sie mitgegangen.
 - Vor dem Loeschen eines Skills pruefen, was darin **nicht** dienstspezifisch ist, und es in den
   Instanz- oder Fach-Skill ueberfuehren. Eine Kopie der geloeschten Datei ins Backup legen.
+
+**🟡 Nachtrag zur Verifikationsschleife: „KEINE" heisst nicht automatisch „dangling"**
+- Die Schleife aus der Lektion vom 2026-08-06 iteriert korrekt ueber die Quell-IDs, aber ihr
+  Ausgabe-Label ist zu scharf: ein Knoten, der **nur Ziel** von Relationen ist (typisch fuer frisch
+  angelegte Patterns, auf die nur der Task zeigt), meldet „KEINE (dangling!)" — obwohl alles stimmt.
+- Hier betraf das drei von neun Knoten; die Kanten waren in der Zeile des Tasks alle sichtbar.
+- **Regel:** Erst die Zeile des Tasks lesen — steht der vermeintlich lose Knoten dort als Ziel, ist
+  er verdrahtet. Ehrlicheres Label: „keine ausgehenden (nur Ziel?)" statt „dangling".
