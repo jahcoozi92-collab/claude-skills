@@ -900,3 +900,54 @@ gehört ein **neuer** Skill angelegt. Format exakt wie die bestehenden:
   ```
 - Die `resolve`-Funktion selbst muss **mehrere Konfliktblöcke pro Datei** verarbeiten
   (`while any(l.startswith("<<<<<<<"))`), nicht nur den ersten.
+
+### 2026-08-09 — Ontology-Logformat ist verschachtelt, Ziel-IDs vor dem Ausfuehren pruefen, fehlendes `status`-Feld
+
+**🔴 `graph.jsonl` ist ein Append-Log mit VERSCHACHTELTEN Eintraegen — nicht flach**
+- Ein Eintrag sieht so aus (eine Zeile pro Operation):
+  ```json
+  {"op":"create","entity":{"id":"t_x","type":"Task","properties":{"name":"…","desc":"…"}},"timestamp":"…"}
+  {"op":"relate","from":"t_x","rel":"uses","to":"sw_y","properties":{},"timestamp":"…"}
+  ```
+- Mein erster Parser las `d["id"]` und `d["type"]` auf der **obersten** Ebene und meldete
+  „Tasks gesamt: 0" bei 185 vorhandenen — ein stiller Null-Treffer, der wie ein leerer Graph aussah.
+- **Korrekt:** `ent = d.get("entity") or {}` und daraus `id`/`type`/`properties`. Spaetere `update`-
+  Zeilen ueberschreiben frueheres; also ueber alle Zeilen iterieren und pro `id` mergen.
+- Merkhilfe: `create`/`update` tragen ihre Nutzlast unter `entity`, `relate` hat `from`/`rel`/`to`
+  direkt auf oberster Ebene. Wer nur einen der beiden Faelle behandelt, verliert die Haelfte.
+
+**🔴 Relations-Ziel-IDs IMMER gegen den Graphen pruefen, bevor das Skript laeuft**
+- Die Lektion vom 2026-06-01 sagt, `relate` validiere die Endpunkte nicht (stille Geister-Edges).
+  Hier der zweite Weg in dieselbe Falle: die Ziel-IDs stammten aus einer **abgeschnittenen**
+  Terminalausgabe (`p_compose_override_upstrea…`), und ich habe die Endung rekonstruiert —
+  `p_compose_override_upstream_clean` statt des echten `p_compose_override_upstream`.
+- Nur weil ich vor dem Ausfuehren gegengeprueft habe, entstand keine tote Kante:
+  ```bash
+  ssh … 'cd ~/clawd && grep -o "\"p_compose[a-z_]*\"" memory/ontology/graph.jsonl | sort -u'
+  ```
+- **Regel:** Jede ID, die man nicht im selben Skript selbst anlegt, vorher per `grep -o` aus dem
+  Graphen holen. Spaltenbreite von Terminalausgaben ist keine Quelle.
+
+**🟡 Tasks ohne `status`-Feld gelten als offen — das verzerrt jede Uebersicht**
+- `graph_status.py` meldete 168 offene Aufgaben. Tatsaechlich haben **162 von 185 Tasks gar kein
+  `status`-Feld**; nur 23 tragen eines. Wer kein `status` setzt, produziert eine Aufgabe, die nie
+  wieder verschwindet — auch der Task `t_openship_nas_setup` von zwei Tagen vorher.
+- **Regel fuer Step 5:** bei jedem `create -t Task` ein `"status":"done"` (oder `"open"`)
+  mitschicken. Nachtraeglich per `update` zu heilen ist muehsam, weil `update` die `properties`
+  vollstaendig ersetzt.
+- Vorsicht bei der Massen-Heilung: der Text allein taeuscht. „MediFox-402-**Diagnose**" klingt nach
+  erledigt, kann aber der Auftakt zu weiterer Arbeit gewesen sein. Vorschlagen statt setzen.
+
+**🟡 Entfernte Software: Entity aktualisieren, nicht loeschen**
+- Als OpenShip und OmniRoute von der Maschine verschwanden, wurde `sw_openship`/`sw_omniroute` per
+  `update` auf „ENTFERNT am … " gesetzt statt geloescht. Grund: die Patterns daran (Socket braucht
+  CLI, Loopback-Routen, Bind-Adresse) gelten weiter und haetten sonst ihren Anker verloren.
+- Der Eintrag beantwortet damit auch die Frage „warum gibt es das hier nicht mehr" — wertvoller als
+  eine Luecke im Graphen.
+
+**🔵 Wissen aus einem geloeschten Skill retten, bevor er verschwindet**
+- Mit dem Dienst wurde auch `skills/openship/SKILL.md` entfernt. Die Teile, die unabhaengig vom
+  Dienst gelten (Cloudflare additiv, Loopback-Bindung, Browser-Diagnose), standen bereits im
+  `nas-instance`-Skill — sonst waeren sie mitgegangen.
+- Vor dem Loeschen eines Skills pruefen, was darin **nicht** dienstspezifisch ist, und es in den
+  Instanz- oder Fach-Skill ueberfuehren. Eine Kopie der geloeschten Datei ins Backup legen.
