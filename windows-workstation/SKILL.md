@@ -99,6 +99,7 @@ Die `.bashrc` lädt SSH-Aliases beim Start:
 | `Q:\Konzepte-Formulare BZWP\` | QM-Dokumente auf Server |
 | `\\SERVER2012R2\Dokumente\Diana Göbel\` | Dianas persoenlicher Arbeitsbereich auf Y: (Flyer, Aushaenge, laufende Projekte) — haeufiger echter Arbeitsort als der Desktop |
 | `\\SERVER2012R2\Dokumente\Auszubildende BZ+WP\` | Azubi-Verwaltung (auf Y:) — `Azubi-Übersicht.html` als Dashboard, je Person ein Ordner unter `Betreuungszentrum\|Wohnpark\` × `1-jährig\|3-jährig\` |
+| `C:\AzubiUebersicht\` | Automatisierungs-Kit für die Azubi-Übersicht (ASCII-Pfad, bewusst außerhalb `D.Göbel`): `roster.json`, `portraits\`, `cascades\`, `build_uebersicht.py`, `detect_portrait.py`, `WOCHENAUFTRAG.md`, `logs\`, `backups\` — Quelle für den Scheduled Task `AzubiUebersicht-Woechentlich` |
 | `\\192.168.2.215\arche\QM-Handbuch\` | QM-Dokumente auf NAS |
 | `D:\whisper_gui_portable\` | Whisper Transkriptions-Tool (faster-whisper + tkinter GUI) |
 
@@ -167,6 +168,8 @@ ping 192.168.2.215
 8. **Kein `.ps1` mit Nicht-ASCII-Zeichen ohne UTF-8-BOM ausführen** — das Write-Tool schreibt BOM-los, PowerShell 5.1 liest solche Dateien als cp1252. `Übersicht` wird zu `Ãœbersicht`, jeder Umlaut-Pfad läuft in `FileNotFoundException`, und Sonderzeichen in String-Literalen landen verstümmelt in der Zieldatei. BOM vor dem Aufruf ergänzen (siehe Lektion 2026-08-06)
 9. **Kein `-Include` ohne Wildcard im `-Path`** — `Get-ChildItem -LiteralPath X -Recurse -Include *.jpg` filtert NICHT, sondern liefert den gesamten Baum. Entweder `-Path "X\*" -Include *.jpg` oder nachgelagert `Where-Object { $ext -contains $_.Extension.ToLower() }`
 10. **Kein `git commit -m` mit Anführungszeichen in der Nachricht** — PowerShell 5.1 reicht auch ein Here-String (`@'…'@`) an `git.exe` weiter, wo die inneren `"` das Argument neu zerlegen (`error: pathspec '…' did not match any file(s)`). Nachricht in eine Datei schreiben und `git commit -F <datei>` nutzen
+11. **Kein `cv2.CascadeClassifier`/OpenCV-Dateizugriff auf Umlaut-Pfaden** — `C:\Users\D.Göbel\...` lässt jeden `cv2.CascadeClassifier(pfad)` **stumm leer** bleiben (`.empty() == True`, keine Exception), Ursache oft erst nach mehreren Fehlversuchen erkennbar. Cascade-/Modell-Dateien immer zuerst auf einen reinen ASCII-Pfad kopieren (z. B. `C:\ftmp\` oder ein eigener `C:\<Tool>\`-Ordner), dort laden
+12. **Keine UNC-Pfade mit Umlauten inline in `bash python -c "..."` oder langen `powershell -Command "..."`-Strings** — die Übergabe zwischen Bash/PowerShell/Python zerlegt dabei zuverlässig entweder einen Backslash (`\\SERVER...` → `\SERVER...`) oder das Umlautzeichen (`jährig` → `j�hrig`), meist erst nach 2-3 Fehlversuchen bemerkt. Immer eine `.py`/`.ps1`-Datei per Write-Tool anlegen und die aufrufen
 
 ### BEVORZUGT
 1. Git Bash für Dateisystem-Operationen, PowerShell für Windows-spezifische Aufgaben (COM, Registry)
@@ -538,3 +541,62 @@ $t = $xml -replace '</w:p>', "`n" -replace '</w:tc>', ' | ' -replace '</w:tr>', 
 ```
 - Reicht für Tabellen-Übersichten und ist schneller als COM (kein Word-Start, keine Prozess-Leiche).
 - Für saubere Zell-Struktur ist das installierte `python-docx` die bessere Wahl — der Regex-Weg plättet verbundene Zellen und leere Spalten zu `| | |`.
+
+### 2026-08-10 - Azubi-Übersicht-Automatisierung: OpenCV-Pfade, PS-Subprozess-Encoding, lokale vs. Cloud-Scheduling
+
+Ergänzt den 2026-08-06-Eintrag zum selben Projekt (dort: reines PowerShell/GDI+ für PDF-Bildextraktion). Diese Session nutzte stattdessen einen Python-Stack (PyMuPDF + OpenCV Haar-Cascades) für automatisierte Gesichtserkennung in gescannten Bewerbungsunterlagen — andere Technik, gleiches Projekt, beide Wege bleiben gültig für unterschiedliche Aufgaben.
+
+**🔴 `cv2.CascadeClassifier` scheitert stumm auf Umlaut-Pfaden — kein Fehler, nur eine leere Klasse**
+- `cv2.CascadeClassifier(r"C:\Users\D.Göbel\...\haar_face.xml")` gibt `.empty() == True` zurück, ohne Exception. Nachgelagerter Code (`detectMultiScale`) läuft dann einfach ins Leere (0 Treffer), was wie ein Modell-/Logikfehler aussieht statt wie ein Pfadproblem.
+- Trat in dieser Session **zweimal** auf: einmal beim initialen OpenCV-Setup, ein zweites Mal beim Aufbau eines dauerhaften Automatisierungsordners unter `AppData\Local\AzubiUebersicht` (ebenfalls unter `D.Göbel`).
+- **Fix:** Cascade-Dateien (und generell alles, was über OpenCV-eigene Dateizugriffe geladen wird) auf einen reinen ASCII-Pfad kopieren. Erste Instanz: `C:\ftmp\`. Für dauerhafte Tools: gleich am Wurzelverzeichnis anlegen (`C:\AzubiUebersicht\`), nicht unter dem Nutzerprofil.
+- PIL/Pillow, `os.path`, reguläre Python-Dateizugriffe hatten mit denselben Umlaut-Pfaden **keine** Probleme — die Einschränkung betrifft spezifisch OpenCVs C++-Backend.
+
+**🔴 PowerShell: Subprozess-stdout mit Umlauten braucht `[Console]::OutputEncoding`, nicht nur `-Encoding utf8` beim Schreiben**
+- Ein `claude -p ...`-Aufruf (UTF-8-stdout) wurde per `*>> $logfile` bzw. `| Out-File -Encoding utf8` mitgeschnitten. Ergebnis trotzdem Mojibake (`ÔÇö` statt `—`, `├ñ` statt `ä`) — der Schaden entsteht beim **Einlesen** der Bytes aus der Pipe, nicht beim Zurückschreiben.
+- Andere, bereits bekannte Falle (2026-08-06-Eintrag) war die BOM-Pflicht für **eigene** `.ps1`-Dateien mit Umlaut-Literalen — das hier ist ein separater Mechanismus: die Byte-Interpretation der **Ausgabe eines fremden Prozesses**.
+- **Fix, vor jedem Aufruf eines Unicode-ausgebenden Subprozesses:**
+  ```powershell
+  [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+  $OutputEncoding = [System.Text.Encoding]::UTF8
+  ```
+  Erst danach ist `| Out-File -Encoding utf8` auch inhaltlich korrekt.
+
+**🔴 UNC-Pfade mit Umlauten in inline `bash python -c` / `powershell -Command "..."` sind unzuverlässig**
+- Wiederholt (3× in dieser Session) brach die Argumentübergabe zwischen Bash → Python bzw. Bash → PowerShell entweder einen führenden Backslash des UNC-Pfads ab (aus zwei wird einer, danach `FileNotFoundError`) oder verstümmelte das Umlautzeichen (`jährig` → `j?hrig` im Fehlertext, teils reproduzierbar mit demselben Pfad, der Zeilen vorher noch funktioniert hatte). Hinweis: Auch diese SKILL.md selbst normalisiert doppelte Backslashes in Inline-Code beim Speichern (siehe dieser Absatz) — Beispiele mit UNC-Pfaden hier lieber beschreiben statt exakt vorzeigen.
+- Robuste Lösung, die in jedem Fall funktionierte: den Pfad/die Logik in eine `.py`- oder `.ps1`-Datei schreiben (Write-Tool) und diese Datei aufrufen, statt den Pfad literal in einen Einzeiler einzubetten. Gilt auch für `os.listdir()`-Diagnose, wenn ein vermuteter Dateiname nicht gefunden wird (siehe nächste Lektion).
+
+**🟡 Bei „Datei nicht gefunden" auf UNC-Pfaden: erst `os.listdir()` der exakten Namen, nicht den vermuteten Namen debuggen**
+- `ls -la` in Git Bash schneidet Dateinamen mit Leerzeichen durch `awk`-Spaltenaufteilung sichtbar ab (`'Jahresplanung Theorie-Praxis PFA4.pdf'` erschien als `PFA4.pdf`). Der daraus abgeleitete Pfad existierte dann schlicht nicht.
+- Schneller Fix: `os.listdir(ordner)` mit `repr()` auf jeden Eintrag — zeigt exakte Anführungszeichen/Leerzeichen/Sonderzeichen ohne Terminal-Trunkierung.
+
+**🟡 Cloud-Scheduling (RemoteTrigger/„schedule"-Skill) ist NICHT die richtige Wahl für Netzlaufwerk-Automatisierung**
+- Der `/schedule`-artige Cloud-Routine-Mechanismus startet eine isolierte Cloud-Session ohne Zugriff auf lokale UNC-Shares, lokal installierte Python-Pakete oder den Session-Scratchpad — für einen wöchentlichen Check von `\SERVER2012R2\...` von vornherein ungeeignet, unabhängig vom Prompt-Inhalt.
+- Richtiger lokaler Ersatz: Windows-Aufgabenplanung (`Register-ScheduledTask`, NICHT `schtasks.exe`, siehe Constraint 6) ruft ein PowerShell-Wrapper-Skript auf, das die installierte `claude`-CLI **headless** startet:
+  ```powershell
+  $prompt = Get-Content -Raw "C:\AzubiUebersicht\WOCHENAUFTRAG.md"
+  $prompt | & claude -p --permission-mode bypassPermissions `
+    --allowedTools "Bash Read Write Edit Glob Grep" `
+    --add-dir "\\SERVER2012R2\Dokumente\Auszubildende BZ+WP" `
+    2>&1 | Out-File -FilePath $log -Append -Encoding utf8
+  ```
+- Prompt-Übergabe per **stdin-Pipe** (`Get-Content -Raw datei.md | claude -p ...`) statt als CLI-Argument — vermeidet Windows-Kommandozeilenlängenlimits bei langen, selbstständigen Auftragsdateien.
+- `New-ScheduledTaskPrincipal -LogonType Interactive` (statt S4U/gespeichertes Passwort) — kein Passwort nötig, Task läuft mit den bereits bestehenden Netzlaufwerk-Rechten des angemeldeten Users, Kompromiss: Task feuert nur, wenn der User zum Ausführungszeitpunkt angemeldet ist.
+
+**🟡 Pattern: unbeaufsichtigter Agent mit echten Personendaten — Pflicht-Guardrails**
+- Ein `claude -p`-Lauf ohne jede Konversationserinnerung braucht eine vollständig in-sich-geschlossene Auftragsdatei (hier `WOCHENAUFTRAG.md`) — Kontext, den eine interaktive Session „im Kopf" hat, existiert dort nicht.
+- Feste Regeln, die sich bewährt haben und die der Auftrag selbst durchsetzen muss (nicht nur der Prompt-Text, sondern auch die aufgerufenen Skripte):
+  1. Automatisches Backup der Zieldatei vor jedem Überschreiben (Zeitstempel-Kopie in eigenen `backups\`-Ordner)
+  2. „Nichts erfinden" — Felder (Schule/Jahr/Wohnbereich) nur bei eindeutiger Dokumentquelle setzen, sonst leer lassen
+  3. „Lieber kein Foto als ein falsches" — bei mehrdeutigen Gesichtskandidaten oder fremden Dokumenten: Initialen-Avatar statt Rateversuch
+  4. Schreibrechte auf einen engen, benannten Dateikreis begrenzen (hier: nur `C:\AzubiUebersicht\*` + eine einzelne Zieldatei), nie Quelldokumente verändern
+- Erster Testlauf bestätigte den Nutzen: der Agent erkannte 4 auffällige Ordner ohne Übersichts-Eintrag und trug sie bewusst **nicht** automatisch ein, sondern vermerkte sie nur — genau das gewünschte konservative Verhalten.
+
+**🔵 Bei sensiblen Personendokumenten (HR/Azubi-Unterlagen): Volltext-Dumps vermeiden**
+- Ein `doc.get_text()`-Aufruf, der den kompletten Text eines Erfassungsbogens (Name, Geburtsdatum, Adresse, Telefon) ins Konversations-Log gedumpt hätte, wurde vom User per Tool-Ablehnung gestoppt.
+- Sauberere Alternative, seitdem durchgehend genutzt: Seite als Bild rendern (`fitz` + hohe DPI) und mit dem Read-Tool visuell prüfen (Vision-Fähigkeit nutzen), statt Rohtext zu extrahieren. Ergebnis bleibt gleich gut lesbar, aber es landet kein durchsuchbarer Volltext mit Personendaten im Transkript.
+
+**Aktive Scheduled Tasks (Ergänzung):**
+| Task-Name | Trigger | Zweck | Skript |
+|-----------|---------|-------|--------|
+| `AzubiUebersicht-Woechentlich` | Wöchentlich, Do 10:00, LogonType Interactive | Prüft `Auszubildende BZ+WP` auf neue Personen, aktualisiert `Azubi-Übersicht.html` (mit Backup) | `C:\AzubiUebersicht\run_weekly.ps1` |
