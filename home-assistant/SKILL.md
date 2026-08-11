@@ -2761,3 +2761,100 @@ Diesmal war es WEDER Eco-Pilot (2026-07-10) NOCH die PositionSequence (2026-06-2
   grep -c "_apply_vertical_position_sequence\|_push_state_after_command\|stop_watcher" \
     /volume1/docker/home-assistant/config/custom_components/hon/climate.py   # erwartet: >= 6
   ```
+
+### 2026-08-11 — Grundriss-3D: Blickrichtung, Innenkante, drei Renderer-Fallen, Messquellen
+
+Zwei Tage Arbeit an `grundriss-3d-card` (v5 → v21) mit rund fünfzehn Korrekturrunden.
+Fast alle gingen auf dieselben vier Ursachen zurück.
+
+**🔴 „links/rechts" ist ohne Blickrichtung wertlos — Gartenansicht spiegelt die x-Achse**
+- Vier Fehlplatzierungen aus derselben Quelle: Treppe, Gartengaube, Abstellraum, Dachfenster.
+- Koordinaten des Modells: `x 0` = Wand zu Nr. 38b, `x 5,69` = Wand zu Nr. 36;
+  `z 11,00` = Garten, `z 19,82` = Straße.
+- Daraus folgt zwingend:
+  | Blick von … | „links" | „rechts" |
+  |---|---|---|
+  | Haustür/Straße nach innen (−z) | großes x | kleines x |
+  | Garten aufs Haus (+z) | großes x | **kleines x** |
+  | im Raum nach außen, Straßenseite | großes x | kleines x |
+  | im Raum nach außen, Gartenseite | kleines x | **großes x** |
+- **Regel:** Vor jeder Positionsangabe die Blickrichtung ausschreiben und die Umrechnung
+  hinschreiben, nicht im Kopf machen. Bei Rückfragen die Skizze mit *beiden* Achsenenden
+  beschriften („x=0 Nr. 38b … x=5,69 Nr. 36"), nie nur „links/rechts".
+
+**🔴 Modell-x zählt ab der INNENkante, Fotomaße ab der Außenkante**
+- Street-View-Maße von Hausecke zu Hausecke ergeben 6,23 m, `inner_w` ist aber 5,69 —
+  dazwischen liegen 2 × 0,27 m halbe Haustrennwand.
+- Ohne den Abzug ragte das EG-Fenster in die Wand und wurde beim Rendern abgeschnitten.
+- **Regel:** `x_modell = x_gemessen − 0,27`. Nach jeder Übernahme aus einem Foto prüfen, dass
+  alle Elemente in `[0, inner_w]` liegen und ein Mauerpfeiler (≥ 0,15 m) zur Ecke bleibt.
+
+**🔴 Drei Fallen im Karten-Renderer selbst — alle drei sahen wie Konfigurationsfehler aus**
+1. **`wallMats` gab nur EINER Fläche das Außenmaterial.** Stirnseiten und Mauerkronen bekamen
+   Putz. Sichtbar als heller „Rahmen" rund um das Haus: die Haustrennwände zeigten ihr
+   straßenseitiges Ende als weißen Streifen in der Fassade. Fix: bei `aussen` auch Stirnseiten
+   (je nach Wandrichtung ±x oder ±z) und Krone auf das Außenmaterial setzen.
+2. **Dachfenster-Höhe wurde für die Vorderkante berechnet, die Box aber um ihre Mitte platziert.**
+   Die hintere Hälfte lag unter der Dachhaut. Fix: `f = (rw.z + rw.d/2 − zk) / (zR − zk)`.
+3. **Das Neigungsvorzeichen ist seitenabhängig.** Auf der Nordfläche steigt die Dachhaut mit z,
+   eine Rotation um +x kippt das +z-Ende aber nach unten → Nord braucht `−tilt`, Süd `+tilt`.
+   Mit falschem Vorzeichen stand das Fenster quer zum Dach (0,35 m Versatz je Ende bei 1,60 m
+   Tiefe). Bei flachen Fenstern (1,10 m) fällt das kaum auf — deshalb jahrelang unbemerkt.
+4. **Die Wandzerlegung ist sequenziell von links nach rechts.** Zwei Öffnungen, die sich in x
+   überlappen (hier: zugemauerte Felder *unter* den Fenstern), schneiden einander ab — die
+   1.-OG-Fenster wurden zu Schlitzen. Fix: solche Felder nicht als `facade_infill`-Öffnung,
+   sondern als flache Ziegelfläche **vor** die Fassade setzen.
+
+**🔴 Nach jeder Änderung an der Hülle die abhängigen Elemente durchgehen**
+- Anbau auf Hausbreite verbreitert → die Gartenbäume standen im Gebäude (zum zweiten Mal;
+  beim ersten Mal standen sie im Wintergarten).
+- Gartengaube verschmälert → ihre Fenster lagen außerhalb der Gaube.
+- Straßengaube verschoben → das Dachfenster lag mitten im Gaubendach und war unsichtbar.
+- **Checkliste nach Hüllen-Änderung:** Fenster noch innerhalb ihrer Gaube? Möbel/Bäume noch
+  außerhalb aller Baukörper? Dachfenster auf freier Dachfläche? Öffnungen innerhalb `[0, inner_w]`?
+
+**🟡 Messquellen, die ohne API-Schlüssel funktionieren**
+- **NRW-Orthofoto** für alles auf dem Dach — 8,5 cm/px, frei:
+  ```
+  https://www.wms.nrw.de/geobasis/wms_nw_dop?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap
+    &LAYERS=nw_dop_rgb&CRS=EPSG:4326&BBOX=<minlat,minlon,maxlat,maxlon>
+    &WIDTH=1000&HEIGHT=1000&FORMAT=image/png
+  ```
+  Achsenreihenfolge bei WMS 1.3.0 + EPSG:4326 ist **lat,lon**. Anschließend entlang der Hausachse
+  entzerren (Peilung hier 67°), dann lassen sich Gauben und Dachfenster direkt in Metern ablesen.
+- **Street View ist auswertbar, aber nur über ein eigenes iframe.** Die volle `maps.google.com`-App
+  blockt `Page.captureScreenshot` am WebGL-Canvas (drei Timeouts), die Embed-URL verweigert sich
+  außerhalb eines iframes. Lösung: `www/grundriss/_sv.html` mit nacktem iframe auf die `pb`-Embed-URL,
+  Blickrichtung per Query (`?lat=&lon=&h=&p=&z=`), ausgeliefert über `/local/`.
+- **Bing Maps funktioniert dagegen problemlos** und zeigt die Hausnummern — daraus ließ sich die
+  Achsenzuordnung belegen (38B nördlich, 36 südlich).
+- **OSM kennt nur den Hauptbaukörper.** Anbau und Wintergarten fehlen dort; Overpass hilft nur für
+  die Hausumrisse (hier: 6,2 × 9,4 m, way 307110156).
+
+**🟡 Bei schräger Kamera Homographie statt linearer Skala**
+- Eine lineare Umrechnung schiebt alles auf der kamerafernen Seite nach außen. Vier Fassadenecken
+  auf die bekannten Maße abbilden (Breite und Traufhöhe), dann jeden Punkt transformieren —
+  Unterschied hier bis zu 0,4 m über die Fassadenbreite.
+
+**🟡 HA-Entitäten sind eine unabhängige Quelle für die Geometrie**
+- Die Gartengaube hat genau zwei Rollladen-Entitäten → zwei Fenster, nicht drei (das dritte stammte
+  aus dem Bauplan von 1975 und existiert nicht).
+- Die Straßengaube hat einen Bad- und zwei Schlafzimmer-Rollläden → genau die Fensterzuordnung,
+  die Diana unabhängig bestätigt hat.
+- **Regel:** Vor dem Raten prüfen, wie viele `cover`-Entitäten es für den Bereich gibt. Die Anzahl
+  ist meist verlässlicher als der Bauplan.
+
+**🟡 Prüfstand mit fester Kamera ist die Voraussetzung für jeden Vorher/Nachher-Vergleich**
+- `_shot.html` lädt die echte Konfiguration und nimmt Kamera, Etage, Dach und Umgebung als
+  URL-Parameter (`?card=…&yaw=&pitch=&dist=&w=&h=`). Ohne feste Kamera trifft man wegen der
+  Eigendrehung bei jedem Lauf einen anderen Winkel.
+- Headless-Aufruf **braucht `--virtual-time-budget=15000`** — ohne das entsteht ein leeres Bild
+  (~4,7 kB), weil der Screenshot vor dem ersten Frame ausgelöst wird. Pro Lauf ein eigenes
+  `--user-data-dir`, sonst blockieren sich parallele Instanzen.
+- Zustände für den Render im Prüfstand hinterlegen (`hass.states`), sonst bleibt alles Dynamische
+  aus — z. B. die Vordach-LED, die dem Shelly-Schalter folgt.
+
+**🔵 Geometrie aus einem Generator erzeugen, nicht von Hand pflegen**
+- `gen_plan.py` (2D-Plan + Kachelpositionen), `gen_card3d.py` (Wände/Böden/Umgebung),
+  `patch_card3d.py` (schreibt ins Storage-JSON, braucht `sudo`). Der 2D-Plan und die 3D-Karte
+  liefen vorher bei jeder Korrektur auseinander, weil die Treppen im SVG von Hand gezeichnet waren.
