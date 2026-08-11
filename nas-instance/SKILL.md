@@ -2347,3 +2347,20 @@ Browser-Diagnose, CPU-Inferenz-Realitaet) weiter gelten; die Dienste selbst sind
 **🔵 Nach `rm -rf` des aktuellen Arbeitsverzeichnisses meldet das Bash-Tool `getcwd`-Fehler**
 - Erst `cd` an einen sicheren Ort, dann loeschen — sonst folgt
   `pwd: error retrieving current directory` und die naechsten Befehle laufen im Leeren.
+
+### 2026-08-11 — Headless-Chrome-Renders brauchen ein Zeitbudget
+
+**🔴 `--screenshot` ohne `--virtual-time-budget` liefert ein leeres Bild**
+- Ergebnis war eine 4,7-kB-PNG in reiner Hintergrundfarbe: der Screenshot wird ausgelöst, sobald
+  `load` durch ist — bei einer WebGL-Seite also vor dem ersten gerenderten Frame.
+- Funktionierender Aufruf:
+  ```bash
+  google-chrome --headless --use-gl=swiftshader --enable-unsafe-swiftshader \
+    --virtual-time-budget=15000 --user-data-dir=/tmp/cr-$$ \
+    --screenshot=out.png --window-size=1280,860 "http://192.168.22.90:8123/local/…"
+  ```
+- **Pro Lauf ein eigenes `--user-data-dir`**, sonst blockieren sich parallele Instanzen still.
+- Ein Lauf dauert hier 2–4 Minuten (CPU-Rasterizer). Im Hintergrund starten und auf die Datei
+  warten (`until [ -s out.png ]; do sleep 5; done`), nicht im Vordergrund blockieren.
+- Fällt der Screenshot in einen HA-Neustart, zeigt das Bild die Chrome-Fehlerseite
+  („ERR_CONNECTION_REFUSED") — sieht auf den ersten Blick wie ein Render-Fehler aus.
