@@ -2364,3 +2364,39 @@ Browser-Diagnose, CPU-Inferenz-Realitaet) weiter gelten; die Dienste selbst sind
   warten (`until [ -s out.png ]; do sleep 5; done`), nicht im Vordergrund blockieren.
 - Fällt der Screenshot in einen HA-Neustart, zeigt das Bild die Chrome-Fehlerseite
   („ERR_CONNECTION_REFUSED") — sieht auf den ersten Blick wie ein Render-Fehler aus.
+
+### 2026-08-11 — Schema-Drift bei `create table if not exists`, Shell-Falle in Messschleifen
+
+**🟡 `create table if not exists` migriert nie — der Produktions-Altbestand driftet still weg**
+- Im `nas-dashboard` blieb `container_metrics` dauerhaft bei **0 Zeilen**, während der Sampler
+  **3360 Fehlerzeilen pro Stunde** schrieb (`SQLITE_CONSTRAINT_NOTNULL`). Der Code in
+  `backend/src/db/schema.ts` deklarierte die Messwertspalten längst als nullable, die auf der NAS
+  vorhandene Tabelle trug aber noch `not null` aus einer früheren Fassung.
+- `create table if not exists` fasst eine bestehende Tabelle nicht an. Ein Fix am Schema-Code kommt
+  auf einer Maschine mit Altbestand also **nie** an — er wirkt nur auf frischen Datenbanken.
+- **Warum das monatelang unsichtbar blieb:** alle 172 Tests laufen gegen `new Database(':memory:')`
+  plus `migrate()`, also gegen das **neue** Schema. Sie prüfen den Code, nicht den Bestand. Grüne
+  Tests sind hier kein Beleg für einen funktionierenden Dienst.
+- **Regel:** Wer ein Schema ändert, schreibt eine Migration, die den Altzustand aktiv umbaut (SQLite:
+  Tabelle umbenennen → neu anlegen → kopieren → alte löschen → Indizes neu, da sie beim Umbenennen
+  mitwandern und mit `drop table` verschwinden). Und einen Test, der die **alte** Tabelle nachbaut.
+- Diagnose vor Ort, wenn ein Dienst „läuft" aber nichts schreibt:
+  ```bash
+  python3 -c "import sqlite3;c=sqlite3.connect('file:PFAD?mode=ro',uri=True);\
+  print(c.execute(\"SELECT sql FROM sqlite_master WHERE name='TABELLE'\").fetchone()[0])"
+  ```
+  Das gelieferte `CREATE TABLE` gegen den Quellcode halten — Abweichung = Drift.
+
+**🔵 Log-Noise ist ein Diagnosesignal, kein Rauschen**
+- Der defekte Container war exakt der lauteste der Maschine (3360 Zeilen/h gegen 45 beim nächsten).
+  Eine Zeilenzählung über alle Container findet solche Fälle in Sekunden:
+  ```bash
+  for c in $(docker ps --format '{{.Names}}'); do echo "$(docker logs --since 1h $c 2>&1 | wc -l)	$c"; done | sort -rn | head
+  ```
+
+**🔵 Messschleifen: Namen mit `>` werden von der Shell als Redirect gelesen**
+- Beim Vermessen von Laufzeiten hatte ich die Testfälle `512->2048`, `1024->4096` genannt und
+  unquoted in `-o /bilder/ausgang/r-$1.png` eingesetzt. Die Shell las das `>` als Umleitung: die
+  Läufe bekamen abgeschnittene Pfade und meldeten allesamt „FEHLGESCHLAGEN".
+- Das kostete eine komplette Messrunde und führte fast zu einer falschen Schlussfolgerung über die
+  GPU. **Testfallnamen ohne Sonderzeichen** (`a_512_zu_2048`) und Variablen in Pfaden immer quoten.
