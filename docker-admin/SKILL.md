@@ -1016,6 +1016,8 @@ qwen3:8b (5GB) | ~25-30 tok/s | - | ✅ Lokal OK |
 
 ```bash
 # FALSCH: docker manifest inspect Digest ≠ RepoDigests → False Positives
+#         Gilt AUCH für `manifest inspect -v` + .Descriptor.digest — am 2026-08-11
+#         empirisch bestätigt (12 falsche „Updates"). Siehe Lektion vom 2026-08-11.
 # RICHTIG: Pull + Image-ID-Vergleich (vorher/nachher)
 OLD_ID=$(docker inspect --format='{{.Id}}' "$img" | cut -c8-19)
 docker pull "$img"
@@ -1699,3 +1701,84 @@ grep -E 'ERROR: process|failed to solve|port is already allocated' <projekt>-bui
 **🟡 Aufräum-Löschungen einzeln und mit Namen ausführen, nicht als Schleife**
 - Ein `for f in …; do rm -f "$f"; done` über 7 Dateien wurde vom Berechtigungs-Guard abgelehnt; dieselben Löschungen als explizite `rm`-Aufrufe mit ausgeschriebenen Pfaden liefen durch.
 - Das ist auch sachlich die bessere Form: jeder Pfad steht sichtbar im Befehl, und ein Tippfehler trifft nur eine Datei statt einer ganzen Glob-Menge. Vorher immer `ls -lh` mit Größe und Datum zeigen und die Kandidatenliste benennen.
+
+### 2026-08-11 — Digest-Check bleibt unzuverlässig (auch mit `-v`), OOM beendet still, `compose up` frisst Limits
+
+**🔴 Der Update-Check per `docker manifest inspect` ist AUCH mit `-v` ein False Positive**
+- Die Lektion vom 2026-03-24 („manifest inspect Digest ≠ RepoDigests") stimmt — ich bin ihr trotzdem
+  in die Falle gegangen, weil ich sie für eine Ungenauigkeit der **alten** Aufrufform hielt und
+  glaubte, `-v` mit `.Descriptor.digest` sei der saubere Weg. Ist es nicht.
+- Gemeldet wurden daraufhin **12 von 12** Images als „Update verfügbar" — inklusive einer
+  „Gegenprobe", die nur denselben falschen Vergleich zweimal ausführte. Das ist keine Verifikation,
+  sondern eine Wiederholung.
+- Empirisch widerlegt am 2026-08-11:
+  ```
+  redis:7-alpine   RepoDigest e7723ff73d96…   Descriptor 9702d01c1f10…   -> „UPDATE"
+  docker pull      Image-ID 2a51817f7925  ->  2a51817f7925 (UNVERÄNDERT)
+  ```
+- **Ursache:** Die Registry liefert je nach `Accept`-Header entweder
+  `application/vnd.docker.distribution.manifest.list.v2+json` oder
+  `application/vnd.oci.image.index.v1+json` — **zwei verschiedene Digests für identischen Inhalt**.
+  `docker pull` und `docker manifest inspect` fragen unterschiedlich an. Der Vergleich misst den
+  Media-Type, nicht die Aktualität.
+- **Einzig belastbar bleibt Pull + Image-ID-Vergleich** (Codeblock weiter oben). Wer den Traffic
+  scheuen will, sagt „nicht geprüft" statt einer Digest-Schätzung — eine falsche Update-Liste ist
+  teurer als keine.
+
+**🔴 Der OOM-Killer beendet Prozesse STILL — das sieht aus wie ein Fehler der Anwendung**
+- Beim Upscayl-Container brach ein Bildlauf ohne jede Meldung ab: kein Fehler, kein Exit-Code ≠ 0,
+  einfach keine Ausgabedatei. Ich habe daraufhin die GPU und die Kachelgröße verdächtigt und dem
+  User erklärt, kleinere Kacheln seien die Lösung — **falsch**. Kleinere Kacheln senkten nur den
+  Spitzenbedarf und verdeckten damit die wahre Ursache.
+- **Erster Griff, wenn eine Ausgabe ohne Fehlermeldung ausbleibt:**
+  ```bash
+  docker inspect -f '{{.State.OOMKilled}}' <container>   # true = mem_limit zu klein
+  ```
+- Merke: `OOMKilled=true` kann auch stehen, wenn der Container weiterläuft — es wurde dann ein
+  Kindprozess beendet, nicht das Init. `RestartCount` bleibt in dem Fall bei 0.
+- Faustregel für den Bedarf: nicht die Anwendung bestimmt ihn, sondern die **Nutzlast**. Ein
+  8192×8192-Bild sind 67 MP ≈ 270 MB unkomprimiert, plus Eingabe, Arbeitspuffer und Laufzeit.
+  Gemessene Spitze dort: 2,5 GB — mit `mem_limit: 2g` also chancenlos.
+
+**🔴 `docker compose up` wirft per `docker update` gesetzte Limits weg**
+- Bekannt aus CLAUDE.md, hier live passiert: nach `compose up -d n8n` stand `Memory=0`, das vorher
+  per `docker update` gesetzte 3-GB-Limit war fort. Ein Container ohne Limit fällt in keiner
+  Statusanzeige auf — er sieht aus wie alle anderen.
+- **Regel:** `mem_limit` gehört in die compose-Datei, nicht in einen Laufzeitbefehl. Nach jedem
+  `compose up`, das Container neu anlegt, gegenprüfen:
+  ```bash
+  for c in $(docker ps --format '{{.Names}}'); do
+    [ "$(docker inspect -f '{{.HostConfig.Memory}}' $c)" = "0" ] && echo "OHNE LIMIT: $c"
+  done
+  ```
+- `docker update` braucht `--memory` **und** `--memory-swap` zusammen, sonst lehnt Docker ab.
+
+**🟡 Ungenutzte Images über Image-IDs ermitteln, nicht über `Repository:Tag`**
+- Mein erster Filter verglich das `Image`-Feld der Container mit `Repository:Tag` der Images und
+  meldete daraufhin `livekit-frontend`, `fem-pipeline`, `crewai` u. a. als ungenutzt — alles
+  **laufende** Dienste. Ursache: Container speichern teils den Namen ohne `:latest`, teils die ID.
+- Belastbar ist der Vergleich über die aufgelöste Image-ID:
+  ```bash
+  docker ps -a -q | xargs -r docker inspect -f '{{.Image}}' | sort -u > /tmp/used_ids
+  docker images --no-trunc --format "{{.ID}}|{{.Repository}}:{{.Tag}}|{{.Size}}" | while IFS='|' read -r id rt size; do
+    grep -qxF "$id" /tmp/used_ids || echo "$size  $rt"
+  done
+  ```
+- Wäre ich dem ersten Filter gefolgt, hätte `docker rmi` die Images laufender Produktionsdienste
+  entfernt. Vor jedem Massen-`rmi` die Liste gegen `docker ps` plausibilisieren.
+
+**🟡 GPU im Container: `/dev/dri` + `group_add` mit den HOST-GIDs**
+- Funktionierendes Muster (Intel-iGPU, Vulkan, auf dieser NAS verifiziert):
+  ```yaml
+  devices:
+    - /dev/dri:/dev/dri
+  group_add:
+    - "105"   # render  — GID auf dem HOST ermitteln: getent group render video
+    - "44"    # video
+  ```
+- Die **Zahl** zählt, nicht der Name: im Container hieß GID 105 zufällig `pulse`. Das sieht falsch
+  aus, funktioniert aber. Nach Systemupdates die GIDs neu prüfen.
+- **`vulkaninfo` ist headless kein brauchbarer Test:** es will ein X-Fenster öffnen und scheitert mit
+  `BadMatch` / `XFree86-VidModeExtension missing`, obwohl Vulkan einwandfrei arbeitet. Belastbar ist
+  nur ein echter Rechenlauf — und die Gegenprobe, ob die GPU ihn macht: bei ~1 % CPU-Last rechnet die
+  GPU, bei mehreren hundert Prozent ist es der Software-Rasterizer (llvmpipe).
