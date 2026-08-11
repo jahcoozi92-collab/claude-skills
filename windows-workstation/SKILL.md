@@ -600,3 +600,56 @@ Ergänzt den 2026-08-06-Eintrag zum selben Projekt (dort: reines PowerShell/GDI+
 | Task-Name | Trigger | Zweck | Skript |
 |-----------|---------|-------|--------|
 | `AzubiUebersicht-Woechentlich` | Wöchentlich, Do 10:00, LogonType Interactive | Prüft `Auszubildende BZ+WP` auf neue Personen, aktualisiert `Azubi-Übersicht.html` (mit Backup) | `C:\AzubiUebersicht\run_weekly.ps1` |
+
+---
+
+### 2026-08-10 — Browser-Automation: Auswahl verifizieren, Speichern nicht vergessen, Rechenläufe vorab zeigen
+
+**🔴 Nach jeder Auswahl in einer dichten Liste den gesetzten Wert gegenlesen**
+- Bei eng gesetzten Tabellen (Preisstaffeln, Terminlisten, Dropdown-Ersatz) treffen **sowohl
+  Screenshot-Koordinaten als auch `find`-refs regelmäßig die Nachbarzeile**. Die Seite verschiebt
+  sich zwischen Bild und Klick durch Nachladen; `find` ordnet bei gleichartigen Zellen daneben zu.
+- In einer einzigen Session dreimal passiert: 75 statt 100 Stück, 500 statt 1000 Stück, und ein
+  Preis der falschen Zeile zugeordnet. Letzteres erzeugte eine **falsche Empfehlung an die Kundin**,
+  der sie bereits zugestimmt hatte, bevor der Fehler auffiel.
+- **Regel:** Nach der Auswahl den resultierenden Wert aus der Zusammenfassung der Seite auslesen
+  (`find` auf den Ergebnis-Kasten, dann `read_page` mit `ref_id`), bevor irgendetwas darauf
+  aufgebaut oder dem Nutzer berichtet wird. Kostet einen Aufruf, verhindert eine Falschaussage.
+- Reihenfolge-Präferenz bei Klicks: **`ref` aus `read_page`** (stabil) > `find`-ref (ordnet bei
+  gleichartigen Elementen falsch zu) > Screenshot-Koordinaten (veralten am schnellsten).
+- Wenn Koordinaten unvermeidlich sind: Screenshot und Klick im **selben** `browser_batch`, ohne
+  Zwischenschritt — und danach trotzdem verifizieren.
+
+**🔴 Formulareingabe ist erst nach dem Speichern real**
+- Dialoge mit eigenem Speichern-Button: Werte eintragen und den Dialog schließen = alles verloren.
+  Passiert, weil der Button oft **unterhalb des sichtbaren Bereichs** liegt und erst nach Scrollen
+  im Dialog auftaucht.
+- Nach dem Speichern die **dargestellte** Fassung gegenlesen (`get_page_text`), nicht die
+  Formularfelder — nur die Darstellung zeigt, was übernommen wurde.
+- Pflichtfelder erkennt man erst beim Speicherversuch (rote Markierung "Bitte ausfüllen"). Ein Feld
+  leeren zu wollen, das Pflicht ist, geht nicht — dann braucht es einen Ersatzwert vom Nutzer.
+
+**🟡 Rechenläufe über einer Minute: erst ein Muster zeigen, dann den Vollauf starten**
+- Ein lokaler KI-Upscaling-Lauf wurde von Diana **zweimal abgebrochen**, obwohl sie ihn vorher
+  beauftragt hatte. Nach einem 10-Sekunden-Testausschnitt mit Vorher/Nachher-Bild lief er sofort
+  durch.
+- Der Abbruch galt nicht der Aufgabe, sondern der Ungewissheit: unbekannte Dauer, unbekannte
+  Qualität, sichtbare CPU-Last. Ein Musterergebnis beantwortet beides in unter einer Minute.
+- Dazu gehört: Laufzeit **messen statt schätzen** (kleiner Ausschnitt → hochrechnen) und die
+  Thread-Zahl drosseln (`torch.set_num_threads(8)` statt aller 14), damit die Maschine bedienbar
+  bleibt.
+
+**🟡 `file_upload` erreicht weder Netzlaufwerke noch den Scratchpad**
+- Beide Pfade werden abgelehnt: *"only files this session is allowed to read can be uploaded"* —
+  sowohl `\SERVER2012R2\...` als auch der Session-Scratchpad unter `%TEMP%\claude\...`.
+- Datei-Uploads in Portale sind damit **grundsätzlich Nutzersache**. Das gehört beim Planen eines
+  Bestell- oder Einreichungsvorgangs von vornherein angesagt, nicht erst beim Scheitern.
+
+**🔵 Renderer-Timeouts bei schweren Shop-Seiten**
+- `Page.captureScreenshot timed out after 30000ms` trat bei FLYERALARM mehrfach auf, meist direkt
+  nach `resize_window` oder einem Hash-Navigationswechsel.
+- Kein Grund zum Neuladen: 5–8 Sekunden warten und erneut auslösen genügt. `get_page_text` und
+  `find` funktionieren oft weiter, während der Screenshot noch hängt — für reine Zustandsprüfungen
+  sind sie ohnehin die günstigere Wahl.
+- Nach `resize_window` kann das Rendering versetzt bleiben (Klickziele stimmen nicht mit dem Bild
+  überein). Dann hilft nur `navigate` auf dieselbe URL.
