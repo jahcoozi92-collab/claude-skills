@@ -975,3 +975,38 @@ gehört ein **neuer** Skill angelegt. Format exakt wie die bestehenden:
 - Hier betraf das drei von neun Knoten; die Kanten waren in der Zeile des Tasks alle sichtbar.
 - **Regel:** Erst die Zeile des Tasks lesen — steht der vermeintlich lose Knoten dort als Ziel, ist
   er verdrahtet. Ehrlicheres Label: „keine ausgehenden (nur Ziel?)" statt „dangling".
+
+### 2026-08-11 — Angabe des Users hat Vorrang vor der eigenen Modellannahme
+
+**🔴 Eine konkrete Nutzerangabe nicht stillschweigend „verbessern"**
+- Fall: Diana markierte in einem Screenshot mit einem roten Rechteck, wohin ein Dachfenster gehört.
+  Ich rechnete die Markierung sauber in Modellkoordinaten um (x 0,95–1,73) — und setzte das Fenster
+  dann **0,5 m daneben**, weil an der markierten Stelle ein Element lag, das ich selbst zuvor aus
+  einem Bauplanvermerk abgeleitet hatte. Die Reaktion: „Dachfenster ist immernoch scheisse."
+- Der Denkfehler war nicht die Messung, sondern die Rangfolge: eine **beobachtete Angabe des
+  Nutzers** wurde einer **eigenen Ableitung** untergeordnet, ohne das offenzulegen.
+- **Regel:** Angaben des Nutzers exakt umsetzen. Kollidiert etwas damit, das man selbst gesetzt hat,
+  ist das eigene Element das falsche — es wird entfernt oder der Konflikt wird benannt. Niemals die
+  Angabe verschieben, um die eigene Annahme zu retten.
+- Erkennungsmerkmal im eigenen Denken: „das kann so nicht sein, weil …" — wenn das „weil" auf etwas
+  verweist, das man selbst modelliert hat, ist es kein Gegenargument.
+
+**🟡 Bei räumlichen Angaben das Bezugssystem ausschreiben, bevor gerechnet wird**
+- „Links", „rechts", „daneben", „gegenüber" sind ohne Blickrichtung mehrdeutig. In dieser Session
+  gingen vier Korrekturrunden allein darauf zurück — jedes Mal war die Angabe eindeutig, nur die
+  Blickrichtung war eine andere als angenommen.
+- Vorgehen: Blickrichtung benennen, in Achsen übersetzen, die Übersetzung in der Antwort zeigen.
+  Dann kann der Nutzer die *Übersetzung* korrigieren statt das Ergebnis.
+
+**🟡 Offene Unbekannte sammeln statt einzeln zu raten**
+- Über zwei Tage habe ich Gaubenbreite, Geschosshöhen, Wintergartenmaße, Türbreiten und die
+  Dachfensterposition jeweils einzeln geschätzt — jede Schätzung kostete eine Korrekturrunde.
+  Diana fragte irgendwann selbst nach dem methodischen Vorgehen; das ist ein deutliches Signal.
+- Besser: Unbekannte in einer Liste führen, gebündelt vorlegen und dabei sagen, welche Messung
+  jede einzelne auflösen würde. Eine Frage nach zwei Zahlen ersetzt zehn Korrekturrunden.
+
+**🟡 „Fertig" erst melden, wenn die sichtbare Wirkung geprüft ist**
+- Präzisierung zur Lektion vom 2026-08-06: Es reicht nicht, den Mechanismus zu prüfen (Datei
+  ausgeliefert, HA neu gestartet). Bei visuellen Änderungen gehört ein Render **nach** dem Deploy
+  dazu — mehrere Fehler dieser Session (Fenster abgeschnitten, Dachfenster halb im Dach, heller
+  Rahmen) waren im Bild sofort sichtbar, in den Zahlen aber nicht.
