@@ -135,3 +135,104 @@ Commit erst nach Nutzer-Freigabe (Conventional Commits: `feat:` …).
 - **Adversarial Review zweier Modelle**: dafür gibt es `/santa-loop`
 - **Multi-Modell-Planung ohne Umsetzung**: `/multi-plan`
 - Dieser Skill ist für: neue Apps, neue Features, größere Umbauten mit klarer Test-Definition
+
+---
+
+## Phase 0 — Konzeptrunde vor dem Interview (bei großen Vorhaben)
+
+Der Ablauf oben startet beim Interview und geht direkt in TDD. Kommt das Vorhaben als **Master-Prompt
+mit mehreren Phasen** (Analyse → Expertenrat → PRD → Architektur → UX → erst dann Code) oder liegt
+bereits ein umfangreiches Ausgangsdokument vor, gehört eine Konzeptrunde davor. Sonst wird ein
+Entwurf implementiert, dessen tragende Annahmen nie geprüft wurden.
+
+**Erkennungsmerkmal:** Der Nutzer liefert eine Spezifikation statt einer Idee, oder verlangt
+ausdrücklich mehrere Rollen/Agenten. Dann ist das Interview nicht der erste Schritt.
+
+### Expertenrat statt Direkt-Interview
+
+Rollen, die sich bewährt haben: Markt/Produktstrategie · Architektur · Infrastruktur & Kosten ·
+UX/Adoption · Recht & Sicherheit · Red Team. Getrennt beauftragen, **ohne Kenntnis voneinander** —
+der Ertrag entsteht daraus, dass zwei Rollen aus verschiedenen Richtungen dieselbe Schwachstelle
+finden. In der VDAB-Session fanden UX und Recht unabhängig dieselbe Stelle (eine Risikozahl neben
+einem Namen) und schlugen dieselbe Lösung vor.
+
+**Auftragsformat, das Kontextüberlauf verhindert:**
+
+> Schreibe deine Analyse nach `docs/02-agentN-thema.md`.
+> Gib als finalen Text maximal 450 Wörter zurück: [die drei bis fünf Kernfragen].
+
+Ohne diese Klausel liefern Agenten mehrere tausend Wörter zurück und fluten den Architektenkontext.
+
+**In JEDEN Agentenauftrag gehört:**
+- „Erfinde keine Zahlen/Normen/Preise. Jede Angabe mit Quelle und Datum. Schätzungen als solche
+  kennzeichnen."
+- „Sei kritisch, nicht bestätigend. Deine Aufgabe ist prüfen, nicht loben."
+- Echte Umlaute (wandern sonst wörtlich in nutzersichtbaren Produkttext)
+
+### 🔴 Websearch-Budget ist endlich — Recherche-Agenten staffeln
+
+Eine Session hat **200 Websuchen**. Sechs parallel gestartete Agenten haben es in der VDAB-Session
+vollständig aufgebraucht, bevor die Synthese begann (allein der Marktagent: 74 Werkzeugaufrufe).
+Wer danach dran ist, sucht ins Leere — **liefert aber trotzdem eine Antwort**. Genau daraus
+entstehen erfundene Angaben.
+
+**Regel:** Recherchelastige Rollen (Markt, Recht, Preise) zuerst und allein losschicken. Rollen, die
+überwiegend aus dem Ausgangsmaterial arbeiten (Architektur, UX, Red Team), danach. Beim Aufbrauchen
+des Budgets den Nutzer informieren — er kann `CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION` anheben.
+`WebFetch` auf einzelne URLs funktioniert weiterhin.
+
+### 🔴 Agentenberichte sind Rohmaterial, kein Ergebnis
+
+Zwei Rechercheagenten haben in derselben Session eigene Angaben **selbst als erfunden
+zurückgezogen** (ein kompletter Kostenabschnitt, ein Lizenzname, eine Parameterzahl). Daraus folgt:
+Was auffällig falsch war, wurde bemerkt — was unauffällig erfunden ist, steht noch drin.
+
+Vor der Synthese jede Zahl prüfen, die eine Investitions-, Rechts- oder Architekturentscheidung
+trägt. Drei Wege, die funktioniert haben:
+
+| Quelle | Weg |
+|---|---|
+| **Amtliches PDF** | WebFetch scheitert oft an großen PDFs, speichert die Datei aber lokal → `pdftotext -layout datei.pdf out.txt` + `grep -n` |
+| **EU-Recht** | EUR-Lex-Volltext ist für WebFetch zu groß (bricht in den Erwägungsgründen ab). Verordnungs-Metadaten per CELEX-URL, Artikelwortlaut über eine Artikel-Einzelseite |
+| **Modell-Lizenz** | HuggingFace-MCP `hub_repo_details` liefert Lizenz, Parameterzahl und Sprachen direkt |
+
+Belegstand sichtbar dokumentieren (belegt / geschätzt / unbelegt), statt ihn zu glätten. Widersprüche
+zwischen zwei Läufen offen als unbestätigt ausweisen, nicht auf einen Wert einigen.
+
+### 🔴 Lizenzen prüfen, BEVOR die Architektur steht
+
+Zwei Lizenzfallen in einem Vorhaben, beide erst nach dem Bauen schmerzhaft:
+
+- **n8n** (Sustainable Use License): Weitergabe nur kostenlos und nicht-kommerziell → als Laufzeit
+  eines verkauften SaaS ausgeschlossen. Bleibt als interne Werkstatt nutzbar.
+- **Teuken-7B** (cc-by-nc-4.0): das naheliegende deutsche Modell, kommerziell unbrauchbar.
+
+Prüfen, sobald eine Komponente in die engere Wahl kommt — nicht erst im Deployment. Bei Modellen:
+Apache-2.0 o. ä. ist Auswahlkriterium Nummer eins, Qualität kommt danach.
+
+## 🟡 Handover am Sessionende — ohne dass gefragt wird
+
+Bei mehrstündigen Projektsessions gehört ein Wiedereinstiegspunkt zum Abschluss, nicht auf Nachfrage.
+In der VDAB-Session musste Diana zweimal nachfassen („wie kann ich morgen weiterarbeiten", „auf
+welcher Hardware"). Beides hätte von selbst kommen müssen.
+
+Erzeugt werden:
+
+1. **`<projekt>/CLAUDE.md`** — wird beim Öffnen automatisch geladen. Produktkern, harte Regeln,
+   technische Festlegungen, korrigierte Fehler als Prüfregel. Verweist auf die Dokumente, dupliziert
+   sie nicht.
+2. **`<projekt>/docs/STATUS.md`** — Arbeitsstand, mögliche nächste Wege mit Aufwand, offene Punkte,
+   und was **nur der Nutzer** beisteuern kann (Beispieldaten, Telefonate, anwaltliche Prüfung).
+3. **Memory-Einträge** für projektübergreifenden Kontext.
+4. **Den Rechnernamen und die Zugangswege nennen** — bei einem verteilten Setup ist „wo liegt das"
+   keine triviale Frage.
+
+Dazu gehört der Hinweis, wenn das Projektverzeichnis **kein Git-Repository** ist. Nicht ungefragt
+anlegen — aber sagen, dass die Arbeit genau einmal auf einer Platte liegt.
+
+## 🔵 Erklärstufe auf Anforderung wechseln
+
+Diana hat mitten in der Konzeptarbeit um eine Fassung „für einen 12-Jährigen" gebeten. Das ist kein
+Themenwechsel, sondern eine Prüfung, ob die Sache selbst verstanden ist. Funktioniert hat: ein
+konkretes Bild aus dem Alltag (Regenschirmverleih vor dem Bahnhof), dann die drei Fragen daran
+entlanggeführt — ohne Fachbegriffe, aber ohne den Inhalt zu verkleinern.
