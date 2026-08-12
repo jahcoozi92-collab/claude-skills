@@ -170,6 +170,8 @@ ping 192.168.2.215
 10. **Kein `git commit -m` mit Anführungszeichen in der Nachricht** — PowerShell 5.1 reicht auch ein Here-String (`@'…'@`) an `git.exe` weiter, wo die inneren `"` das Argument neu zerlegen (`error: pathspec '…' did not match any file(s)`). Nachricht in eine Datei schreiben und `git commit -F <datei>` nutzen
 11. **Kein `cv2.CascadeClassifier`/OpenCV-Dateizugriff auf Umlaut-Pfaden** — `C:\Users\D.Göbel\...` lässt jeden `cv2.CascadeClassifier(pfad)` **stumm leer** bleiben (`.empty() == True`, keine Exception), Ursache oft erst nach mehreren Fehlversuchen erkennbar. Cascade-/Modell-Dateien immer zuerst auf einen reinen ASCII-Pfad kopieren (z. B. `C:\ftmp\` oder ein eigener `C:\<Tool>\`-Ordner), dort laden
 12. **Keine UNC-Pfade mit Umlauten inline in `bash python -c "..."` oder langen `powershell -Command "..."`-Strings** — die Übergabe zwischen Bash/PowerShell/Python zerlegt dabei zuverlässig entweder einen Backslash (`\\SERVER...` → `\SERVER...`) oder das Umlautzeichen (`jährig` → `j�hrig`), meist erst nach 2-3 Fehlversuchen bemerkt. Immer eine `.py`/`.ps1`-Datei per Write-Tool anlegen und die aufrufen
+13. **Kein `cd <pfad> && befehl` im Bash-Tool** — jeder nicht allowlistete `cd`-Pfad loest einen eigenen Permission-Prompt aus, auch wenn der eigentliche Befehl (`Bash(python *)`) laengst erlaubt ist. `cd /c/AzubiUebersicht && python parse_einsaetze.py` wurde abgelehnt, `python C:\AzubiUebersicht\parse_einsaetze.py` via PowerShell lief sofort. Skripte IMMER ueber den absoluten Pfad aufrufen; das PowerShell-Tool setzt die CWD ohnehin nach jedem Aufruf zurueck
+14. **Kein Exit-Code != 0 als Zustandssignal** in Skripten, die von der Aufgabenplanung oder einem Agenten aufgerufen werden — ein `return 10` fuer „Aenderung erkannt" erscheint im Tool-Output als `<error>` und landet als `LastTaskResult != 0` in der Aufgabenplanung, also als Fehlschlag. Exit-Code nur 0 (gelaufen) / 1 (echter Fehler); den Zustand als Textmarker ausgeben (`AENDERUNG: ja/nein`), den der lesende Agent auswertet
 
 ### BEVORZUGT
 1. Git Bash für Dateisystem-Operationen, PowerShell für Windows-spezifische Aufgaben (COM, Registry)
@@ -653,3 +655,62 @@ Ergänzt den 2026-08-06-Eintrag zum selben Projekt (dort: reines PowerShell/GDI+
   sind sie ohnehin die günstigere Wahl.
 - Nach `resize_window` kann das Rendering versetzt bleiben (Klickziele stimmen nicht mit dem Bild
   überein). Dann hilft nur `navigate` auf dieselbe URL.
+
+### 2026-08-12 — Azubi-Übersicht: externe Einsätze, Encoding in Automationsausgaben, Abbruchbedingungen
+
+**🔴 Die Encoding-Pflicht (BEVORZUGT 7) gilt besonders für Skripte, deren Ausgabe eine Automation weiterverarbeitet**
+- Ich habe `parse_einsaetze.py` und `expire_status.py` ohne `sys.stdout.reconfigure(...)` geschrieben
+  und beim Testen jedes Mal `$env:PYTHONIOENCODING='utf-8'` gesetzt — dadurch blieb der Fehler
+  unsichtbar.
+- Es gab **keinen Crash**, sondern Mojibake: `Grünheid` → `Gr?nheid`, `Würselen` → `W?rselen`,
+  Bis-Strich → `?`. Genau diese Zeilen übernimmt der Wochenlauf in
+  `logs\Änderungsprotokoll.txt` — verstümmelte Personennamen in einem Protokoll, das Diana liest.
+- Merkmal dieser Fehlerklasse: Sie tritt nur auf, wenn die Ausgabe tatsächlich Sonderzeichen
+  enthält. Bei „keine Änderung" war die Ausgabe rein ASCII und alles sah gesund aus.
+- **Regel:** Jedes Skript, dessen stdout von Aufgabenplanung, Agent oder Logdatei weiterverarbeitet
+  wird, bekommt `sys.stdout.reconfigure(encoding="utf-8", errors="replace")` in den Import-Block —
+  nicht die Umgebungsvariable beim Aufruf. Verifikation: einmal **ohne** `PYTHONIOENCODING` mit
+  einem Umlaut-Datensatz laufen lassen.
+
+**🔴 Bekommt eine bestehende Automation eine neue periodische Pflicht, zuerst ihre Abbruchbedingungen prüfen**
+- `WOCHENAUFTRAG.md` endete in Schritt 1 mit „Wenn KEINE neuen Ordner gefunden wurden: … BEENDE
+  hier." Hätte ich die neuen Prüfungen (Statusverfall, Einsatzplanung) nur hinten angehängt, wären
+  sie in genau den Wochen nie gelaufen, in denen sie gebraucht werden — nämlich wenn sonst nichts
+  passiert.
+- Reihenfolge deshalb umgedreht: erst die Prüfungen, die **immer** laufen, dann der Ordnerabgleich,
+  danach ein gemeinsames „veröffentlichen, wenn irgendetwas davon etwas geändert hat".
+- Gilt generell für prompt-gesteuerte Automationen: Der Auftragstext ist Programmablauf. Ein neuer
+  Schritt muss vor dem ersten `return` stehen, nicht dahinter.
+
+**🟡 Interaktive Zustände einer HTML-Seite headless verifizieren**
+- Edge headless rendert nur den Initialzustand — ein Detail-Dialog, der per Klick öffnet, ist im
+  Screenshot nie zu sehen.
+- Muster: Kopie der Seite anlegen, vor `</body>` ein `<script>` mit dem Aufruf anhängen
+  (`openDetail(DATA.findIndex(d=>d.nach==="X"))`), diese Kopie rendern, danach löschen.
+  Die Kopie enthält Personendaten — sie gehört nach `C:\AzubiUebersicht\` und wird sofort entfernt.
+- Damit ist die Lektion vom 2026-08-06 („sichtbare Wirkung prüfen") auch für Zustände erfüllbar,
+  die erst nach einer Interaktion entstehen.
+
+**🟡 Logik gegen simulierten Stichtag testen, wenn der Echtdatenstand den Pfad nicht auslöst**
+- Am Umsetzungstag lief keine einzige „neu"-Frist ab — die Verfallslogik wäre ungetestet geblieben.
+- `expire_status.pruefe(roster, heute)` nimmt den Stichtag deshalb als Parameter statt intern
+  `date.today()` zu lesen. Ein Testskript im Scratchpad importiert die Funktion und prüft
+  konstruierte Fälle inkl. Grenzfall (Frist endet exakt heute → gilt als abgelaufen).
+- Parameter statt Direktzugriff auf `today()` ist der ganze Trick — er kostet nichts und macht
+  Fristlogik überhaupt erst prüfbar.
+
+**🟡 Personen über zwei Quellen zuordnen: normalisieren, Alias-Datei, Klärfall melden — nie raten**
+- Planungsdokumente und Stammdaten weichen systematisch ab: Anreden (`Hr. Handour, Mustapha`),
+  fehlende Zweitnamen (`Bleilefens, Celina` vs. `Celina Maria`), andere Schreibweise
+  (`Malekudy` vs. `Dia Malekuly`).
+- Vorgehen: Vergleichsschlüssel aus Nachname + erstem Vornamen, ohne Anrede und Diakritika
+  (`unicodedata.normalize("NFKD", …)`), echte Abweichungen in eine sichtbare `namens_alias.json`,
+  alles Übrige als Klärfall in den Bericht.
+- Bei Personendaten ist die stille Falschzuordnung der teuerste Fehler — ein gemeldeter Klärfall
+  kostet eine Minute, ein Einsatz beim falschen Azubi fällt womöglich erst im Krankenhaus auf.
+
+**🔵 Word-Dateien bleiben führende Quelle, die Übersicht zieht nach**
+- Diana pflegt die Einsatzplanung ohnehin in zwei `.docx`. Die Alternative — Einsätze in
+  `roster.json` von Hand nachtragen — hätte doppelte Pflege und garantierte Divergenz bedeutet.
+- Der Parser liest die Dokumente nur; geschrieben wird ausschließlich unter `C:\AzubiUebersicht\`.
+  Wird eine Quelldatei umbenannt, meldet er einen Fehler, statt still veraltete Daten anzuzeigen.
