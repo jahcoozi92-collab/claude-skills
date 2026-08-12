@@ -58,3 +58,46 @@ for id in t_herbstmarkt_flyer_2026 sw_flyeralarm sw_real_esrgan p_randpixel_ausz
 r=json.load(sys.stdin)
 print(" -> " + ", ".join("%s:%s" % (x["relation"], x["entity"]["id"]) for x in r) if r else " -> keine ausgehenden (nur Ziel?)")'
 done
+
+# ---------------------------------------------------------------------------
+# Nachtrag: Reflect nach der Azubi-Uebersicht-Session (externe Einsaetze,
+# Verfall des Status "neu", Wochenautomation) — gleicher Tag, zweiter Durchlauf.
+# ---------------------------------------------------------------------------
+
+echo "=== Nachtrag: Software ==="
+eval "$O create -t Software --id sw_parse_einsaetze -p '{\"name\":\"parse_einsaetze.py\",\"desc\":\"Liest Planungsdokumente (KH, Paediatrie) aus der Azubi-Ablage per zipfile+document.xml und schreibt einsaetze.json. Nur lesend auf dem Netzlaufwerk, Teil des Wochenlaufs auf WS44.\"}'"
+eval "$O create -t Software --id sw_expire_status -p '{\"name\":\"expire_status.py\",\"desc\":\"Setzt den Status neu nach 6 Wochen ab Eintrittsdatum auf aktuell (roster.json). Monatsangaben werden ab dem 1. gerechnet, fehlendes Datum wird gemeldet statt geraten.\"}'"
+
+echo "=== Nachtrag: Patterns ==="
+eval "$O create -t Pattern --id p_docx_tabellen_ohne_com -p '{\"name\":\"docx-Tabellen ohne COM lesen\",\"desc\":\"zipfile + word/document.xml + ElementTree statt Word-COM oder python-docx. Absaetze zwischen Tabellen mitlesen (Kontext), Spalten ueber die Kopfzeile statt ueber den Index zuordnen, w:tab und w:br als Leerzeichen. Abhaengigkeitsfrei, daher tauglich fuer unbeaufsichtigte Laeufe.\"}'"
+eval "$O create -t Pattern --id p_stdout_reconfigure_automation -p '{\"name\":\"stdout-Encoding in Automationsausgaben\",\"desc\":\"sys.stdout.reconfigure(encoding=utf-8, errors=replace) im Import-Block jedes Skripts, dessen Ausgabe von Aufgabenplanung, Agent oder Logdatei weiterverarbeitet wird. Ohne das entsteht auf der cp1252-Konsole kein Crash, sondern Mojibake im Protokoll. Verifikation: einmal ohne PYTHONIOENCODING mit Umlaut-Datensatz laufen lassen.\"}'"
+eval "$O create -t Pattern --id p_exit_code_kein_zustandssignal -p '{\"name\":\"Exit-Code ist kein Zustandssignal\",\"desc\":\"Exit-Code nur 0 (gelaufen) und 1 (Fehler). Zustaende wie Aenderung erkannt als Textmarker ausgeben. Ein return 10 erscheint im Agent-Tooloutput als error und in der Windows-Aufgabenplanung als LastTaskResult != 0, also als Fehlschlag.\"}'"
+eval "$O create -t Pattern --id p_abbruchbedingung_vor_neuer_pflicht -p '{\"name\":\"Abbruchbedingung pruefen vor neuer Pflicht\",\"desc\":\"Bevor eine bestehende Automation eine neue periodische Aufgabe bekommt, ihre vorzeitigen Ausstiege suchen. Der Azubi-Wochenauftrag endete bei keine neuen Ordner, angehaengte Pruefungen waeren nie gelaufen. Bei prompt-gesteuerten Automationen ist der Auftragstext der Programmablauf.\"}'"
+eval "$O create -t Pattern --id p_namensabgleich_alias_klaerfall -p '{\"name\":\"Personenabgleich ueber Quellen: Alias statt raten\",\"desc\":\"Vergleichsschluessel aus Nachname und erstem Vornamen ohne Anrede und Diakritika (unicodedata NFKD). Echte Abweichungen in eine sichtbare Alias-Datei, alles Uebrige als Klaerfall melden. Bei Personendaten ist die stille Falschzuordnung der teuerste Fehler.\"}'"
+eval "$O create -t Pattern --id p_stichtag_als_parameter -p '{\"name\":\"Stichtag als Parameter statt date.today()\",\"desc\":\"Fristlogik nimmt das Datum als Argument. Damit laesst sie sich gegen konstruierte Faelle inklusive Grenzfall pruefen, auch wenn der Echtdatenstand den Pfad am Umsetzungstag nicht ausloest.\"}'"
+eval "$O create -t Pattern --id p_headless_modal_verifizieren -p '{\"name\":\"Interaktive Zustaende headless verifizieren\",\"desc\":\"Edge headless rendert nur den Initialzustand. Fuer Dialoge eine Kopie der Seite anlegen, vor /body ein script mit dem Aufruf anhaengen, Kopie rendern und sofort loeschen. Erweitert die Regel sichtbare Wirkung pruefen auf Zustaende nach Interaktion.\"}'"
+eval "$O create -t Pattern --id p_absoluter_pfad_statt_cd -p '{\"name\":\"Absoluter Pfad statt cd im Bash-Tool\",\"desc\":\"Ein nicht allowlisteter cd-Pfad loest einen eigenen Permission-Prompt aus, auch wenn der eigentliche Befehl erlaubt ist. Skripte ueber den absoluten Pfad aufrufen. Das PowerShell-Tool setzt die CWD ohnehin nach jedem Aufruf zurueck.\"}'"
+
+echo "=== Nachtrag: Task ==="
+eval "$O create -t Task --id t_azubi_externe_einsaetze -p '{\"name\":\"Externe Einsaetze in die Azubi-Uebersicht integriert\",\"desc\":\"39 Einsaetze (Krankenhaus, Paediatrie) bei 25 von 51 Azubis automatisch aus zwei Word-Planungsdokumenten uebernommen, Anzeige als Badge auf der Karte und als Block im Detailfenster. Status neu verfaellt jetzt nach 6 Wochen. Wochenauftrag prueft beides bei jedem Lauf.\",\"status\":\"done\"}'"
+
+echo "=== Nachtrag: Relationen ==="
+eval "$O relate --from t_azubi_externe_einsaetze --rel uses --to sw_parse_einsaetze"
+eval "$O relate --from t_azubi_externe_einsaetze --rel uses --to sw_expire_status"
+eval "$O relate --from t_azubi_externe_einsaetze --rel uses --to p_abbruchbedingung_vor_neuer_pflicht"
+eval "$O relate --from t_azubi_externe_einsaetze --rel uses --to p_headless_modal_verifizieren"
+eval "$O relate --from t_azubi_externe_einsaetze --rel uses --to p_absoluter_pfad_statt_cd"
+eval "$O relate --from sw_parse_einsaetze --rel uses --to p_docx_tabellen_ohne_com"
+eval "$O relate --from sw_parse_einsaetze --rel uses --to p_namensabgleich_alias_klaerfall"
+eval "$O relate --from sw_parse_einsaetze --rel uses --to p_exit_code_kein_zustandssignal"
+eval "$O relate --from sw_parse_einsaetze --rel uses --to p_stdout_reconfigure_automation"
+eval "$O relate --from sw_expire_status --rel uses --to p_stichtag_als_parameter"
+eval "$O relate --from sw_expire_status --rel uses --to p_stdout_reconfigure_automation"
+
+echo "=== Verifikation Nachtrag (ueber die QUELL-IDs) ==="
+for id in t_azubi_externe_einsaetze sw_parse_einsaetze sw_expire_status; do
+  printf '%-42s' "$id"
+  eval "$O related --id $id" | python3 -c 'import json,sys
+r=json.load(sys.stdin)
+print(" -> " + ", ".join("%s:%s" % (x["relation"], x["entity"]["id"]) for x in r) if r else " -> keine ausgehenden (nur Ziel?)")'
+done
