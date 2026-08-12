@@ -423,3 +423,57 @@ Sub-Agenten können auf WS44 keine Bash/Write-Berechtigungen erhalten. Für docx
 - Version steht als römische Ziffer NACH dem letzten Datum im Footer
 - Regex: `r'\s{2,}([IVXLCDM]+)\.\s'` — nach 2+ Leerzeichen, mit Punkt und Space
 - Footer-Zugriff: Section → Footers(1/2/3) → Tables(1) → Cell(2,1)
+
+---
+
+## Word-Tabellen LESEN ohne COM und ohne python-docx
+
+Für reine Datenextraktion aus `.docx` — etwa wenn eine Automation regelmäßig Planungstabellen
+einliest — reicht die ZIP-Struktur der Datei. Kein Word, keine Abhängigkeit, läuft direkt auf
+Netzlaufwerken und in unbeaufsichtigten Läufen (Aufgabenplanung), wo ein `pip`-Bruch sonst die
+ganze Automation stoppt.
+
+```python
+import zipfile, re
+from xml.etree import ElementTree as ET
+NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+
+def bloecke(pfad):
+    """Liefert ('p', text) und ('tbl', [[zelle, ...], ...]) in Dokumentreihenfolge."""
+    with zipfile.ZipFile(pfad) as z:
+        root = ET.fromstring(z.read("word/document.xml"))
+    for child in root.find("w:body", NS):
+        tag = child.tag.split("}")[-1]
+        if tag == "p":
+            yield ("p", text_von(child))
+        elif tag == "tbl":
+            yield ("tbl", [[" ".join(text_von(p) for p in tc.findall("w:p", NS)).strip()
+                            for tc in tr.findall("w:tc", NS)]
+                           for tr in child.findall("w:tr", NS)])
+
+def text_von(p):
+    """w:t sammeln, w:tab/w:br als Leerzeichen — sonst kleben Wörter zusammen."""
+    teile = []
+    for node in p.iter():
+        t = node.tag.split("}")[-1]
+        if t == "t":
+            teile.append(node.text or "")
+        elif t in ("tab", "br"):
+            teile.append(" ")
+    return re.sub(r"\s+", " ", "".join(teile)).strip()
+```
+
+**Worauf es ankommt:**
+1. **Absätze mitlesen, nicht nur Tabellen** — Jahreszahlen und Zwischenüberschriften stehen als
+   `w:p` zwischen den Tabellen und sind oft der einzige Kontext für die Zeilen darunter
+   (z. B. welches Jahr gemeint ist, wenn in der Zelle nur `???` steht).
+2. **Spalten über die Kopfzeile zuordnen, nicht über den Index** — zwei Dokumente zum selben Thema
+   hatten unterschiedliche Spaltenzahl (Zeitraum einmal Spalte 3, einmal Spalte 5). Header-Text
+   auf Schlüsselwörter prüfen (`"zeitraum" in kopf.lower()`) und den Index daraus ableiten.
+3. **`w:tab` und `w:br` als Leerzeichen behandeln** — sonst entsteht `05.10.-30.10.2026Vinzenzheim`.
+4. **`~$…`-Dateien überspringen** — Word-Sperrdateien geöffneter Dokumente, kein gültiges ZIP.
+
+**Wann trotzdem python-docx (1.2.0 ist auf WS44 installiert):** einmalige Analysen und alles, was
+über Tabellen/Absätze hinausgeht (Formatierung, Kommentare, Bilder). Der Selbstbau lohnt sich nur
+dort, wo Abhängigkeitsfreiheit ein Wert ist — also in dauerhaft laufenden Automationen. Diese
+Abwägung gehört ausgesprochen, statt stillschweigend selbst zu bauen.
