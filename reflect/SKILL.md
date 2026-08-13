@@ -1173,3 +1173,42 @@ gehört ein **neuer** Skill angelegt. Format exakt wie die bestehenden:
 - **Regel:** Wenn eine Ausgabe aus einer Suche über Entitäten entsteht, vorher einmal auf Dubletten
   sehen (gleiche Fläche, gleicher Raum, gleicher Zustand). Der Aufwand ist eine Zeile, der Schaden
   ist eine falsche Aussage im Wohnzimmer.
+
+### 2026-08-13 — Vorhandene Memories vor der Skill-Anlage lesen; nicht übertragene Regeln sind der wertvollere Fund
+
+**🔴 Vor dem Anlegen eines neuen Skills die Memories zum Thema lesen — nicht nur die Skill-Liste**
+- Die Lektion vom 2026-08-07 sagt, wann ein **neuer** Skill anzulegen ist, und prüft dafür die
+  vorhandenen Skills. Das greift zu kurz: Wissen zu einem Thema kann längst als Memory existieren.
+- Hier: kein ffmpeg-/Schnitt-Skill vorhanden, aber vier einschlägige Memories
+  (`feedback_musikvideo_schnitt`, `feedback_kreativ_level_eskalation`, `reference_ffmpeg_xfade`,
+  `reference_ffmpeg_segment_pipeline`). Erst deren Lektüre machte den eigentlichen Fund sichtbar.
+- **Ablauf:** `ls ~/.claude/skills/` **und** die Memory-Einträge zum Thema lesen, bevor der Vorschlag
+  steht. Der neue Skill referenziert die Memories am Ende, statt sie zu duplizieren.
+
+**🔴 „Regel existierte, wurde nicht übertragen" schlägt „neue Regel gelernt"**
+- `feedback_musikvideo_schnitt.md` sagt seit dem AYLIVA-Projekt: „energy profile für Phrasen-Grenzen
+  nutzen, NICHT beat_track". Beim **Schnitt** habe ich das befolgt (Phrasengrenze über den
+  Pegeleinbruch). Bei der **Kamerabewegung** griff ich zum Beat-Grid — Diana musste dieselbe
+  Präferenz erneut einfordern („gibt es nichts gefühlvolleres als pulsieren?").
+- Die Regel war nicht unbekannt, sie war **domänengebunden abgelegt** („Schnitt") und wurde bei einer
+  benachbarten Aufgabe („Bewegung") nicht abgerufen.
+- **Beim Reflect gezielt danach suchen:** Gibt es zu einer Korrektur des Users bereits eine Regel, die
+  nur auf eine andere Ausprägung gemünzt war? Dann ist die Konsequenz **Generalisieren**, nicht eine
+  zweite Spezialregel danebenlegen. Im Skill als „gilt für X UND Y UND Z" formulieren.
+- Erkennungsmerkmal: Die Korrektur des Users fühlt sich beim Lesen der eigenen Memories vertraut an.
+  Dieses Gefühl ernst nehmen und die Stelle heraussuchen, statt weiterzuschreiben.
+
+**🟡 Wiederholte Verstöße gegen eine bereits dokumentierte Regel NICHT erneut notieren**
+- Die zsh-Falle (`set -- $var` splittet nicht, Lektion 2026-07-07) ist mir in dieser Session wieder
+  passiert. Eine zweite Notiz derselben Regel hätte nichts verbessert — sie stand ja schon da.
+- Im Reflect-Vorschlag trotzdem **erwähnen**, dass es aufgetreten und bewusst nicht aufgenommen wurde.
+  Das zeigt, dass geprüft und nicht übersehen wurde, und hält den Skill frei von Dubletten.
+
+**🟡 Selbst gefundene Fehler gehören genauso in den Reflect wie User-Korrekturen**
+- Der Skill nennt in Step 2 nur Signale, die vom User ausgehen (Korrekturen, Erfolge, Edge Cases).
+  Die drei folgenreichsten Funde dieser Session kamen aus der eigenen Verifikation: stumme Audiodatei
+  durch `afade` mit absoluten Zeitstempeln, ruckelnder `zoompan`, zu harter Beat-Puls.
+- Alle drei wären ohne Messung ausgeliefert worden — die stummen MP3s lagen bereits im Zielordner.
+- **Als eigene Signalklasse führen:** „selbst entdeckte Fehler (nur durch Verifikation gefunden)".
+  Sie sind für den Skill wertvoller als Erfolge, weil sie exakt die Prüfschritte begründen, die
+  künftig Pflicht sein sollen.
