@@ -3023,18 +3023,175 @@ Geräten, nicht nur auf dem betroffenen Satelliten.
   `intent_script` eine **leere** `speech`-Antwort gibt (er bleibt still) und den Text weiterreicht.
 
 **🟡 Echo-Geräte sprechen praktisch nur mit Amazons eigener Stimme**
-- Sämtliche Echo-Ausgaben in diesem Setup laufen über `notify.alexa_media_*`
-  (`jarvis_announce_room` in `jarvis_multiroom.yaml`: zwei solche Aufrufe, **null** ElevenLabs).
-  Das ist kein Zufall — Amazon lässt auf Echos kaum fremdes Audio zu.
-- Für eine eigene TTS-Stimme ist **Cast** der erprobte Weg: `script.jarvis_say`
-  (`jarvis_voice.yaml` ab Zeile 77) nutzt `tts.speak` auf `tts.elevenlabs_text_zu_sprache` mit
-  frei wählbarem `media_player_entity_id`.
-- Bevor man eine „Jarvis-Stimme auf dem Echo"-Lösung baut, diesen einen Test machen:
-  `tts.speak` mit ElevenLabs auf den Echo. Er macht Lärm — also zu passender Tageszeit.
+- ⚠️ **ÜBERHOLT am 2026-08-13 — der Test wurde gemacht und war erfolgreich.** Eigene Stimme auf
+  dem Echo geht. Der aktuelle Stand steht unten unter „Eigene Stimme auf dem Echo".
+- Richtig bleibt der Ausgangsbefund: Sämtliche Echo-Ausgaben liefen bis dahin über
+  `notify.alexa_media_*` (`jarvis_announce_room` in `jarvis_multiroom.yaml`), also mit Amazons
+  Stimme — nicht weil es nicht anders ginge, sondern weil es niemand probiert hatte.
 
 **🟡 HA-States über die MCP-Werkzeuge abfragen, nicht per Token aus einer .env**
 - Der Weg „Token aus `livekit/.env` lesen und per `curl` an die HA-API" wird geblockt, und das
   zu Recht — Credentials aus Konfigurationsdateien zu materialisieren ist ein harter Riegel.
-- `ha_search` liefert allerdings **keine** State-Attribute (`result_fields` kennt `attributes`
-  nicht), und ein `ha_get_state` gibt es in dieser MCP-Fassung nicht. Wenn Attribute gebraucht
-  werden, ist `ha_call_service` mit `ws_command` der verbleibende Weg.
+- `ha_search` liefert **keine** State-Attribute (`result_fields` kennt `attributes` nicht).
+- ⚠️ **Teil-Korrektur 2026-08-13:** `ha_get_state` ist sehr wohl verfügbar — nicht als eigenes
+  Werkzeug, sondern über den Proxy `ha_call_read_tool`. Es nimmt eine Liste und projiziert
+  Attribute, das ist der bequemste Weg an Zustände samt Attributen:
+  ```
+  ha_call_read_tool(name="ha_get_state", arguments={
+      "entity_id": ["climate.x", "sensor.y"], "attribute_keys": ["current_temperature"]})
+  ```
+  Ebenso `ha_get_history` (für „wann lief das zuletzt"). `ha_call_service` mit `ws_command`
+  bleibt der Weg für alles, was kein registrierter Dienst ist.
+
+### 2026-08-13 — Eigene Stimme auf dem Echo: SSML statt play_media, Ducking gehört in die Datei
+
+**🔴 `media_player.play_media` mit einer URL lehnt Amazon grundsätzlich ab**
+- Fehlerbild im HA-Log, im Klartext und ohne Stacktrace:
+  `Sorry, direct music streaming isn't supported. This limitation is set by Amazon, and not by
+  Alexa-Media-Player, Music-Assistant, nor Home-Assistant.` Zusätzlich sagt der Echo den Satz laut an.
+- **Der Weg, der funktioniert:** SSML-`<audio>` über `notify.alexa_media_*`. Damit spielt der Echo
+  jede eigene Datei ab — auch einen fertigen Musik-Sprach-Mix:
+  ```yaml
+  - action: notify.alexa_media
+    data:
+      target: "Dianas Echo Show 8 2nd Gen"
+      data: { type: tts }
+      message: '<audio src="https://homeassistant.forensikzentrum.com/local/jarvis_mix/x.mp3"/>'
+  ```
+- **Amazons Pflichtformat für SSML-Audio:** MP3, 24 kHz, 48 kb/s, höchstens 240 Sekunden. Kein
+  Zufall, dass `alexa_media` bei jedem `tts.speak` still ffmpeg anwirft und nach
+  `/config/www/alexa_tts/*_output.mp3` konvertiert — genau in dieses Profil. Wer selbst ausliefert,
+  produziert gleich passend, sonst bleibt der Echo stumm.
+- Die Datei muss **von außen** erreichbar sein, Amazon lädt sie selbst herunter. Ein interner
+  `192.168.x`-Link funktioniert nicht. `/local/…` ist ohne Authentifizierung abrufbar — vor dem
+  Abspielen einmal `curl -o /dev/null -w '%{http_code}'` auf die öffentliche URL.
+
+**🔴 Ein Echo spielt genau EINEN Stream — Ducking über zwei HA-Entitäten ist unmöglich**
+- Eine Ansage **ersetzt** laufende Musik, sie überlagert sie nicht. Der klassische Ducking-Ansatz
+  (Musik leiser stellen, TTS darüber, danach zurück) kann auf einem einzelnen Echo nicht
+  funktionieren — egal wie sauber die Lautstärke-Logik ist.
+- `script.jarvis_say` versucht genau das mit Spotify. Sein Guard rettet die Sache stillschweigend:
+  er verlangt ein `volume_level` an der Spotify-Entität, das im Leerlauf fehlt, und überspringt
+  die Musik. Ohne den Guard würde `play_media` das TTS abreißen.
+- **Spotify ist als Bett ohnehin nicht startbar:** `media_player.spotify_*` meldet im Leerlauf
+  `supported_features: 2048` (nur `SELECT_SOURCE`). Weder `play_media` noch `volume_set` sind
+  verfügbar; `select_source` allein startet keine Wiedergabe. HA kann Spotify also nicht von sich
+  aus anwerfen — es braucht ein bereits aktives Gerät.
+- **Lösung: Ducking vorher in die Datei mischen** (`config/scripts/jarvis_echo_mix.sh`), per
+  `sidechaincompress`. Das Bett weicht zurück, sobald die Stimme einsetzt, und atmet in den Pausen
+  zurück — ohne Timing-Rennen zwischen zwei Entitäten.
+
+**🔴 Bettmaterial nach FREQUENZBÄNDERN prüfen, nicht nach Pegel**
+- `jarvis_underlay.mp3` und `jarvis_underlay_loop.mp3` sind auf einem Echo **prinzipiell unhörbar**:
+  gemessen −43 dB im Mittel, und die Energie liegt fast vollständig unter 120 Hz
+  (500–2000 Hz: −71 dB, darüber −91 dB). Ein Sub-Bass-Drone, den der kleine Treiber nicht wiedergibt.
+  Beliebig lautgedreht bleibt er weg — das ist kein Pegel-, sondern ein Materialproblem.
+- Das erklärt rückwirkend auch den „Cinematic-Underlay" am TV: gehört hat ihn dort vermutlich nie
+  jemand.
+- Messbefehl, der die Frage in Sekunden klärt:
+  ```bash
+  for f in 'lowpass=f=120' 'highpass=f=120,lowpass=f=500' 'highpass=f=500,lowpass=f=2000' 'highpass=f=2000'; do
+    ffmpeg -hide_banner -t 20 -i bett.mp3 -af "$f,volumedetect" -f null - 2>&1 | grep mean_volume
+  done
+  ```
+- Brauchbar sind Betten mit Substanz zwischen 120 und 2000 Hz. Alles unter 150 Hz wird im Mix
+  ohnehin weggeschnitten — es kostet bei 48 kb/s nur Bits, die der Stimme fehlen.
+
+**🔴 Ein Musikstück wird nicht am Anfang angeschnitten**
+- Hans Zimmers „Time" liegt in der ersten Minute rund 20 dB unter seinem Höhepunkt. Bei Sekunde 0
+  einzusteigen verschenkt das Stück komplett. Die tragende Stelle findet man messend:
+  ```bash
+  for t in 0 20 40 60 80 100 120 140 160 180 200; do
+    printf '%3ds ' $t
+    ffmpeg -hide_banner -ss $t -t 20 -i stueck.mp3 -af "highpass=f=150,lowpass=f=2000,volumedetect" \
+      -f null - 2>&1 | sed -n 's/.*mean_volume: //p' | head -1
+  done
+  ```
+- **Und die Einmessung muss denselben Ausschnitt messen, der später klingt** — ab dem Startpunkt
+  und hinter dem Hochpass. Sonst pegelt sie den leisen Anfang ein, und die tragende Stelle wird
+  lauter als die Stimme.
+
+**🟡 ffmpeg: drei Fallen im Sprache-über-Musik-Mix**
+- `sidechaincompress` endet, sobald **ein** Eingang EOF meldet. Ohne `apad=whole_dur=<gesamt>` auf
+  dem Steuersignal bricht das Bett exakt am Sprechende ab — der Ausklang fehlt ersatzlos.
+- Das Stimmsignal wird zweimal gebraucht (Steuersignal **und** hörbare Spur) → `asplit=2`.
+  Ohne Split verbraucht der Kompressor den Stream und die Stimme fehlt im Mix.
+- `amix=…:duration=first` bezieht sich auf den **ersten** Eingang. Steht dort das per
+  `-stream_loop -1` geloopte Bett, läuft ffmpeg endlos weiter (in dieser Session live passiert,
+  Prozess musste abgeschossen werden). Stimme nach vorn, oder hartes `-t <gesamt>`.
+- Kurze Betten nahtlos schleifen: das Ende **einmalig** über den Anfang blenden (`atrim` + `afade`
+  + `concat`), danach genügt simples `-stream_loop`. Kontrolle: Pegel der ersten und letzten 0,3 s
+  müssen übereinstimmen.
+
+**🟡 ElevenLabs: der Preis hängt am Modell, nicht an der Stimme**
+- `eleven_flash_v2_5` und `eleven_turbo_v2_5` haben `character_cost_multiplier` **0,5**,
+  `multilingual_v2` und `v3` haben 1,0. Eine andere Stimme kostet dagegen exakt gleich viel.
+  Im A/B mit derselben Stimme war kein Unterschied hörbar → halbe Kosten geschenkt.
+  Modellliste samt Faktor: `GET /v1/models`, Feld `model_rates.character_cost_multiplier`.
+- `flash` spricht rund 20 % langsamer als `multilingual_v2` — abgerechnet werden Zeichen, nicht
+  Sekunden, die Ersparnis bleibt also real.
+- **Stimmen aus der Library sind direkt per `voice_id` nutzbar**, ohne sie vorher zu importieren.
+- **Der `language=de`-Filter von `/v1/shared-voices` ist unbrauchbar** — er liefert argentinische,
+  koreanische und indische Stimmen, weil deren `verified_languages` Deutsch nur im Sinne von
+  „mehrsprachig" enthalten. Verlässlich ist ein Filter auf `German|deutsch` in der Beschreibung.
+- **Die Aussprache steuert man über die Schreibweise.** „Diana" wird englisch als „Dajana"
+  gesprochen; von fünf getesteten Varianten war **„Dieana"** richtig. Solche Schreibweisen gehören
+  an genau eine Stelle im Code, mit Kommentar, dass sie Absicht sind.
+- **`voice_settings` gehören zur Stimme.** `stability` und `style` steuern die Ausdrucksstärke der
+  Betonung. Übernimmt man beim Stimmenwechsel die alten Werte, klingt die neue Stimme anders als in
+  dem Vergleich, auf dessen Grundlage sie ausgesucht wurde.
+- Für die Kontingent-Abfrage (`/v1/user/subscription`) braucht der Schlüssel das Recht `user_read`;
+  ohne kommt 401 mit `missing_permissions`. TTS selbst funktioniert davon unabhängig.
+
+**🔴 `.env`-Werte mit Leerzeichen am Zeilenende: `source` schneidet ab, `cut` nicht**
+- `ELEVENLABS_API_KEY=sk_550…` hatte 34 Leerzeichen hinter dem Schlüssel. `source .env` liefert die
+  korrekten 51 Zeichen, `grep … | cut -d= -f2-` liefert 85 — und damit ein hartnäckiges HTTP 401
+  bei völlig gültigem Schlüssel.
+- Beim Übertragen von Zugangsdaten zwischen Dateien niemals `cut` allein verwenden. Verlässlich:
+  `KEY=$( source .env; printf %s "$ELEVENLABS_API_KEY" )`. Zum Vergleichen ohne Klartext-Ausgabe
+  `sha256sum` und Länge nutzen.
+
+**🔴 Fensterkontakte existieren DOPPELT — jede Ansage zählt sonst falsch**
+- Jeder der drei Kontakte erscheint zweimal: als `binary_sensor.fensterkontakt*` und als
+  `binary_sensor.<raum>_fensterkontakt_*_tur_2`. Beide melden denselben Zustand.
+  In der ersten Lagebericht-Ansage wurde daraus „zwei Öffnungen offen", obwohl nur eine offen war.
+- Die drei echten Kontakte, mit ihrer Raumzuordnung:
+
+  | Entität | Raum |
+  |---|---|
+  | `binary_sensor.fensterkontakt` | Badezimmer |
+  | `binary_sensor.fensterkontakt_rechts` | Gästezimmer |
+  | `binary_sensor.fensterkontakt_rechts_2` | Schlafzimmer |
+
+- ⚠️ Eine der Entitäten heißt „… - Tür". **Am Gästezimmer gibt es keine smarte Tür** — es ist das
+  Gästezimmerfenster. Dem Namen nicht glauben.
+
+**🟡 `last_changed` überlebt keinen `reload_all` — für „wann zuletzt" einen Merker führen**
+- Für „die Waschmaschine lief zuletzt vor X Tagen" ist `last_changed` untauglich: jeder
+  Konfigurations-Reload setzt es auf jetzt. Templates können die Historie nicht lesen.
+- Verlässlicher Aufbau: `input_datetime` + Automation, die bei jedem Start fortschreibt; den
+  Anfangswert einmalig aus dem Recorder holen (`ha_get_history`, 30 Tage Aufbewahrung).
+  Danach zählt es sich selbst weiter, auch über Neustarts.
+
+**🟡 Die Wetterquelle liefert keine Regenwahrscheinlichkeit, nur Millimeter**
+- `sensor.wetter_regen_wahrscheinlichkeit` steht dauerhaft auf `unknown` — kein Defekt: die
+  Vorhersage aus `weather.get_forecasts` kennt schlicht kein `precipitation_probability`, nur
+  `precipitation` in mm. In Ansagen deshalb die Menge nennen, nicht eine Wahrscheinlichkeit
+  erfinden.
+
+**🟡 `shell_command` rendert Template-Werte UNescaped in die Shell**
+- Sobald das Kommando Anführungszeichen enthält, führt HA es über eine Shell aus. Ein Zitat oder
+  ein `$` im Ansagetext zerlegt dann den Aufruf. Im Template filtern:
+  `{{ message | replace('"','') | replace('`','') | replace('$','') }}`.
+- `response_variable` liefert `stdout`, `stderr` und `returncode` — den Rückgabewert prüfen und im
+  Fehlerfall eine `persistent_notification` erzeugen, sonst bleibt der Echo bei einem abgelaufenen
+  Schlüssel einfach stumm.
+- Ein Skript, das sowohl auf dem NAS als auch im Container laufen soll, erkennt seinen Ort selbst
+  (`/config` vs. `/volume1/docker/home-assistant/config`). Der Container sieht die `.env` des
+  Stacks **nicht** — Schlüssel dort aus `secrets.yaml` lesen, nicht als Argument übergeben
+  (stünde sonst in der Prozessliste).
+
+**🔵 Neue Dateien unter `/local/` brauchen keinen Neustart, aber eindeutige Namen**
+- Ein frisch angelegter Unterordner in `config/www/` wird sofort ausgeliefert. Aber sowohl Browser
+  (31 Tage) als auch Amazon holen über die URL — bei gleichem Dateinamen kommt der alte Ton.
+  Deshalb Zeitstempel im Namen und alte Dateien nach ein paar Stunden wegräumen.
