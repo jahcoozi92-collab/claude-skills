@@ -1782,3 +1782,52 @@ grep -E 'ERROR: process|failed to solve|port is already allocated' <projekt>-bui
   `BadMatch` / `XFree86-VidModeExtension missing`, obwohl Vulkan einwandfrei arbeitet. Belastbar ist
   nur ein echter Rechenlauf — und die Gegenprobe, ob die GPU ihn macht: bei ~1 % CPU-Last rechnet die
   GPU, bei mehreren hundert Prozent ist es der Software-Rasterizer (llvmpipe).
+
+### 2026-08-13 — Compose-Profile erzeugen Geister-Alarme; Env-Änderungen brauchen Recreate
+
+**🔴 Ein Service hinter `profiles:` startet NIE bei `docker compose up`**
+- Fall: `jarvis-watchdog` meldete **1075 Mal in 45 Tagen** stündlich
+  `Achtung: Container voice-agent-1 ist missing.` — per MQTT **und** als gesprochene Ansage,
+  auch nachts. Der Watchdog hatte recht: den Container gab es nicht.
+- Ursache war aber kein Ausfall. Der Service trug zwei Merkmale, die beide gegen ein Starten
+  sprechen:
+  ```yaml
+  agent-simple-latency:
+    container_name: voice-agent-1
+    profiles: ["agent1", "all-agents"]   # ohne --profile agent1 startet er nie
+    restart: "no"
+  ```
+  Dazu fehlte sein Image auf dem Host (`voice-agent-realtime:latest`, kein `build:`-Block) —
+  vermutlich einem `docker image prune -a` zum Opfer gefallen.
+- **Regel:** Meldet eine Überwachung dauerhaft „Container fehlt", zuerst klären, ob er überhaupt
+  starten SOLL. Diagnose-Reihenfolge:
+  ```bash
+  grep -A5 "container_name: <name>" docker-compose.yml | grep -E "profiles|restart|image|build"
+  docker images | grep <image>            # existiert das Image ueberhaupt?
+  docker ps -a --filter "name=<name>"     # gibt es ihn gestoppt?
+  ```
+  Kein Treffer bei allen dreien = der Container ist ein Geist, kein Ausfall. Dann gehört er aus
+  der Überwachungsliste, nicht wiederbelebt.
+- Beim Entfernen aus der Liste die **Begründung als Kommentar** darüber schreiben — sonst trägt
+  ihn die nächste Sitzung als „fehlt ja" wieder ein.
+
+**🟡 Geänderte Umgebungsvariablen greifen erst bei Recreate, nicht bei `restart`**
+- `docker restart <container>` startet den bestehenden Container mit seiner **alten** Umgebung neu.
+  Eine Änderung an `environment:` in der Compose-Datei bleibt damit wirkungslos.
+- Nötig ist ein Recreate — aber gezielt, damit nicht der halbe Stack mitgerissen wird:
+  ```bash
+  cd /pfad/zum/stack
+  docker compose config -q                                        # erst validieren
+  docker compose -p <projekt> up -d --no-deps --no-build <service>
+  ```
+  `--no-deps` hält die Abhängigkeiten fest, `--no-build` verhindert einen ungewollten Neubau bei
+  Services mit `build:`.
+- Projekt- und Servicename nicht raten, sondern auslesen — Container- und Servicename weichen oft ab:
+  ```bash
+  docker inspect <container> --format '{{index .Config.Labels "com.docker.compose.project"}} / {{index .Config.Labels "com.docker.compose.service"}}'
+  ```
+- Danach gegenprüfen, dass wirklich nur der eine Container jung ist:
+  ```bash
+  docker inspect <container> --format '{{range .Config.Env}}{{println .}}{{end}}' | grep <VARIABLE>
+  docker ps --format "table {{.Names}}\t{{.Status}}"   # alle anderen behalten ihre Laufzeit
+  ```
