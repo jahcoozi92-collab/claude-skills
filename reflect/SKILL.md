@@ -1010,3 +1010,33 @@ gehört ein **neuer** Skill angelegt. Format exakt wie die bestehenden:
   ausgeliefert, HA neu gestartet). Bei visuellen Änderungen gehört ein Render **nach** dem Deploy
   dazu — mehrere Fehler dieser Session (Fenster abgeschnitten, Dachfenster halb im Dach, heller
   Rahmen) waren im Bild sofort sichtbar, in den Zahlen aber nicht.
+
+### 2026-08-13 — Einrichtungsauftrag zuerst gegen den Ist-Zustand prüfen
+
+**🔴 Ein detailliert formulierter Bauauftrag belegt nicht, dass noch nichts existiert**
+- Diana gab einen sechsteiligen Auftrag zum Einrichten eines Wyoming-Satelliten auf dem S8+:
+  PulseAudio installieren, proot prüfen, venv bauen, Startskript, Autostart. Formuliert als
+  Neuaufbau, inklusive Reparaturzweig („falls beschädigt: remove + rm -rf des rootfs").
+- Tatsächlich war der Satellit **in derselben Nacht um 02:07 fertiggestellt** worden und lief seit
+  Stunden produktiv. Jeder der sechs Schritte wäre auf ein bestehendes System getroffen;
+  Schritt 2 hätte den laufenden Container gelöscht.
+- Aufgefallen ist es nur, weil ein Memory-Eintrag (`s8-wyoming-satellite.md`) das Thema nannte und
+  ich vor dem ersten Eingriff den Live-Zustand abgefragt habe.
+- **Regel:** Bevor ein Auftrag etwas *einrichtet, installiert oder neu aufsetzt* — erst den
+  Ist-Zustand erheben. Ein `ps`/`ss`/`docker ps`-Aufruf kostet Sekunden; ein Neuaufbau über einem
+  laufenden Dienst ist nicht rückgängig zu machen.
+- **Auslöser für die Prüfung:** (a) ein Memory- oder Skill-Eintrag nennt das Thema, (b) der Auftrag
+  enthält einen Reparaturzweig („falls kaputt, dann neu"), (c) es geht um einen Dienst, der
+  dauerhaft läuft.
+- Das ist kein Misstrauen gegenüber der Nutzerangabe. Die Angabe „richte X ein" beschreibt das
+  gewünschte Ziel, nicht zwingend den Ausgangszustand — und beide zu kennen ist Teil der Aufgabe.
+
+**🟡 „Bereits erledigt" ist ein vollwertiges Arbeitsergebnis — mit Beleg pro Punkt**
+- Die Versuchung ist, trotzdem etwas zu bauen, um Arbeit vorzuweisen. Richtig ist, die
+  Auftragsstruktur beizubehalten und jeden Punkt einzeln zu belegen. Dann sieht der Nutzer, dass
+  geprüft und nicht behauptet wurde.
+- Offene Restpunkte trotzdem benennen, statt die Meldung auf „läuft alles" zu runden — hier der
+  akustische Test mit gesprochenem Wake-Word, den nur Diana ausführen kann.
+- Anschluss an die Lektion vom 2026-08-06 („Verifikation muss die sichtbare Wirkung treffen"):
+  Bei einer Bestandsprüfung endet die eigene Kette dort, wo physische Anwesenheit beginnt. Diese
+  Grenze gehört in die Antwort, nicht weggelassen.
