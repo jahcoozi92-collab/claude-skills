@@ -2858,3 +2858,68 @@ Fast alle gingen auf dieselben vier Ursachen zurück.
 - `gen_plan.py` (2D-Plan + Kachelpositionen), `gen_card3d.py` (Wände/Böden/Umgebung),
   `patch_card3d.py` (schreibt ins Storage-JSON, braucht `sudo`). Der 2D-Plan und die 3D-Karte
   liefen vorher bei jeder Korrektur auseinander, weil die Treppen im SVG von Hand gezeichnet waren.
+
+### 2026-08-13 — S8+ als Wyoming-Satellit (Termux/proot): Bestandsprüfung, /tmp-Falle, Pegelbeweis
+
+Das Galaxy S8+ läuft als Satellit **`s8-flur`** auf `192.168.22.35:10700` und erscheint in HA als
+`assist_satellite.s8_flur`. Der Skill kannte bisher nur die drei Wyoming-Container auf der NAS,
+nicht den Satelliten selbst.
+
+**Audiokette — drei Ebenen, jede mit eigenem Skript:**
+
+```
+Termux-PulseAudio (module-sles-source → OpenSL_ES_source)
+  └─ module-native-protocol-tcp, Port 4713, auth-ip-acl=127.0.0.1
+       └─ proot-Ubuntu: PULSE_SERVER=tcp:127.0.0.1:4713
+            └─ .venv/bin/python -m wyoming_satellite → Port 10700
+                 └─ --wake-uri tcp://192.168.22.90:10400 (NAS)
+```
+
+| Datei | Ebene | Zweck |
+|---|---|---|
+| `~/.termux/boot/start-wyoming-satellite.sh` | Termux | Autostart, Wake-Lock, wartet auf NAS:10400 |
+| `~/wyoming-satellite-start.sh` | Termux | PulseAudio + Module idempotent, dann proot |
+| `/root/run-satellite.sh` | proot-Ubuntu | die eigentlichen Satelliten-Flags |
+
+Drei Dateien statt einer, weil das Quoting über Termux-Shell → ssh → proot-Shell sonst bricht.
+
+**🔴 `/tmp` ist unter Android nicht beschreibbar — Termux hat sein eigenes**
+- Live gescheitert: `parec … > /tmp/mictest.raw` → `Permission denied`. `/tmp` gehört dem System.
+- Richtig: `$HOME` oder `$PREFIX/tmp` (`/data/data/com.termux/files/usr/tmp`).
+- Gilt für jedes Skript, das auf dem Telefon Zwischendateien ablegt.
+
+**🔴 Vor dem Einrichten prüfen, ob der Satellit schon läuft**
+- Der Stack läuft wochenlang unbemerkt. Ein Neuaufbau (proot-remove, venv neu, Module neu laden)
+  killt den laufenden Dienst. Ein Befehl klärt das:
+  ```bash
+  ssh s8 'ps aux | grep -E "[w]yoming_satellite|[p]ulseaudio"; ss -tln | grep -E "10700|4713"'
+  ```
+- Gegenprobe von der NAS: `assist_satellite.s8_flur` in HA suchen — Zustand `idle` heißt, die
+  Kette steht vollständig.
+
+**🟡 Mikrofon-Pegel: Peak über die ganze Datei, nicht nur der od-Kopf**
+- Die ersten 64 Bytes sehen fast immer „irgendwie nach Signal" aus. Aussagekräftig ist erst:
+  ```bash
+  ssh s8 'cd $HOME && timeout 3 parec --rate=16000 --channels=1 --format=s16le --raw \
+      -d OpenSL_ES_source > mictest.raw
+  od -An -td2 -v mictest.raw | awk "{for(i=1;i<=NF;i++){v=\$i;if(v<0)v=-v;if(v>max)max=v;s+=v;n++}}
+      END{printf \"Peak=%d Mittel=%.1f (Voll=32767)\n\",max,s/n}"'
+  ```
+- Zwei Gegenproben: die Dateigröße muss `32000 Byte/s` treffen (16 kHz × 1 ch × 2 Byte), und
+  Peak > 0 beweist, dass es kein digitales Nichts ist. Peak 139 = stilles Zimmer, Mikrofon lebt.
+- Das beweist **nicht**, dass Sprache brauchbar ankommt — dafür braucht es ein gesprochenes
+  Wake-Word und einen Blick ins Log. Die Meldung entsprechend formulieren.
+
+**🟡 `Is Local: no` ist der Beweis für den TCP-Weg**
+- `pactl info` in der proot-Umgebung muss `Server String: tcp:127.0.0.1:4713` **und**
+  `Is Local: no` zeigen. „pactl antwortet" allein reicht nicht: ohne gesetztes `PULSE_SERVER`
+  fände es keinen lokalen Socket, mit falschem Wert redete es mit dem falschen Server.
+
+**🟡 `-d OpenSL_ES_source` bleibt zwingend**
+- Die Default-Source kann `OpenSL_ES_sink.monitor` sein — das ist der Lautsprecher-Mitschnitt,
+  nicht das Mikrofon. Der Satellit hörte dann sich selbst.
+
+**🔵 proot-distro: `debian` ist auf diesem Gerät defekt, `ubuntu` trägt den Dienst**
+- Beide Container sind installiert; `debian` meldet „shell '/bin/sh' is not available".
+- Container liegen seit 5.6.0 unter `$PREFIX/var/lib/proot-distro/containers/<name>/rootfs`,
+  nicht mehr unter `installed-rootfs/` — das wirkt sonst fälschlich leer.
