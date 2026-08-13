@@ -1040,3 +1040,47 @@ gehört ein **neuer** Skill angelegt. Format exakt wie die bestehenden:
 - Anschluss an die Lektion vom 2026-08-06 („Verifikation muss die sichtbare Wirkung treffen"):
   Bei einer Bestandsprüfung endet die eigene Kette dort, wo physische Anwesenheit beginnt. Diese
   Grenze gehört in die Antwort, nicht weggelassen.
+
+### 2026-08-13 — Fehlerbild als Fortschritt lesen, Log-Fenster nach Neustart, wirkungsfreie Prüfwege
+
+**🟡 Ein WECHSELNDES Fehlerbild ist ein Fortschritt, kein neuer Defekt**
+- Zwei Testläufe hintereinander: erst `stt-no-text-recognized`, dann `intent-failed`. Das sieht nach
+  „geht immer noch nicht" aus, sagt aber genau das Gegenteil: die zweite Meldung kann überhaupt erst
+  entstehen, wenn die Spracherkennung Text geliefert hat. Die Kette trug also eine Stufe weiter.
+- **Regel:** Fehlermeldungen entlang der Verarbeitungskette einordnen, statt sie nur als „Fehler" zu
+  zählen. Welche Stufe hat die Meldung erzeugt? Alles davor hat funktioniert — und das ist beim
+  Eingrenzen die halbe Arbeit.
+- Nützlich für die Antwort: die Kette als Tabelle mit Häkchen bis zum Bruchpunkt zeigen. Der Nutzer
+  sieht dann, dass sich etwas bewegt hat, statt zweimal dieselbe Enttäuschung zu lesen.
+
+**🟡 `docker logs --tail` zeigt auch die Zeit VOR dem Neustart**
+- Nach `docker restart` prüfte ich mit `--tail 300`, ob der Fehler weg ist — und fand ihn noch.
+  Ein Container-Neustart leert das Log nicht; die alten Zeilen stehen weiter drin.
+- Beinahe hätte ich den Fix als gescheitert gemeldet. Aufgefallen ist es nur am **Zeitstempel** der
+  Zeile (02:41, der Neustart war 03:14).
+- **Regel:** Nach einem Neustart nie mit `--tail` prüfen, sondern mit `--since`:
+  ```bash
+  docker logs <container> --since 3m 2>&1 | grep -c "<fehlermuster>"
+  ```
+  Und generell: bei „Fehler noch da?" immer erst den Zeitstempel lesen, bevor man ihn als aktuell
+  bewertet.
+
+**🟡 Vor dem Verifizieren nach einem wirkungsfreien Prüfweg suchen**
+- Um den reparierten Musik-Intent zu testen, hätte der naheliegende Weg („spiel Ayliva" durch die
+  Sprachverarbeitung schicken) um 03:15 Uhr tatsächlich Musik gestartet.
+- Es gab einen Endpunkt, der nur matcht und nichts ausführt. Danach zu suchen kostete einen
+  Gedanken und ersparte eine nächtliche Nebenwirkung im Haus eines schlafenden Menschen.
+- **Regel:** Bevor eine Verifikation etwas auslöst, das in der physischen Welt wirkt (Ton, Licht,
+  Motoren, Nachrichten, Bestellungen), erst prüfen, ob es einen reinen Prüf- oder Trockenlauf-Pfad
+  gibt. Gibt es keinen, die Nebenwirkung ankündigen statt sie zu überraschen — oder auf einen
+  passenden Zeitpunkt verschieben.
+- Anschluss an die Verifikations-Lektionen vom 2026-08-06/11: „die sichtbare Wirkung prüfen" heisst
+  nicht „die Wirkung auslösen". Beim Prüfen ist der schmalste Weg zum Beweis der richtige.
+
+**🔵 Eine offene Nebenfrage beim Fix mitklären, statt sie stehenzulassen**
+- Beim Reparieren fiel auf, dass eine benachbarte Datei dieselbe Struktur **anders** verwendete.
+  Ich hatte mich für die dokumentierte Variante entschieden und die Abweichung nur innerlich notiert.
+- Erst der nächste Reflect-Durchlauf brachte die Prüfung — und damit vier weitere tote Intents ans
+  Licht, die seit Monaten niemandem aufgefallen waren.
+- **Regel:** Wenn beim Beheben eines Fehlers eine zweite Stelle mit abweichender Schreibweise
+  auffällt, gleich mitprüfen. Das Prüfwerkzeug ist in dem Moment ohnehin schon in der Hand.
