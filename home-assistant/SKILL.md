@@ -2999,3 +2999,42 @@ Geräten, nicht nur auf dem betroffenen Satelliten.
   ```bash
   grep -rln "{artist}" config/custom_sentences/ config/packages/
   ```
+
+### 2026-08-13 — Assist-Antworttext ist unerreichbar; Echos sprechen nur mit Amazons Stimme
+
+**🔴 Der Antworttext der Assist-Pipeline lässt sich nicht abgreifen — das ist Architektur, kein Fehler**
+- Die Pipeline meldet ihre Phasen (`run-start`, `stt-start`, `tts-end` …) **nur über die
+  WebSocket-Verbindung an den Client, der sie gestartet hat** — bei einem Wyoming-Satelliten also
+  an den Satelliten. Auf dem Event-Bus landet nichts, ein `event`-Trigger greift ins Leere.
+- Die Entität trägt ihn auch nicht: `assist_satellite.s8_flur` hat nur `friendly_name` und
+  `supported_features` (1 = ANNOUNCE). Kein `last_response`, kein Text.
+- Konsequenz: Eine Automation kann **nicht** „nimm die Antwort und sprich sie woanders aus".
+  Der Satellit spielt sie ab, weil er der Einzige ist, der sie kennt.
+- Derselbe Befund steht seit dem 2026-08-01 als Kommentar in `packages/jarvis_brain.yaml`
+  (ab Zeile 466) — dort hatte er die Underlay-Automation lahmgelegt, die auf ein nicht
+  existierendes `voice_assistant_run_start`-Event triggerte.
+
+**🟡 Wer die Antwort woanders braucht, muss die Frage selbst stellen**
+- Das funktionierende Gegenmuster steht in `packages/jarvis_brain.yaml` ab Zeile 91:
+  `script.jarvis_ask` ruft `rest_command.jarvis_brain_query` mit `response_variable: brain_response`
+  auf — damit liegt der Antworttext in HA vor und lässt sich beliebig routen.
+- Ihm fehlt nur der Auslöser: Er startet heute über einen Dashboard-Helper, nicht per Sprache.
+  Die Brücke wäre ein Intent, der den gesprochenen Text abfängt, dem Satelliten per
+  `intent_script` eine **leere** `speech`-Antwort gibt (er bleibt still) und den Text weiterreicht.
+
+**🟡 Echo-Geräte sprechen praktisch nur mit Amazons eigener Stimme**
+- Sämtliche Echo-Ausgaben in diesem Setup laufen über `notify.alexa_media_*`
+  (`jarvis_announce_room` in `jarvis_multiroom.yaml`: zwei solche Aufrufe, **null** ElevenLabs).
+  Das ist kein Zufall — Amazon lässt auf Echos kaum fremdes Audio zu.
+- Für eine eigene TTS-Stimme ist **Cast** der erprobte Weg: `script.jarvis_say`
+  (`jarvis_voice.yaml` ab Zeile 77) nutzt `tts.speak` auf `tts.elevenlabs_text_zu_sprache` mit
+  frei wählbarem `media_player_entity_id`.
+- Bevor man eine „Jarvis-Stimme auf dem Echo"-Lösung baut, diesen einen Test machen:
+  `tts.speak` mit ElevenLabs auf den Echo. Er macht Lärm — also zu passender Tageszeit.
+
+**🟡 HA-States über die MCP-Werkzeuge abfragen, nicht per Token aus einer .env**
+- Der Weg „Token aus `livekit/.env` lesen und per `curl` an die HA-API" wird geblockt, und das
+  zu Recht — Credentials aus Konfigurationsdateien zu materialisieren ist ein harter Riegel.
+- `ha_search` liefert allerdings **keine** State-Attribute (`result_fields` kennt `attributes`
+  nicht), und ein `ha_get_state` gibt es in dieser MCP-Fassung nicht. Wenn Attribute gebraucht
+  werden, ist `ha_call_service` mit `ws_command` der verbleibende Weg.
