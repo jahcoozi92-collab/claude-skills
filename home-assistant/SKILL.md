@@ -2923,3 +2923,79 @@ Drei Dateien statt einer, weil das Quoting über Termux-Shell → ssh → proot-
 - Beide Container sind installiert; `debian` meldet „shell '/bin/sh' is not available".
 - Container liegen seit 5.6.0 unter `$PREFIX/var/lib/proot-distro/containers/<name>/rootfs`,
   nicht mehr unter `installed-rootfs/` — das wirkt sonst fälschlich leer.
+
+### 2026-08-13 — Assist-Slots: Debug-Endpunkt, custom_sentences-Pflicht, `lists` auf Top-Ebene
+
+Anlass: Nach dem Wake-Word brach jede Spracheingabe mit `intent-failed` ab. Ursache war ein
+Platzhalter ohne Slot-Liste — die Sprachbedienung war dadurch **komplett** blockiert, auf allen
+Geräten, nicht nur auf dem betroffenen Satelliten.
+
+**🔴 Der Debug-Endpunkt ist das Werkzeug für Assist-Diagnose**
+- `conversation/agent/homeassistant/debug` matcht Sätze, **ohne die Aktion auszuführen**, und
+  nennt pro Treffer Intent, Slot-Werte, das getroffene `sentence_template` und die **Quelldatei**:
+  ```python
+  ha_call_service(ws_command="conversation/agent/homeassistant/debug",
+                  data={"sentences": ["spiel Ayliva", "wie spät ist es"], "language": "de"})
+  ```
+  ```json
+  {"intent": {"name": "PlayArtist"}, "slots": {"artist": "Ayliva"},
+   "match": true, "source": "custom", "file": "de/spotify_artist.yaml"}
+  ```
+- `source`/`file` beantworten die sonst mühsame Frage, **welche** Definition gewonnen hat —
+  `"/config"` heißt aus einem Package, ein Dateiname heißt aus `custom_sentences/`.
+- Der Endpunkt ist zugleich ein Testgerät für kaputte Slots: fehlt eine Liste, antwortet er mit
+  `Unknown error`, und im HA-Log steht die echte Ursache (`Missing slot list {x}`).
+
+**🔴 Wildcard-Slots gehören ausschliesslich nach `custom_sentences/<sprache>/`**
+- Ein `conversation:`-Block in einem Package kennt nur einfache Satzlisten. Er kann **keine**
+  `lists:` definieren. Steht dort ein `{platzhalter}`, bricht die Auswertung ab:
+  ```
+  hassil.errors.MissingListError: Missing slot list {artist}
+  ```
+- Der Fehler trifft **jede** Spracheingabe, nicht nur den betroffenen Intent — auch „wie spät ist
+  es". Wer also meldet „Assist geht gar nicht mehr", hat oft genau einen kaputten Platzhalter.
+- Die auszuführende Aktion (`intent_script:`) darf im Package bleiben; nur die **Sätze** ziehen um.
+
+**🔴 `lists:` gehört auf die OBERSTE Ebene der Datei, nicht unter den Intent**
+- Richtig — Geschwister von `intents:`:
+  ```yaml
+  language: "de"
+  intents:
+    PlayArtist:
+      data:
+        - sentences:
+            - "(spiel|spiele|starte) {artist}"
+  lists:
+    artist:
+      wildcard: true
+  ```
+- Falsch, und **still wirkungslos** — die Liste wird nicht gefunden, der Intent ist tot:
+  ```yaml
+  intents:
+    VoiceNews:
+      data:
+        - sentences: ["nachrichten zu {thema}"]
+      lists:            # <-- eine Ebene zu tief
+        thema:
+          wildcard: true
+  ```
+- Belegt am 2026-08-13: `voice_tools.yaml` nutzte die verschachtelte Form; der Debug-Endpunkt
+  quittierte „nachrichten zu Fussball" mit `Missing slot list {thema}`. Betroffen waren
+  `VoiceNews` ({thema}), `VoiceWetter` ({stadt}), `VoiceQMHandbuch` ({frage}) und
+  `VoiceUebersetzer` ({text}, {zielsprache}). Intents ohne Platzhalter liefen unbeeinträchtigt.
+- Gegenprobe für das erwartete Schema: die mitgelieferten Sprachdaten selbst zeigen es —
+  ```bash
+  docker exec homeassistant python3 -c "import json; d=json.load(open('/usr/local/lib/python3.14/site-packages/home_assistant_intents/data/de.json')); print(list(d.keys()))"
+  # ['language', 'settings', 'responses', 'skip_words', 'intents', 'lists', 'expansion_rules']
+  ```
+  `lists` steht dort auf derselben Ebene wie `intents`.
+
+**🟡 Fehlende Slot-Liste erkennen, bevor man sie sucht**
+- Die Warnung am Satelliten (`intent-failed`) nennt die Ursache nicht. Sie steht nur im HA-Log:
+  ```bash
+  docker logs homeassistant --since 5m 2>&1 | grep -oE "Missing slot list \{[a-z]+\}" | sort -u
+  ```
+- Danach die Quelle suchen — erst `custom_sentences/`, dann die Packages:
+  ```bash
+  grep -rln "{artist}" config/custom_sentences/ config/packages/
+  ```
