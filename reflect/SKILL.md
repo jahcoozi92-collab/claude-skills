@@ -1212,3 +1212,52 @@ gehört ein **neuer** Skill angelegt. Format exakt wie die bestehenden:
 - **Als eigene Signalklasse führen:** „selbst entdeckte Fehler (nur durch Verifikation gefunden)".
   Sie sind für den Skill wertvoller als Erfolge, weil sie exakt die Prüfschritte begründen, die
   künftig Pflicht sein sollen.
+
+### 2026-08-14 — Fach-Skill vor dem Eingriff laden; Fehlermeldung nicht verallgemeinern
+
+**🔴 Den Fach-Skill VOR dem ersten Eingriff lesen, nicht erst beim Reflect am Ende**
+- Ich baute für ein Sprachbriefing nacheinander drei Ausgabewege (`tts.speak`, `notify.alexa_media`,
+  `assist_satellite.announce`) und liess Diana jeden davon anhören. Sie korrigierte dreimal
+  („es fehlte die elevenlabs stimme", „es fehlte die hans zimmer untermalung").
+- Beide Antworten lagen längst schriftlich vor:
+  - im `home-assistant`-Skill, Abschnitt vom Vortag (Commit `9682aad`): SSML-`<audio>` statt
+    `play_media`, Ducking gehört in die Datei, Spotify ist als Bett nicht startbar;
+  - in der Konfiguration selbst: ein fertiges `script.jarvis_say_echo`, dessen Kopfkommentar
+    genau diese drei Punkte begründet.
+- Gefunden habe ich beides erst **nach** der dritten Korrektur — beim Suchen nach „mila".
+- **Regel:** Sobald erkennbar ist, welches Fachgebiet eine Aufgabe berührt, den zugehörigen Skill
+  laden, bevor etwas gebaut wird. Skills werden nicht automatisch geladen; ohne bewussten Aufruf
+  arbeitet man am eigenen dokumentierten Wissen vorbei.
+- **Zweite Ebene:** Auch die Zielkonfiguration ist eine Wissensquelle. Vor dem Bauen eines
+  Ausgabe-/Integrationswegs prüfen, ob es dafür schon ein Skript, Package oder Kommentar gibt:
+  ```bash
+  grep -rin "<thema>" --include=*.yaml packages/ scripts.yaml | head
+  ```
+  Ein Kopfkommentar, der mit „Warum ein eigener Weg neben X" beginnt, ist die Antwort auf genau
+  die Frage, die man gerade stellt.
+- Verwandt mit der Lektion vom 2026-08-13 („Einrichtungsauftrag zuerst gegen den Ist-Zustand
+  prüfen"), aber weiter gefasst: dort ging es um laufende Dienste, hier um **vorhandene Lösungen**.
+
+**🔴 Eine Fehlermeldung dem konkreten Aufruf zuordnen, nicht zur generellen Unmöglichkeit erklären**
+- Im Log stand `Sorry, direct music streaming isn't supported. This limitation is set by Amazon`.
+  Ich schloss daraus „die eigene Stimme ist auf Echo-Geräten technisch ausgeschlossen" und schrieb
+  das als Tatsache in die Antwort.
+- Falsch: Die Sperre galt dem **MP3-Boot-Sound**, nicht der Sprachausgabe. Der nächste Test zeigte
+  eine saubere ffmpeg-Konvertierung ohne jede Warnung — ich musste die Aussage widerrufen.
+- **Regel:** Bevor aus einer Meldung eine Unmöglichkeit wird, prüfen, **welcher** der Aufrufe im
+  Ablauf sie erzeugt hat. Lief ein Skript mit mehreren Schritten, steht die Meldung meist neben
+  einem davon — der Zeitstempel und die Nachbarzeilen sagen, neben welchem.
+- Formulierungsdisziplin: „Aufruf X wird abgelehnt" ist belegbar. „Y ist unmöglich" ist eine
+  Verallgemeinerung, die einen zweiten Beleg braucht — sonst schliesst man einen funktionierenden
+  Weg aus und baut daneben etwas Schlechteres.
+
+**🟡 Eine knappe Meta-Anweisung nicht sofort als Dauerpräferenz in die Memory schreiben**
+- Auf „gerne noch etwas kürzer" legte ich eine `feedback`-Memory an. Die Nachricht war für einen
+  anderen Chat bestimmt („falscher Chat"), die Memory musste samt Index-Zeile zurückgenommen werden.
+- Meta-Anweisungen zu Stil, Länge oder Tonfall sind oft situativ — und eine falsche
+  Verhaltensmemory wirkt in jeder späteren Sitzung weiter, ohne dass jemand sie hinterfragt.
+- **Regel:** Solche Anweisungen zunächst nur befolgen. Erst festschreiben, wenn sie sich wiederholen
+  oder ausdrücklich als generell bezeichnet werden. Im Zweifel nachfragen, ob es dauerhaft gelten
+  soll — das ist eine Zeile und spart eine falsche Dauerregel.
+- Gegenprobe zur Lektion vom 2026-08-13 („Memory nach Meinungsänderung sofort korrigieren"): Das
+  Rücknehmen hat hier funktioniert. Besser ist, den Eintrag gar nicht erst verfrüht anzulegen.
