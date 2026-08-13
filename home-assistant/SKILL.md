@@ -3195,3 +3195,133 @@ Geräten, nicht nur auf dem betroffenen Satelliten.
 - Ein frisch angelegter Unterordner in `config/www/` wird sofort ausgeliefert. Aber sowohl Browser
   (31 Tage) als auch Amazon holen über die URL — bei gleichem Dateinamen kommt der alte Ton.
   Deshalb Zeitstempel im Namen und alte Dateien nach ein paar Stunden wegräumen.
+
+### 2026-08-14 — Template-Sensor-Grenzen, YAML-`off`, sections-Breite, Mushroom-Selektorwechsel
+
+**🔴 Der STATE eines Template-Sensors fasst nur 255 Zeichen — längerer Text gehört ins Attribut**
+- Ein ausführlicherer Briefing-Text im `state:` liess den Sensor stumm auf `unknown` fallen. Kein
+  auffälliger Fehler im Dashboard, die abhängige Ansage blieb einfach leer.
+- **Zwei Folgefallen, beide live erlebt:**
+  - `unit_of_measurement: "Zeichen"` macht den Sensor **numerisch**. HA verweigert dann den Textwert
+    komplett und legt die Entität **gar nicht erst an**:
+    `ValueError: Sensor … indicating it has a numeric value; however, it has the non-numeric value: '…'`
+    Das Attribut ist danach `null` — es sieht nach einem Template-Fehler aus, ist aber ein Typkonflikt.
+  - Ein `state:`, der `state_attr('sensor.sich_selbst','text')` liest, ist eine Selbstreferenz und
+    bleibt leer. Der State muss unabhängig sein.
+- **Muster, das funktioniert:**
+  ```yaml
+  - sensor:
+      - name: "Jarvis Briefing Text"
+        unique_id: jarvis_briefing_text
+        state: "bereit"          # konstant, keine Einheit, keine Selbstreferenz
+        attributes:
+          text: >-
+            {{ … beliebig lang … }}
+  ```
+  Konsument liest `state_attr('sensor.x','text')`. Attribute haben kein Längenlimit.
+
+**🔴 `hvac: off` in YAML ist Boolean `False`, nicht der String "off"**
+- `script.haier_beide_aus` übergab `data: { target: beide, hvac: off }` an einen Setter, der
+  `{{ hvac == 'off' }}` prüfte. `False == 'off'` ist falsch → der Aus-Zweig wurde übersprungen,
+  `climate.set_hvac_mode` bekam `False` und das Skript brach ab, **ohne etwas auszuschalten**.
+- Seit Mai unbemerkt, weil der Fehler nur im Trace steht und die Kachel sich normal anfühlt.
+- Nachweis in zwei Zeilen:
+  ```bash
+  docker exec homeassistant python3 -c "import yaml; print(repr(yaml.safe_load(open('/config/scripts.yaml'))['haier_beide_aus']['sequence'][0]['data']))"
+  # -> {'target': 'beide', 'hvac': False}
+  ```
+- **Regel:** `on`/`off`/`yes`/`no` in YAML-Werten **immer quoten**. Betrifft auch `hvac_mode: "off"`
+  in `data:`-Blöcken. Beim Prüfen fremder Packages gezielt danach greppen.
+
+**🔴 `column_span: 2` erzeugt 24 Grid-Spalten — Karten brauchen dann `grid_options`**
+- Die Section wird zwar doppelt so breit, ihr Kartengrid hat aber 24 statt 12 Spalten. Karten ohne
+  `grid_options` bekommen den Default `span 12` und füllen nur die **linke Hälfte**; rechts bleibt
+  die Section leer. `type: heading` ist ausgenommen (bekommt automatisch `full-width`).
+- Symptom, an dem man es erkennt: ein `layout-card` mit `repeat(auto-fit, minmax(135px,1fr))`
+  bricht auf 2 Kacheln pro Zeile um statt auf 6.
+- Fix an jeder Nicht-Heading-Karte:
+  ```yaml
+  - type: custom:layout-card
+    grid_options:
+      columns: full
+  ```
+- Nachweis im Browser statt Raten, am `hui-grid-section`:
+  `getComputedStyle(shadowRoot.querySelector('.container')).gridTemplateColumns` zeigt 24 Spalten,
+  die Karten-Divs tragen `grid-column: span 12`.
+
+**🔴 Mushroom rendert nicht mehr über `mushroom-state-info` — alle alten card_mod-Regeln sind tot**
+- Der Text liegt heute in `<span slot="primary">` / `<span slot="secondary">` im **Light-DOM**,
+  gerendert über HAs `<ha-tile-info>`. `mushroom-state-info` kommt im DOM überhaupt nicht mehr vor.
+- Damit laufen **beide** Varianten des alten Fixes ins Leere: die `mushroom-state-info .primary`-Regeln
+  im `.:`-Block **und** der `mushroom-state-info$:`-Shadow-Block. Die Kürzung mit „…" kommt ungebremst durch.
+- Aktueller Selektor:
+  ```yaml
+  card_mod:
+    style: |
+      span[slot="primary"], span[slot="secondary"] {
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
+      }
+  ```
+  Icon-Größe jetzt über `ha-tile-icon { --tile-icon-size: 34px; }` (nicht `mushroom-shape-icon`/`--icon-size`).
+- Bestand am 2026-08-14: `haier_klima.yaml` umgestellt; **offen** in `fahrzeug.yaml` (50 Stellen),
+  `heizung.yaml` (23), `waschmaschine.yaml` (15), `media.yaml` (6), `rollos.yaml` (1).
+- Prüfen statt vermuten — im Browser:
+  `getComputedStyle(el.querySelector('[slot=secondary]')).whiteSpace` → `nowrap` heisst: Fix greift nicht.
+
+**🔴 Voice-Exposure NICHT aus `.storage/homeassistant.exposed_entities` lesen**
+- Mein Direktzugriff auf die Datei ergab „**0** von 202 freigegeben" — tatsächlich sind **130**
+  Entitäten für Assist freigegeben, inklusive aller Rollos. Ich hatte den Nullbefund bereits als
+  Analyseergebnis formuliert, bevor die Live-Abfrage ihn widerlegte.
+- Verlässliche Quelle ist der laufende Server:
+  ```
+  ha_get_entity_exposure(assistant="conversation")
+  ```
+- Gilt allgemein: `.storage/*` ist ein internes Format mit Defaults, die nicht in der Datei stehen.
+  Für „ist X exponiert / zugewiesen / aktiv" immer die API fragen, nicht die Datei.
+
+**🟡 hOn: auch `set_temperature` und `set_fan_mode` schalten ein ausgeschaltetes Gerät EIN**
+- Bekannt war das für Lamellenbefehle. Es gilt genauso für Sollwerte: Beim Wiederherstellen des
+  Ausgangszustands sprang das ausgeschaltete Schlafzimmergerät auf `fan_only` an, weil ich 19 °C
+  und `fan: auto` nachgereicht habe.
+- **Konsequenz fürs Aufräumen nach Tests:** Sollwerte setzen, **solange das Gerät noch läuft**, und
+  erst danach ausschalten. Ist es schon aus, bleibt die Abweichung besser stehen — sie wirkt erst
+  beim nächsten Einschalten und ein weiterer Versuch startet die Anlage erneut.
+- Nebenbefund: Ein Aus-/Einschaltzyklus setzt `echo_mode` und `screen_display` am Gerät zurück.
+  Nach solchen Tests beide Schalter gegenprüfen.
+
+**🟡 `device_class: window` fängt die Fahrzeugfenster mit**
+- Eine Zählung offener Fenster über `selectattr('attributes.device_class','eq','window')` liefert
+  auch die sieben Fenster des Tiguan (`binary_sensor.wvgzzz…_window_closed_*`). Ohne Filter zählt
+  ein Briefing falsch.
+  ```jinja
+  {%- set fenster = states.binary_sensor
+       | selectattr('attributes.device_class','defined')
+       | selectattr('attributes.device_class','eq','window')
+       | selectattr('state','eq','on')
+       | rejectattr('entity_id','search','wvgzzz')
+       | map(attribute='entity_id') | map('area_name') | select('string') | list -%}
+  ```
+- Der Umweg über `device_class` ist trotzdem richtig: die vorherige Fassung zählte drei hartkodierte
+  Kontakte und übersah reale offene Fenster, weil dieselben Geräte doppelt registriert sind und nur
+  eine der beiden Varianten die `device_class` trägt.
+
+**🟡 Ein Helfer, den keine Automation je schaltet, blockiert dauerhaft**
+- `input_boolean.do_not_disturb` ist Bedingung der Briefing-Automation (`state: "off"`), wird aber
+  von **keiner** Automation umgeschaltet — er steht nur auf einer Dashboard-Kachel. Er bleibt also,
+  wo er zuletzt stand, und das Briefing lief deshalb seit Mai kein einziges Mal (`last_triggered: None`).
+- **Prüfmuster bei „Automation läuft nie":** für jede Bedingung fragen, wer den Wert je ändert:
+  ```bash
+  grep -rn "input_boolean.x" --include=*.yaml packages/ automations.yaml scripts.yaml | grep -v "condition\|state:"
+  ```
+  Kommt dabei nur die Bedingung selbst heraus, ist der Helfer ein reiner Handschalter — als
+  Automations-Guard ungeeignet, solange ihn niemand zurücksetzt.
+
+**🔵 Jinja-Stolpersteine, die im gesprochenen Text sofort auffallen**
+- `| capitalize` kleint den **Rest** des Strings: aus `die Biotonne` wird `Die biotonne`. Nur den
+  ersten Buchstaben heben: `{{ s[0]|upper ~ s[1:] }}`.
+- `{#- … -#}` frisst den Whitespace zu den Nachbarsätzen — im Fliesstext entsteht „…höflich.Die
+  Biotonne". Kommentare zwischen Satzbausteinen ohne die Trim-Striche schreiben.
+- Min/Max-Werte können identisch sein („im Tagesverlauf 26 bis 26 Grad"). Vor der Ausgabe auf
+  Gleichheit prüfen und den Satz dann weglassen.
