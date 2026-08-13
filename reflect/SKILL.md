@@ -1084,3 +1084,51 @@ gehört ein **neuer** Skill angelegt. Format exakt wie die bestehenden:
   Licht, die seit Monaten niemandem aufgefallen waren.
 - **Regel:** Wenn beim Beheben eines Fehlers eine zweite Stelle mit abweichender Schreibweise
   auffällt, gleich mitprüfen. Das Prüfwerkzeug ist in dem Moment ohnehin schon in der Hand.
+
+### 2026-08-13 — Meldungsquelle rückwärts suchen, Memory nach Meinungsänderung korrigieren
+
+**🔴 „Die Meldung kommt von X" heisst oft „kam über X heraus"**
+- Diana meldete: „die Meldung kommt von HA und weist auf Jarvis hin". Ich suchte folgerichtig in
+  HA — `persistent_notification` (leer), alle 62 Jarvis-Entitäten (unauffällig), das HA-Log nach
+  „jarvis" (einzige Zeile: meine eigene Suche). Nichts.
+- Die Quelle war ein **Docker-Container**: `jarvis-watchdog` rief stündlich `jarvis_say` auf.
+  HA war nur der Lautsprecher, nicht der Urheber.
+- **Regel:** Bei einer Meldung aus einem mehrschichtigen System die **Ausgabekette rückwärts**
+  gehen, statt im Ausgabesystem zu bleiben: Wer hat den Ausgabekanal aufgerufen? Findet man im
+  genannten System nichts, ist genau das die Antwort — es ist nicht die Quelle.
+- Praktisch heisst das: Logs der **umliegenden** Container mitlesen, nicht nur die des genannten
+  Dienstes. Hier stand die Antwort in `docker logs jarvis-watchdog` im Klartext.
+
+**🔴 Eine zu enge Suche des Nutzers erweitern, statt ihr leeres Ergebnis zu berichten**
+- Diana suchte `docker ps -a | grep -i voice` und fand drei laufende Container — alle gesund. Der
+  Verursacher heisst aber `jarvis-watchdog`, und das vermisste Ding `voice-agent-1`.
+- Hätte ich nur ihr Ergebnis zurückgemeldet („drei Container, alle oben"), wäre die Sache im Sande
+  verlaufen und sie hätte die Meldung weiter gehört.
+- **Regel:** Wenn eine vom Nutzer vorgegebene Suche nichts Erklärendes findet, den Suchraum selbst
+  erweitern (benachbarte Namensräume, andere Präfixe, die Logs statt der Prozessliste) und das
+  Ergebnis zusammen mit der Begründung liefern, warum die ursprüngliche Suche danebenlag.
+
+**🟡 Eine Memory über eine Entscheidung ist nur so haltbar wie die Entscheidung**
+- Diana sagte „wenn nicht notwendig, dann nicht". Ich schrieb das als Memory fest („bewusst NICHT
+  abgestellt, nicht ungefragt erledigen"). Zwei Nachrichten später: „also lösche".
+- Die Memory war damit **falsch** — und eine falsche Memory ist schlimmer als keine, weil eine
+  spätere Sitzung ihr glaubt und die Entscheidung „respektiert", die es nicht mehr gibt.
+- **Regel:** Ändert der Nutzer eine Entscheidung, die man gerade festgehalten hat, die Datei
+  **sofort im selben Arbeitsschritt** überschreiben — nicht erst beim nächsten Reflect. Der neue
+  Text hält dann fest, was getan wurde, statt was man sich vorgenommen hatte.
+
+**🟡 Bei „ist das überhaupt nötig?" die Konsequenz des Nichtstuns benennen**
+- Auf „wenn nicht notwendig, dann nicht" wäre ein blosses „gut, lasse ich" korrekt, aber wertlos
+  gewesen. Stattdessen: technisch nicht notwendig — **aber** die stündliche Ansage hört nicht von
+  selbst auf, und ein Wächter, der 45 Tage lang dasselbe falsche Signal gibt, wird überhört, wenn
+  ein echter Ausfall kommt. Daraufhin kam „also lösche".
+- **Regel:** Eine Notwendigkeitsfrage ehrlich mit „nein" beantworten, und im selben Atemzug sagen,
+  was bleibt, wenn nichts geschieht. Das ist keine Überredung — es liefert die Information, die für
+  die Entscheidung fehlt. Danach die Entscheidung des Nutzers ohne weiteres Nachhaken annehmen.
+
+**🔵 Diagnose beenden, wenn die nächste Erkenntnis einen Eingriff braucht**
+- Die Frage „geht Jarvis-Stimme auf dem Echo?" war nach mehreren Runden nur noch mit einem Test zu
+  klären, der Lärm im Haus gemacht hätte — um fünf Uhr morgens. An dem Punkt gehört die Recherche
+  gestoppt und der Stand geliefert: was belegt ist, was der eine offene Test ist, und welche zwei
+  Wege sich je nach Ergebnis auftun.
+- Weitersuchen wäre hier nicht Gründlichkeit gewesen, sondern Beschäftigung ohne Erkenntnisgewinn.
