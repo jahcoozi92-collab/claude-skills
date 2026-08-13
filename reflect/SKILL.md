@@ -1132,3 +1132,44 @@ gehört ein **neuer** Skill angelegt. Format exakt wie die bestehenden:
   gestoppt und der Stand geliefert: was belegt ist, was der eine offene Test ist, und welche zwei
   Wege sich je nach Ergebnis auftun.
 - Weitersuchen wäre hier nicht Gründlichkeit gewesen, sondern Beschäftigung ohne Erkenntnisgewinn.
+
+### 2026-08-13 — Im Vergleichstest nur EINE Variable ändern
+
+**🔴 Zwei Änderungen gleichzeitig machen ein Urteil wertlos**
+- Aufgabe: eine günstigere Stimme finden. Ich stellte einen Hörvergleich aus vier neuen Stimmen
+  zusammen — und rendere ihn gleichzeitig mit dem **billigeren Modell**, weil es ja um Kosten ging.
+- Dianas Urteil: „Maresi furchtbar, Elena furchtbar, Angelina hahaha furchtbar." Damit war nicht
+  klar, was durchgefallen war: die Stimmen oder die schwächere Engine. Vier Kandidatinnen verworfen,
+  ohne eine verwertbare Erkenntnis.
+- Die Auflösung kam erst, als ich beides trennte: dieselbe Stimme, einmal je Modell → „höre keinen
+  Unterschied". Das Modell hatte am Höreindruck gar keinen Anteil, die Stimmenauswahl war schlicht
+  schlecht gewesen (nicht-muttersprachliche Stimmen für deutschen Text).
+- **Regel:** Bei jedem Vergleich, den ein Mensch beurteilen soll, genau eine Variable variieren.
+  Sind zwei Fragen offen (welche Stimme? welches Modell?), werden es zwei Durchgänge — der zweite
+  ist billig, weil er nur noch eine Achse hat.
+- Erkennungsmerkmal vorab: Wenn sich die eigene Testbeschreibung mit „und außerdem gleich noch"
+  formulieren lässt, ist der Test kaputt.
+
+**🟡 Auswahl-Kandidaten am tatsächlichen Einsatzzweck filtern, nicht an Schlagworten**
+- Ich suchte Stimmen nach Attributen („rauchig", „sultry") und bekam argentinische, koreanische und
+  indische Stimmen für einen **deutschen** Ansagetext. Der Sprachfilter der Schnittstelle war dabei
+  nutzlos — er meldet Deutsch auch bei Stimmen, die es nur mit Akzent sprechen.
+- **Regel:** Vor dem Vorlegen einer Auswahl prüfen, ob die Kandidaten die Grundvoraussetzung
+  überhaupt erfüllen. Eine Liste, von der der Nutzer drei Viertel sofort verwirft, kostet mehr
+  Vertrauen als eine kurze Liste, die sitzt.
+
+**🟡 Ein Testtext muss die Eigenschaft zeigen, um die es geht**
+- Für „spannend betonend" ließ ich zuerst „Systeme bereit, Diana" sprechen — daran hört man keine
+  Betonungsfähigkeit. Erst ein Satz mit Spannungsbogen („Die Haustür steht offen, und im Wohnzimmer
+  bewegt sich etwas") machte die Unterschiede hörbar.
+- Gilt allgemein: Der Prüfreiz muss die gefragte Eigenschaft herausfordern. Ein neutraler Reiz
+  erzeugt neutrale Ergebnisse und damit ein zufälliges Urteil.
+
+**🟡 Ausgabedaten auf Dubletten prüfen, bevor man sie einem Menschen vorlegt**
+- Die erste Statusansage meldete „zwei Öffnungen offen" — tatsächlich war eine offen. Ursache:
+  jeder Fensterkontakt existiert doppelt im System, und ich hatte über alle Treffer iteriert.
+- Diana musste die Zahl korrigieren, die ich als Fakt vorgetragen hatte. Bei automatisch erzeugten
+  Berichten ist das besonders heikel, weil die Zahl glaubwürdig klingt.
+- **Regel:** Wenn eine Ausgabe aus einer Suche über Entitäten entsteht, vorher einmal auf Dubletten
+  sehen (gleiche Fläche, gleicher Raum, gleicher Zustand). Der Aufwand ist eine Zeile, der Schaden
+  ist eine falsche Aussage im Wohnzimmer.
