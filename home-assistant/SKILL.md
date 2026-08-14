@@ -3394,3 +3394,122 @@ Geräten, nicht nur auf dem betroffenen Satelliten.
 - Nützlich beim Lamellen-Debug: Der gesendete Parametersatz steht vollständig im Log. Gezielt
   herausziehen mit
   `grep -oE "'windDirection(Horizontal|Vertical)': '[0-9]+'|'resultCode': '[0-9]+'"`.
+
+### 2026-08-14 — Assist-Sprachsteuerung: Räume schlagen Aliase, und der Temperatur-Intent will ein Klimagerät
+
+Anlass: „Hey Jarvis, Lagebericht" tat nichts, und danach war die Frage, ob Jarvis überhaupt wie ein
+Sprachassistent nutzbar ist. Am Ende funktionierten Licht, Rollos, Klima, Fernseher, Einkaufsliste
+und Raumtemperaturen — lokal, ohne Cloud. Der Weg dorthin hatte fünf Fallen.
+
+**🔴 Ohne Raumzuordnung antwortet Assist `no_valid_targets` — Areas sind wichtiger als Aliase**
+- Die meisten Entitäten hatten `area_id: null`. Freigabe allein genügt nicht: „im Schlafzimmer"
+  kann Assist nur auflösen, wenn die Entität dort zugeordnet ist.
+- Die Area des **Geräts** reicht dabei nicht immer — bei Sensoren, die ihren Raum vom Gerät erben,
+  half erst die explizite Zuweisung an der Entität.
+- Reihenfolge beim Einrichten: **erst `area_id`, dann Alias, dann testen.** Umgekehrt sucht man
+  lange an der falschen Stelle.
+
+**🔴 Aliase dürfen den Raumnamen NICHT enthalten**
+- Erster Versuch: `cover.schlafzimmer_…_links` bekam den Alias „Rollo Schlafzimmer links".
+  Ergebnis: „Rollo existiert nicht" — Assist löst den Raum **separat** auf und erwartet im Namen
+  nur noch „Rollo links".
+- Richtig ist die raumfreie Form, mehrfach für Synonyme:
+  ```
+  aliases: ["Rollo links", "Rollladen links", "Jalousie links"]
+  ```
+- Merkhilfe: Der Alias beantwortet „**was** ist das", die Area beantwortet „**wo** ist das".
+  Steht das Wo im Was, passt der Satz nicht mehr.
+
+**🔴 `HassClimateGetTemperature` sucht ausschliesslich `climate` — Temperatursensoren zählen nicht**
+- „Wie warm ist es im Gästezimmer" scheitert dort strukturell: Es gibt einen Temperatursensor, aber
+  kein Klimagerät (die Bosch-climate wurde beim Cleanup am 2026-05-29 deaktiviert). Sensoren
+  freizugeben ändert daran **nichts**.
+- Lösung für solche Räume: eigener Satz in `custom_sentences/de/` mit einer Werteliste plus
+  `intent_script`, das den Sensor liest. Die Liste bewusst **eng** halten (nur die Räume ohne
+  Klimagerät), damit überall sonst der eingebaute Intent gewinnt.
+- Umgesetzt in `custom_sentences/de/temperatur_raeume.yaml` + `RaumTemperaturSensor` in
+  `packages/jarvis_lagebericht.yaml`.
+
+**🔴 Zwei Klimageräte in einem Raum machen die Temperaturfrage mehrdeutig**
+- Schlafzimmer: Bosch-Heizung (`off`) **und** Klimaanlage (`fan_only`) → `no_valid_targets`.
+  Nach dem Ausschluss der Heizung aus der Sprachsteuerung: „24,5 Grad".
+- **Nicht** verallgemeinern zu „off blockiert": Im Bad steht nur die abgeschaltete Heizung, und die
+  antwortet einwandfrei mit 19,3 °C. Es ist die Konkurrenz, nicht der Zustand.
+- Gegenprobe, die das aufgedeckt hat: derselbe Satz für einen Raum mit genau einem, aktiven Gerät
+  (Flur → 22,5 °C). Wenn eine Frage in einem Raum geht und im anderen nicht, liegt es an der
+  Zielmenge, nicht am Satz.
+
+**🔴 Der Debug-Endpunkt beantwortet all das in einem Aufruf — vor dem Raten benutzen**
+- `conversation/agent/homeassistant/debug` (siehe Abschnitt vom 2026-08-13) zeigt Intent, Slots,
+  **alle Kandidaten** und die Quelldatei — und löst nichts aus. Für einen Test um halb eins nachts
+  der einzig vertretbare Weg, sonst fahren Rollos.
+  ```
+  ha_call_service(ws_command="conversation/agent/homeassistant/debug",
+                  data={"sentences": ["mach das Licht im Flur an"], "language": "de"})
+  ```
+- Ich habe stattdessen erst vier Varianten durchprobiert (Formulierung, Area, Reload, Freigabe).
+  Der Endpunkt hätte sofort gezeigt, dass der Satz längst sauber matcht und nur die Zielauswahl
+  scheitert.
+
+**🟡 Zur Voice-Exposure siehe den Abschnitt „Voice-Exposure NICHT aus .storage lesen"**
+- Ich bin in dieselbe Falle gelaufen und habe „0 freigegeben" als Befund formuliert. Die richtige
+  Quelle ist `ha_get_entity_exposure(assistant="conversation")`, nicht die Datei.
+- Praktische Folge für die Einrichtung: Die Freigabe war in diesem Setup gar nicht das Problem —
+  die fehlenden Areas waren es.
+
+**🔴 `speech.text: " "` ist Text, nicht Stille**
+- Ziel war ein stummer Satellit (die Ansage gehört dem Echo). Ein Leerzeichen wird von HA an
+  ElevenLabs geschickt, in Audio verwandelt und abgespielt — die Ansage kam aus **beiden** Geräten,
+  und jeder Aufruf kostete Zeichen.
+- Für „keine Sprachantwort" muss der **`speech`-Block ganz fehlen**:
+  ```yaml
+  intent_script:
+    MeinIntent:
+      description: "…"
+      action:
+        - action: script.irgendwas      # kein speech: → Satellit bleibt still
+  ```
+
+**🔴 Blockierendes `delay` in einem Skript + `mode: single` = stillschweigend verworfene Aufrufe**
+- `jarvis_say_echo` setzte die Lautstärke, sprach, und wartete dann inline bis zum Ende der Ansage,
+  um sie zurückzustellen. Damit war das Skript bis zu vier Minuten „beschäftigt".
+- Weil `jarvis_lagebericht` auf `mode: single` steht, wurde jeder weitere Ruf in dieser Zeit
+  kommentarlos verworfen — im Log nur `Already running`, für den Nutzer: nichts passiert.
+- **Regel:** Alles, was nur *danach* geschehen soll, gehört per `script.turn_on` in ein eigenes
+  Skript (`mode: restart`), nicht inline mit `delay`. Das Hauptskript ist dann in Sekunden fertig.
+
+**🔴 `is_state(cover, 'open')` ist bei Rollos mit Position FALSCH**
+- Home Assistant meldet jedes Rollo als `open`, sobald die Position über 0 liegt. Ein Rollo auf
+  **10 %** gilt damit als offen wie eines auf 100 % — die Ansage meldete „Schlafzimmer links ist
+  offen", obwohl es fast unten stand (Fund von Diana).
+- Richtig ist `current_position` mit einer Schwelle, und die Ansage nennt die Lage:
+  ```jinja
+  {% set pos = state_attr(e,'current_position') | int(-1) %}
+  {% if pos > 20 %}   {# alles darunter gilt als zu #}
+    {{ 'ganz oben' if pos >= 95 else ('weit offen' if pos >= 60
+       else ('halb offen' if pos >= 40 else 'ein Stück offen')) }}
+  {% endif %}
+  ```
+
+**🔴 Bosch `sensor.*_batterietyp_*` meldet dauerhaft „Replace Batteries" — das ist der TYP**
+- Alle sieben Bosch-Geräte zeigen diesen Wert. Wer ihn als Warnung auswertet, meldet jeden Abend
+  sieben leere Batterien.
+- Die echten Warner sind `binary_sensor.*_batteriestand*` mit `device_class: battery`
+  (`on` = schwach). Standen zum Zeitpunkt der Prüfung alle auf `off`.
+
+**🟡 Umlaut-Ersatzschreibungen sind in Sprechtexten ein Fehler, nicht Kosmetik**
+- In einem Patch-Skript hatte ich „ein Stueck offen" geschrieben — aus Vorsicht beim Übertragen von
+  Sonderzeichen. In einem Kommentar egal, im Sprechtext liest die Stimme es vor.
+- Nach jedem Patch an Ansagetexten:
+  ```bash
+  grep -n "Stueck\|fuer\|ueber\|waere\|koennte" paket.yaml | grep -v "^\s*#"
+  ```
+
+**🟡 Der Aktivierungston `jarvis_activate.mp3` enthält ab Sekunde 1,2 gesprochene Sprache**
+- Die alte Ayliva-Ansage („Ja Madam?") steckt in der Datei. Zusammen mit einer eigenen Begrüssung
+  ergab das zwei Stimmen hintereinander.
+- Nachweisbar über den Pegel im Sprachband: bis 1,1 s liegt es bei −68 dB, ab 1,2 s bei −18 dB.
+  ```bash
+  ffmpeg -hide_banner -ss $t -t 0.2 -i datei.mp3 -af "highpass=f=300,lowpass=f=3000,volumedetect" -f null -
+  ```
+- Bereinigte Fassung: `jarvis_activate_clean.mp3` (0–1,15 s, ausgeblendet, auf Nutzpegel normalisiert).
