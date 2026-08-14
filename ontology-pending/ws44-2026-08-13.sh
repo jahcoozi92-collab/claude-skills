@@ -6,8 +6,8 @@
 #   ssh -o BatchMode=yes moltbotadmin@192.168.22.206 'bash -s' < ws44-2026-08-13.sh
 # Danach diese Datei loeschen und den Loeschvorgang committen.
 #
-# Hinweis: ws44-2026-08-12.sh liegt ebenfalls noch offen. Erst jene Datei ausfuehren,
-# dann diese - die Reihenfolge entspricht der Dateinamen-Sortierung.
+# Unabhaengig von den uebrigen Dateien der Warteschlange - keine gemeinsamen Entities,
+# die Reihenfolge spielt daher keine Rolle.
 
 set -u
 O="cd ~/clawd && python3 skills/ontology/scripts/ontology.py"
