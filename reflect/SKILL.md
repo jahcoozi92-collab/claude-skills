@@ -1354,3 +1354,36 @@ gehört ein **neuer** Skill angelegt. Format exakt wie die bestehenden:
   Version nur ergänzen, wo sie etwas Neues sagt.
 - Das gilt besonders am selben Tag: Mehrere Instanzen arbeiten oft an denselben Symptomen, weil
   dieselbe Ursache sie beide beschäftigt.
+
+### 2026-08-14 — Konventions-Memories zählen zu den Quellen, die VOR dem Eingriff zu lesen sind
+
+**🔴 Die Regel „Fach-Skill vor dem Eingriff laden" war zu eng gefasst**
+- Sie nennt zwei Quellen: den Fach-Skill und die Zielkonfiguration. Beide habe ich diesmal genutzt.
+- Trotzdem baute ich ein Dashboard in einem Stil um, den ein **Konventions-Memory** ausdrücklich für
+  diese Seite ausschliesst (`style_guide_dashboards.md`: „`ai` … Standard-HA-Karten, kein card_mod").
+  Gelesen habe ich es erst beim Reflect danach.
+- **Die Quellenliste vor einem Eingriff lautet vollständig:**
+  1. der **Fach-Skill** zum Thema,
+  2. die **Zielkonfiguration** (bestehende Skripte, Packages, Kopfkommentare),
+  3. **Konventions- und Feedback-Memories** — alles vom Typ `feedback` und jeder „Style-Guide",
+     „Doktrin" oder „Präferenz" im Memory-Verzeichnis.
+- Punkt 3 unterscheidet sich von 1 und 2: Skill und Konfiguration sagen, **wie etwas funktioniert**.
+  Ein Konventions-Memory sagt, **wie der Nutzer es haben will** — und das ist beim Umbauen die
+  Frage, die man nicht selbst beantworten darf.
+- Schnellprüfung, bevor an Oberflächen oder Struktur gearbeitet wird:
+  ```bash
+  ls ~/.claude/projects/<projekt>/memory/ | grep -iE "style|guide|feedback|doktrin|praeferenz"
+  ```
+
+**🟡 Ein erkannter Konflikt gehört VOR den Umbau, nicht in den Reflect danach**
+- Der Style-Guide war an dieser Stelle sachlich veraltet — die Seite trug schon vor meinem Eingriff
+  Mushroom, Farbverläufe und `card_mod`. Diana hat entschieden, den Guide zu korrigieren statt das
+  Dashboard.
+- Damit war meine Bauweise am Ende richtig. **Das entlastet nicht:** Hätte ich das Memory vorher
+  gelesen, wäre die Frage vor dem Umbau gestellt worden — mit derselben Antwort, aber ohne das
+  Risiko, eine halbe Stunde in eine Richtung zu arbeiten, die der Nutzer ablehnt.
+- **Regel:** Widerspricht ein dokumentierter Standard dem, was gerade sinnvoll erscheint, ist das
+  eine Nutzerentscheidung — und die gehört an den Anfang. Zwei Sätze („der Guide sagt X, die Lage
+  spricht für Y, was gilt?") kosten einen Turn und ersparen einen Rückbau.
+- Nebenprodukt, wenn man es richtig macht: Der veraltete Standard wird korrigiert. Ein Guide, gegen
+  den mehrfach unbemerkt verstossen wird, ist selbst der Fehler.
