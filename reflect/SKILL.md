@@ -1261,3 +1261,50 @@ gehört ein **neuer** Skill angelegt. Format exakt wie die bestehenden:
   soll — das ist eine Zeile und spart eine falsche Dauerregel.
 - Gegenprobe zur Lektion vom 2026-08-13 („Memory nach Meinungsänderung sofort korrigieren"): Das
   Rücknehmen hat hier funktioniert. Besser ist, den Eintrag gar nicht erst verfrüht anzulegen.
+
+### 2026-08-14 — Intermittierende Fehler: Einzeltest beweist nichts, Endzustand maschinell prüfen
+
+**🔴 „Funktioniert nicht zuverlässig" — ein bestandener Test ist KEIN Gegenbeweis**
+- In der Vorrunde hatte ich die Lamellen getestet (ein Wechsel je Achse, gehalten) und als
+  funktionierend gemeldet. Dianas Antwort: „der Lamellen-Positionswechsel funktioniert **weiterhin**
+  nicht zuverlässig."
+- Das Wort „zuverlässig" beschreibt ein **intermittierendes** Verhalten. Dagegen ist ein einzelner
+  erfolgreicher Durchlauf wertlos — er landet nur zufällig auf der guten Seite.
+- Bezeichnend: Auch **nach** dem Fix hielten 3 von 3 Runden. Hätte ich mich auf die Trefferquote
+  verlassen, wäre der Fehler vor und nach dem Fix gleich „bewiesen" gewesen. Der Beleg kam aus der
+  Zeitanalyse im Code (Sperre 45 s gegen Poll 60 s) und aus einer Log-Zeile, die das Warten zeigt.
+- **Regel:** Bei „mal ja, mal nein" nicht in Wiederholungen flüchten, sondern nach der
+  **Zeitstruktur** suchen: Welche zwei Uhren laufen hier gegeneinander (Timer, Poll-Intervall,
+  Cache-TTL, Debounce)? Ein Fehler, der von der Phasenlage abhängt, ist im Code sichtbar, im Test
+  nur mit Glück.
+- Für die Antwort: den Mechanismus zeigen, nicht die Trefferquote. „3 von 3 gehalten" überzeugt zu
+  Recht niemanden, der das Problem kennt; „hier hätte die alte Fassung freigegeben, hier ist die
+  Log-Zeile" schon.
+
+**🔴 Den Endzustand maschinell gegen den Snapshot prüfen — nicht behaupten**
+- Ich hatte vor den Tests einen Snapshot geschrieben und danach gemeldet: „Anlagen wieder im
+  Ausgangszustand." Erst der anschliessende **Feld-für-Feld-Vergleich** zeigte, dass ein Gerät auf
+  `fan_only` stand statt aus.
+- Daraus entstand der **grössere** Fund der Session: eine Automation, die im Minutentakt feuerte und
+  Geräte einschalten konnte. Ohne den Endcheck wäre die Falschmeldung stehengeblieben **und** der
+  eigentliche Fehler unentdeckt.
+- **Regel:** Der Soll/Ist-Abgleich am Ende ist kein Abschlussritual, sondern ein Fehlerdetektor.
+  Als Template mit expliziten Sollwerten formulieren, das selbst „KORREKT"/„ABWEICHUNG" ausgibt —
+  dann kann man das Ergebnis nicht wohlwollend lesen:
+  ```jinja
+  {{ 'KORREKT' if (states('climate.x')=='off' and state_attr('climate.x','...')|string=='2')
+     else 'ABWEICHUNG' }}
+  ```
+- Anschluss an 2026-08-06/11 („Verifikation muss die sichtbare Wirkung treffen"): Das gilt auch für
+  das **Aufräumen**. Wer Zustand verändert hat, schuldet den Nachweis, dass er ihn zurückgestellt hat.
+
+**🟡 Eine Korrektur des Users kann eine zweite, grössere Ursache verdecken**
+- Der Auftrag lautete „Lamellen funktionieren nicht zuverlässig". Gefunden und behoben wurde das
+  Timer-Rennen — das war real und belegt. Der eigentliche Übeltäter war aber eine ganz andere
+  Automation, die nebenbei Lamellenwerte überschrieb und Geräte einschaltete.
+- Sie kam nur ans Licht, weil Diana „prüfe das **gesamte** Dashboard" verlangt und „wiederhole, bis
+  kein Fehler mehr da ist" gesagt hatte — und weil der Endcheck eine Abweichung fand.
+- **Regel:** Wenn ein plausibler Fehler gefunden ist, nicht sofort abschliessen. Prüfen, ob er das
+  gemeldete Symptom **vollständig** erklärt. Hier blieb ein Rest („der horizontale Wert sprang einmal
+  von 6 auf 0"), den ich zunächst als „nicht reproduzierbar" abgelegt hatte — genau dieser Rest war
+  die Spur zur zweiten Ursache. Ein unerklärter Rest ist ein offener Faden, keine Fussnote.
