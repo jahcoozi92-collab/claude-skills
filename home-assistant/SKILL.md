@@ -3513,3 +3513,62 @@ und Raumtemperaturen — lokal, ohne Cloud. Der Weg dorthin hatte fünf Fallen.
   ffmpeg -hide_banner -ss $t -t 0.2 -i datei.mp3 -af "highpass=f=300,lowpass=f=3000,volumedetect" -f null -
   ```
 - Bereinigte Fassung: `jarvis_activate_clean.mp3` (0–1,15 s, ausgeblendet, auf Nutzpegel normalisiert).
+
+### 2026-08-14 — `type: conversation` gibt es nicht: Kartentypen im Frontend-Bundle verifizieren
+
+Anlass: Auf dem KI-Dashboard stand im Jarvis-Block „Konfigurationsfehler". Alle 19 referenzierten
+Entitäten existierten — der Fehler lag am **Kartentyp selbst**.
+
+**🔴 `type: conversation` ist kein Home-Assistant-Kartentyp (Stand 2026.8.1)**
+- Eine frühere Sitzung hatte die Karte eingebaut und darüber sorgfältig kommentiert, welcher
+  Sprachagent der richtige sei. Der Kommentar war fachlich korrekt — die Karte existiert trotzdem
+  nicht, und der ganze Block blieb tot.
+- **Ersatz ist eingebaut, kein Plugin nötig:** die Aktion `assist` öffnet Home Assistants
+  Sprachdialog (`ha-voice-command-dialog`), wahlweise mit vorgewählter Pipeline:
+  ```yaml
+  tap_action:
+    action: assist
+    pipeline_id: nj0i79kj7svhuazstewi9uuxet   # Jarvis-Pipeline
+    start_listening: false
+  ```
+
+**🔴 „Gibt es Kartentyp/Feature X?" im ausgelieferten Bundle beantworten — mit Gegenprobe**
+- Nicht aus der Erinnerung und nicht aus der Doku (die beschreibt eine andere Version als die
+  installierte). Der Beweis steht im Frontend, das dieser Server ausliefert:
+  ```bash
+  docker exec homeassistant sh -c '
+    F=/usr/local/lib/python3.14/site-packages/hass_frontend/frontend_latest
+    grep -roh "hui-[a-z0-9-]\{2,30\}-card" $F/*.js | sort -u > /tmp/karten.txt
+    wc -l < /tmp/karten.txt
+    grep -iE "conversation|assist|chat" /tmp/karten.txt || echo "KEINE"
+    grep -E "^hui-(markdown|tile|heading)-card$" /tmp/karten.txt'   # Gegenprobe
+  ```
+- **Die Gegenprobe ist der wichtige Teil.** Ohne sie ist „keine Treffer" mehrdeutig: falscher Pfad,
+  falsches Muster oder tatsächlich nicht vorhanden. Erst wenn bekannte Kartentypen im selben Lauf
+  gefunden werden, ist der Nullbefund belastbar.
+- Der Frontend-Pfad liegt bei **`site-packages/hass_frontend/frontend_latest`**, nicht unter
+  `components/frontend/www_static` — dort suchte ich zuerst vergeblich.
+
+**🟡 Ein Nullbefund im eigenen Text ist kein Fund**
+- Nach dem Umbau prüfte ich mit `grep -c "type: conversation"` und bekam **1** — Schreck. Der
+  Treffer war mein eigener Kommentarkopf, der den behobenen Fehler dokumentiert.
+- Bei Marker-Suchen nach einer Korrektur Kommentarzeilen ausschliessen oder die Fundstelle
+  ansehen, bevor man sie als Rückfall bewertet.
+
+**🟡 Dashboard-Struktur: drei Ansichten schlagen sieben Blöcke auf einer Seite**
+- Die Seite hatte 266 Zeilen in einer einzigen Ansicht: Advisor, Faktoren, Chat, Frage, Automatik,
+  Voice-Pipeline, LLM-Backends. Jetzt: **Jarvis** (täglicher Gebrauch), **Advisor** (Rollo-Automatik),
+  **Technik** (Diagnose).
+- Leitfrage für den Schnitt: *Wie oft braucht man das?* Was täglich gebraucht wird, gehört in die
+  erste Ansicht; Statuskacheln für den Störungsfall in die letzte.
+- Sechs technische Statuskacheln (Piper, Whisper, openWakeWord, zwei Agenten, TTS) sagen einem
+  Menschen nicht, ob eine Ansage jetzt gelingt. Ein Template-Sensor, der genau diese Frage in
+  Klartext beantwortet, ist mehr wert:
+  ```
+  „Jarvis ist bereit — Wake-Word wird gehört, Ansagen laufen über den Echo Show."
+  ```
+
+**🔵 `ai.yaml` ist eine Premium-Detailseite, keine Hub-Seite**
+- Der Dashboard-Style-Guide führte sie bis 2026-08-14 unter „schlicht, kein card_mod". Sie war es
+  nie: Advisor-Hero mit Farbverläufen, Mushroom-Kacheln, `card_mod` — von Anfang an.
+- Entscheidung Diana am 2026-08-14: als Detailseite geführt. Premium-Mittel sind dort erlaubt.
