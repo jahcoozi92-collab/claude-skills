@@ -3325,3 +3325,72 @@ Geräten, nicht nur auf dem betroffenen Satelliten.
   Biotonne". Kommentare zwischen Satzbausteinen ohne die Trim-Striche schreiben.
 - Min/Max-Werte können identisch sein („im Tagesverlauf 26 bis 26 Grad"). Vor der Ausgabe auf
   Gleichheit prüfen und den Satz dann weglassen.
+
+### 2026-08-14 — `state`-Trigger ohne `to:`, Sperrzeit gegen Poll-Intervall, Diagnose-Fallen
+
+**🔴 `platform: state` ohne `to:` feuert auch bei reinen ATTRIBUT-Änderungen**
+- Bei Cloud-Integrationen heisst das: bei **jedem Poll**. Gemessen an `automation.haier_eco_pilot_resync`
+  rund ein Lauf pro Minute statt bei echten Moduswechseln — über Monate unbemerkt, weil ein
+  überflüssiger Lauf für sich harmlos aussieht.
+- Harmlos ist er aber nur, wenn die Aktion nichts bewirkt. Hier sendete jeder Lauf potenziell
+  `hon.climate_set_eco_pilot_mode`, und ein `settings_command` schaltet eine **ausgeschaltete**
+  Anlage ein. Nach einem HA-Neustart meldet die climate-Entität kurz den letzten aktiven Modus,
+  bevor der Coordinator auf `off` korrigiert; fiel ein Lauf in dieses Fenster, hielt die Automatik
+  das Gerät für an und schaltete es real ein — die Klimaanlage sprang nachts von selbst an.
+- **Nachweis in einem Aufruf**, bevor man Code liest:
+  ```
+  ha_get_automation_traces(automation_id="automation.x", limit=6)
+  ```
+  Stehen dort Läufe im Minutentakt mit `trigger: "state of …"`, feuert der Trigger auf Attribute.
+- **Fix-Muster:**
+  ```yaml
+  - platform: state
+    entity_id: [...]
+    to: ~                 # nur echte Zustandswechsel, keine Attribut-Updates
+    for: "00:02:00"       # Startartefakte sind bis dahin korrigiert
+  ```
+  Dazu beim `homeassistant`-start-Trigger eine Verzögerung (`trigger: id` + `condition: trigger`),
+  damit die Schleife nicht den flüchtigen Startwert liest.
+- **Generell:** Auf hon-/Cloud-Entitäten ist ein `state`-Trigger ohne `to:` gefährlich, sobald die
+  Aktion Geräte schalten kann. Beim Review jeder Automation auf solchen Entitäten zuerst danach sehen.
+
+**🔴 Eine feste Sperrzeit gegen ein Poll-Intervall ist immer ein Rennen**
+- Der Lamellen-Watcher sperrte `_handle_coordinator_update` für fest verdrahtete 45 s, der Poll läuft
+  im 60-s-Takt. Endete die Sperre zuerst, schrieb der nächste Poll den **alten** Wert zurück. Ob es
+  gut ging, hing davon ab, wo im Poll-Zyklus der Befehl landete — für die Nutzerin: „funktioniert
+  nicht zuverlässig".
+- **Muster:** Die Sperre wartet auf **Bestätigung**, nicht auf die Uhr — mit Deckel, und beim
+  Auslaufen bewusst den echten Wert durchlassen:
+  ```python
+  pending = getattr(self, "_pending_wind", None)
+  if pending is not None:
+      self._wind_ticks = getattr(self, "_wind_ticks", 0) + 1
+      cloud = (str(self._device.get("windDirectionVertical")),
+               str(self._device.get("windDirectionHorizontal")))
+      if cloud != pending and self._wind_ticks < self._WIND_SYNC_MAX_TICKS:
+          return                      # Cloud hinkt noch — Sperre halten
+      self._pending_wind = None; self._wind_ticks = 0
+  self.stop_watcher()
+  ```
+  Intervall 15 s, Deckel 8 Ticks (~2 min). Läuft es in den Deckel, kam der Befehl wirklich nicht an —
+  dann SOLL der alte Wert zurück, sonst lügt die Anzeige.
+- Gilt über hon hinaus für jede Integration, die lokal optimistisch schreibt und später pollt.
+
+**🟡 Zwei Diagnose-Fallen bei hon**
+- `logger.set_level` ist **flüchtig** und überlebt keinen Neustart. Wer Debug setzt, dann neu startet
+  und danach im Log sucht, findet nichts und hält den Fix für wirkungslos. Nach jedem `restart`
+  erneut setzen:
+  ```
+  ha_call_service(domain="logger", service="set_level", data={"custom_components.hon": "debug"})
+  ```
+- hon-Debug schreibt den kompletten Geräte-Shadow als JSON ins Log. Darin steht ein Feld `errors`,
+  auf das ein naives `grep -i error` trifft — die Ausgabe wird unbrauchbar (47 KB Treffer ohne einen
+  einzigen echten Fehler). Präzise filtern:
+  ```bash
+  docker logs homeassistant --since 6m 2>&1 | grep -E "^\[3[13]m2026.*(ERROR|Invalid config)"
+  ```
+  Der ANSI-Farbcode am Zeilenanfang (`[31m` rot / `[33m` gelb) ist der verlässlichste Anker für
+  „echte Logzeile der Stufe ERROR/WARNING".
+- Nützlich beim Lamellen-Debug: Der gesendete Parametersatz steht vollständig im Log. Gezielt
+  herausziehen mit
+  `grep -oE "'windDirection(Horizontal|Vertical)': '[0-9]+'|'resultCode': '[0-9]+'"`.
