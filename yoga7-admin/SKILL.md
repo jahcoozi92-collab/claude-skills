@@ -1609,3 +1609,86 @@ Alternative bevor vi: Heredoc-Pipe statt Editor öffnen.
 
 **🟡 Virale KI-Tweets erst faktenchecken, dann analysieren**
 - Beispiel dieser Session: Tweet behauptete „Anthropic-Prompting-Workshop von den Machern" — das Video war real ein Google-Cloud-Vortrag (Claude Code auf GCP, Ivan Nardini). Erst Quelle identifizieren (fxtwitter + WebSearch), dann Inhalt bewerten; Diskrepanz dem User explizit nennen.
+
+### 2026-08-13 — GNOME Remote Desktop (RDP) von WS44 aus + Speicher-Inventar
+
+**🔴 Zwei getrennte RDP-Dienste — die Verwechslung kostet die halbe Diagnose**
+
+| Modus | Unit | Konfiguration | Passwort |
+| --- | --- | --- | --- |
+| **Bildschirmfreigabe** | `systemctl --user gnome-remote-desktop` | `grdctl rdp …` | eigenes RDP-Passwort |
+| **Fernanmeldung** (headless) | `systemctl gnome-remote-desktop` (System) | `grdctl --system rdp …` | **Linux-Anmeldepasswort** |
+
+- Welcher läuft: `ps -eo user,cmd | grep gnome-remote-desktop-daemon` — `--system` im Aufruf = Fernanmeldung (läuft als User `gnome-r+`).
+- Die **Fernanmeldung reicht die Anmeldung an GDM durch** → das RDP-Passwort muss das Systempasswort sein. Nur die Bildschirmfreigabe hat ein eigenes, frei wählbares. Ich hatte das zuerst falsch herum angesagt.
+- Die Bildschirmfreigabe läuft **nur bei grafisch angemeldetem Benutzer**. `loginctl list-sessions` zeigt dann `gdm-greeter … seat0 … yes` = niemand angemeldet, Dienst tot, Port weg.
+
+**🔴 `negotiate-port` erklärt „falsche" Ports in gespeicherten .rdp-Dateien**
+- `gsettings get org.gnome.desktop.remote-desktop.rdp negotiate-port` → `true`: der User-Dienst weicht auf **3390** aus, solange der System-Dienst 3389 hält.
+- Genau so entstand `full address:s:100.98.252.44:3390` in `\\192.168.2.215\Public\RDP\yoga7.rdp` — funktionierte, bis sich Diana abmeldete, danach lauscht dort nichts mehr.
+- Erste Prüfung immer: `ss -tln | grep 339`.
+- **.rdp-Dateien sind UTF-16LE.** Beim Ändern von Windows aus Kodierung erhalten: `[System.IO.File]::WriteAllText($f, $c, [System.Text.Encoding]::Unicode)` — sonst wird die Datei unbrauchbar.
+
+**🔴 `systemctl enable --now` startet einen LAUFENDEN Dienst NICHT neu**
+- Der Daemon liest die Credentials beim Start. Nach `grdctl --system rdp set-credentials` ist **`systemctl restart`** zwingend, sonst weist er weiter ab.
+- Erkennungsmerkmal: unveränderte PID im Journal trotz „erledigter" Konfiguration.
+- Ebenso: erst `set-credentials`, **dann** neu starten — die umgekehrte Reihenfolge sieht erfolgreich aus und wirkt nicht.
+
+**🔴 Die Fernanmeldung braucht ein eigenes TLS-Zertifikat**
+- Der User-Modus hat eins unter `~/.local/share/gnome-remote-desktop/certificates/`, der System-Modus bekommt **keins automatisch**.
+- Erzeugen und eintragen (als root):
+  ```bash
+  openssl req -new -newkey rsa:4096 -days 3650 -nodes -x509 -subj "/CN=yoga7" -out /var/lib/gnome-remote-desktop/tls.crt -keyout /var/lib/gnome-remote-desktop/tls.key
+  chown gnome-remote-desktop:gnome-remote-desktop /var/lib/gnome-remote-desktop/tls.{crt,key}
+  grdctl --system rdp set-tls-cert /var/lib/gnome-remote-desktop/tls.crt
+  grdctl --system rdp set-tls-key /var/lib/gnome-remote-desktop/tls.key
+  ```
+- `Init TPM credentials failed … using GKeyFile as fallback` ist **kosmetisch** — erscheint bei jedem `grdctl`-Aufruf und bedeutet nur, dass der Fallback-Speicher genutzt wird.
+- `/var/lib/gnome-remote-desktop/` ist für den User nicht lesbar → `grdctl --system status` braucht sudo, geht also nicht per SSH ohne TTY.
+
+**🔵 Diagnose-Reihenfolge bei „RDP zu yoga7 geht nicht"**
+1. `tailscale ping yoga7-1` + von Windows `Test-NetConnection <ts-ip> -Port 3389`
+2. **`journalctl -u gnome-remote-desktop --since '-20 min'`** ← die entscheidende Quelle, ohne sie rät man
+3. `ss -tln | grep 339` — welcher Port lauscht wirklich
+4. `loginctl list-sessions` — grafisch angemeldet oder am GDM-Greeter?
+5. `sudo grdctl --system status` — Credentials und TLS gesetzt?
+
+| Journal-Meldung | Bedeutung |
+| --- | --- |
+| `[RDP] Credentials are not set, denying client` | keine Zugangsdaten hinterlegt — jeder Client wird vor der Anmeldemaske abgewiesen |
+| `ERRINFO_LOGOFF_BY_USER` | Session kam zustande und wurde regulär beendet = **Erfolg** |
+| `ERRINFO_RPC_INITIATED_DISCONNECT` | Sitzung wurde serverseitig beendet (typisch: Abmeldung) |
+| `transport_accept_nla` / `Connection reset by peer` beim ERSTEN Versuch | Zertifikatsdialog, harmlos wenn danach eine Session folgt |
+
+- mstsc meldet all das pauschal als „Dieser Computer kann keine Verbindung mit dem Remotecomputer herstellen" — die Windows-Fehlermeldung unterscheidet nicht zwischen „Port tot" und „abgewiesen". Immer das Journal gegenlesen.
+
+**🔴 `/opt` gehört root — eigene Dateien dort löschen braucht trotzdem sudo**
+- Das Löschrecht hängt am **Verzeichnis**, nicht an der Datei. Die ISOs gehörten `yoga7:yoga7`, `rm` scheiterte dennoch mit `Permission denied` (`/opt` ist `drwxr-xr-x root root`).
+- Mein Verschiebeskript prüfte den `rm`-Rückgabewert nicht und leitete stderr nach `/dev/null` → es protokollierte „OK verschoben und geloescht", obwohl beide ISOs noch dalagen. Erst `df` entlarvte es (unveränderter Wert).
+- **Regel:** In Skripten jeden destruktiven Schritt am Exit-Code prüfen (`rm -f "$f" || { echo FEHLER >> "$LOG"; continue; }`) und stderr **nicht** verwerfen. Ein Log, das Erfolg meldet, ohne ihn geprüft zu haben, ist schlimmer als gar keins.
+
+**🟡 Skript von WS44 nach yoga7 übertragen: BOM und CRLF strippen**
+```powershell
+Get-Content skript.sh -Raw | ssh yoga7@100.98.252.44 "tr -d '\r' > /tmp/x.sh && sed -i '1s/^\xEF\xBB\xBF//' /tmp/x.sh && bash -n /tmp/x.sh && echo 'Syntax OK'"
+```
+- Das Write-Tool erzeugt auf Windows **UTF-8 mit BOM**. Der BOM steht vor dem Shebang → bash liest `\357\273\277#!/bin/bash` als Befehl: `command not found`. Mit `od -c` sichtbar machen.
+- `bash -n` immer vor dem Ausführen — kostet nichts und fängt Transportschäden.
+- Für alles mit `sudo` gilt weiter: Claude kann es nicht (kein TTY über SSH). Skript nach `/tmp` legen, Diana ruft `sudo bash /tmp/x.sh` auf. Passworteingaben im Skript per `read -r -s`, dann landet nichts in der History.
+
+**🟡 Tailscale-Endpunkt von yoga7 hängt vom Standort des Anfragenden ab**
+- Tailscale-IP ist stabil: **`100.98.252.44`** (`yoga7-1`). Der darunterliegende Endpunkt nicht:
+  - von WS44 (`192.168.2.0/24`) gesehen: `192.168.3.4:41641`
+  - von der NAS (`192.168.22.0/24`) gesehen: `192.168.22.86:41641`
+- Für Verbindungen von WS44 **immer die Tailscale-IP verwenden**, nie die im Skill dokumentierte `192.168.22.86` — dorthin gibt es aus dem Arbeitsnetz keine Route.
+
+**🟡 Speicher-Inventar 13.08.2026 (Platte war bei 98 %)**
+- 454 GB gesamt, nach dem Cleanup rund 25 GB frei.
+- Größte Posten:
+  | Posten | Größe | Ort |
+  | --- | --- | --- |
+  | Steam + Spiele | **~96 GB** | `.var/app/com.valvesoftware.Steam` 60G, `.local/share/Steam` 24G, `~/SteamLibrary` 12G |
+  | Cowork-VM | 12,2 GB | `.config/Claude/vm_bundles/claudevm.bundle/rootfs.img` 11G + `.zst` 1,2G |
+  | Flatpak-Runtimes | 11 GB | `/var/lib/flatpak` |
+- Gefahrlos löschbar (~3,8 GB, hat 4,6 GB gebracht): `~/.cache/{codex-runtimes,codex-desktop,google-chrome,huggingface,pip}` + Papierkorb.
+- **ISO-Archiv liegt jetzt auf der NAS:** `/mnt/autofs/nas-personal/ISOs/` (Win11 23H2, Kali 2025.1c). Der Mount hat 4,9 TB frei und ist ein anderes Dateisystem — Verschieben dorthin bringt echten Platz, anders als Umräumen im Home.
+- Beim Verschieben großer Dateien auf die NAS: kopieren, **SHA256 auf beiden Seiten vergleichen**, erst dann löschen. Über CIFS dauert die Prüfung etwa so lang wie die Kopie (11 GB ≈ 8 Min gesamt) — im Hintergrund laufen lassen und den Log pollen.
