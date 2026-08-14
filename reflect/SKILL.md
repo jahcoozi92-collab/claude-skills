@@ -1308,3 +1308,49 @@ gehört ein **neuer** Skill angelegt. Format exakt wie die bestehenden:
   gemeldete Symptom **vollständig** erklärt. Hier blieb ein Rest („der horizontale Wert sprang einmal
   von 6 auf 0"), den ich zunächst als „nicht reproduzierbar" abgelegt hatte — genau dieser Rest war
   die Spur zur zweiten Ursache. Ein unerklärter Rest ist ein offener Faden, keine Fussnote.
+
+### 2026-08-14 — Datenquelle auf Vollständigkeit prüfen; nach zwei Fehlversuchen das Werkzeug holen
+
+**🔴 Bevor aus einer Messung eine Diagnose wird: bildet die Quelle das Gefragte überhaupt vollständig ab?**
+- Zwei Fehldiagnosen derselben Ursache in einer Session, beide mit Folgen:
+  - Ich las `llm_hass_api` aus den **Entry-Options** einer Integration und meldete „der Sprachagent
+    darf Home Assistant nicht steuern". Die Einstellung lag im **Subentry** und stand längst auf
+    `assist`. Diana hatte auf dieser Grundlage bereits eine Richtungsentscheidung getroffen, die
+    ich danach widerrufen musste.
+  - Ich las `.storage/homeassistant.exposed_entities`, fand „0 Einträge" und schloss daraus
+    „alles ist per Default freigegeben". Eine parallele Sitzung hatte am selben Abend gemessen:
+    **130** Entitäten sind explizit freigegeben, die Datei zeigt nur einen Teil.
+- **Regel:** Bei einem auffälligen Nullbefund („nichts gefunden", „0 Einträge", „nicht gesetzt")
+  zuerst prüfen, ob die Quelle vollständig ist — statt den Befund zu interpretieren. Ein Nullwert
+  ist häufiger ein Zeichen für die falsche Quelle als für einen leeren Zustand.
+- **Gegenprobe, die immer funktioniert:** eine Stelle suchen, an der das Gesuchte nachweislich
+  existiert, und prüfen, ob die Quelle sie zeigt. Hier hätte ein Blick genügt: Der Rollo-Befehl
+  funktionierte, obwohl die Datei „0 freigegeben" meldete — das war der Widerspruch, der die Quelle
+  entwertet hat.
+- Interne Speicherformate (`.storage/*`, Registry-Dateien, Caches) tragen Defaults, die **nicht in
+  der Datei stehen**. Für „ist X aktiv/zugewiesen/freigegeben" die laufende Anwendung fragen.
+
+**🔴 Nach zwei erfolglosen Versuchen aufhören zu variieren und das dokumentierte Prüfwerkzeug holen**
+- Eine Sprachabfrage schlug fehl. Ich probierte nacheinander: andere Formulierung, Raum zuweisen,
+  Sprachverarbeitung neu laden, Entitäten freigeben — vier Runden, jede mit eigener Vermutung.
+- Der passende Debug-Endpunkt stand **seit dem Vortag im eigenen Skill**. Sein erster Aufruf zeigte
+  in einer Antwort, dass der Satz längst sauber erkannt wurde und nur die Zielauswahl scheiterte —
+  also alle vier Vermutungen am Problem vorbeigingen.
+- **Regel:** Zwei Fehlversuche sind das Signal, die Suche zu wechseln statt sie fortzusetzen. Erst
+  fragen, ob es für diese Klasse von Problem ein Diagnosewerkzeug gibt (im Skill, im Produkt, im
+  Log), und es benutzen. Weiter zu variieren fühlt sich nach Fortschritt an, erzeugt aber nur
+  Datenpunkte ohne Erkenntnis.
+- Ergänzt die Lektion vom selben Tag („Fach-Skill vor dem Eingriff laden"): Es genügt nicht, den
+  Skill gelesen zu haben — die darin beschriebenen **Werkzeuge** muss man auch einsetzen, sobald es
+  hakt.
+
+**🟡 Vor dem Schreiben prüfen, ob eine parallele Sitzung denselben Fund schon committet hat**
+- Der Exposure-Befund war bereits dokumentiert — 20 Minuten vor meinem Reflect, aus einer anderen
+  Sitzung, sogar mit der Korrektur meiner eigenen Fehlinterpretation.
+- Hätte ich ihn erneut geschrieben, stünden zwei Fassungen derselben Sache im Skill, eine davon
+  falsch.
+- **Regel:** Vor dem Anhängen einer Lektion `git log --oneline -5` **und** bei Überschneidung
+  `git show <commit>` lesen. Bei Deckung nicht wiederholen, sondern verweisen — und die eigene
+  Version nur ergänzen, wo sie etwas Neues sagt.
+- Das gilt besonders am selben Tag: Mehrere Instanzen arbeiten oft an denselben Symptomen, weil
+  dieselbe Ursache sie beide beschäftigt.
