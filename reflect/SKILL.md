@@ -1517,3 +1517,52 @@ gehört ein **neuer** Skill angelegt. Format exakt wie die bestehenden:
   statt fehlender Richtungsprüfung).
 - Merkmal: Nennt der User in der zweiten Welle einen **anderen Grund** als in der ersten, ist es
   ein zweiter Fehler. Nennt er dasselbe Symptom ohne neuen Grund, war der erste Fix unvollständig.
+
+### 2026-08-16 (2) — Einen sicheren Prüfweg ANKÜNDIGEN ist nicht dasselbe wie ihn NEHMEN
+
+**🔴 Ich habe den Hinweis „löst nichts aus" in denselben Befehl geschrieben, der es auslöste**
+- Der Skill sagt seit dem 2026-08-13: *„Bevor eine Verifikation etwas auslöst, das in der
+  physischen Welt wirkt, erst prüfen, ob es einen reinen Prüf- oder Trockenlauf-Pfad gibt."*
+  Ich kannte die Regel, hatte sie in derselben Sitzung zitiert — und trotzdem einen
+  `conversation/process`-Aufruf abgesetzt, der eine Sprachansage im Wohnzimmer abspielte.
+- Der Mechanismus des Fehlers ist lehrreich: Ich hatte den Prüfweg **beschrieben** (der Kommentar
+  „löst den Lagebericht wirklich aus — deshalb nicht ausgeführt" stand im Code) und die Absicht
+  damit für erledigt gehalten. Ausgeführt wurde er trotzdem, weil der auslösende Aufruf im selben
+  Block stand. Eine Warnung neben einer scharfen Aktion entschärft sie nicht.
+- **Regel:** Bei Aktionen mit physischer Wirkung (Ton, Licht, Motoren, Nachrichten) darf der
+  auslösende Aufruf gar nicht erst im Befehl stehen. Erst den wirkungsfreien Weg herstellen, dann
+  testen. Wer sich beim Schreiben sagen muss „das darf ich eigentlich nicht ausführen", schreibt
+  gerade den falschen Befehl.
+- Praktisch: den scharfen Aufruf auskommentieren reicht nicht — Shell-Heredocs und Python-Blöcke
+  laufen komplett durch. Den Aufruf **weglassen** und stattdessen den Debug-/Dry-Run-Endpunkt
+  eintragen.
+
+**🔴 Gibt es keinen wirkungsfreien Weg, ist der erste Arbeitsschritt, einen zu bauen**
+- Statt weiter zwischen „testen und stören" abzuwägen, habe ich dem Skript ein `probe: true`
+  eingebaut: gesamte Auswertung läuft normal, nur die letzte Aktion wird getauscht (Text als
+  Benachrichtigung statt Ansage). Fünf Minuten Arbeit, danach war der Rest der Sitzung kostenlos
+  und geräuschlos prüfbar — und vier Textfehler fielen auf, die vorher niemand gesehen hätte.
+- Der Prüfweg muss **dieselbe** Sequenz benutzen, nicht eine nachgebaute. Ein Nachbau zeigt genau
+  die Fehler nicht, die man sucht.
+- Faustregel: Wenn eine Sitzung dreimal dieselbe störende Aktion zum Prüfen braucht, ist der
+  Prüfweg das eigentliche Arbeitspaket.
+
+**🔴 Ein Fix, der den Neustart nicht überlebt, ist kein Fix — Persistenz gehört in die Verifikation**
+- Ich hatte einen Wert gesetzt, per API gegengelesen, als erledigt gemeldet. Beim nächsten Neustart
+  stand er wieder auf dem alten Stand (`initial:` im Helfer). Der Fix war also nie einer, und die
+  Meldung „auf 0,55 gesetzt" war falsch, obwohl die Messung sie belegt hatte.
+- **Regel:** Bei allem, was in `.storage` persistiert (Helfer, Registry, Pipeline, Exposure), gehört
+  ein Neustart-Test zur Verifikation — nicht nur ein Lesen des laufenden Zustands. Erst wenn der
+  Wert den Neustart überlebt hat, ist die Änderung dauerhaft.
+- Anschluss an 2026-08-06 („die Verifikation muss die sichtbare Wirkung treffen"): hier ist es die
+  zeitliche Dimension derselben Regel — die Wirkung muss auch morgen noch da sein.
+
+**🟡 Vier Aufträge auf einmal: die Ursachen liegen selten dort, wo das Symptom hinzeigt**
+- „Zu leise" war nicht der Ton, sondern eine Automatik, die das Gerät leiser stellte, als es stand.
+  „Beide da" war kein Sensorfehler, sondern ein Handschalter ohne Widerruf. „Pipeline ruckelt" war
+  eine Einstellung, die alles an ChatGPT schickte.
+- In allen drei Fällen hätte eine Optimierung am vermuteten Ort (lauter mischen, Sensor
+  umschreiben, Modell wechseln) Arbeit gekostet und nichts behoben.
+- **Vorgehen, das sich bewährt hat:** vor der ersten Änderung die Kette einmal in Einzelwerten
+  auslesen — Quelle, Zwischenschritt, Stellglied, Ergebnis. Der Bruch ist dann meistens sichtbar,
+  ohne dass man eine Zeile geändert hat.
