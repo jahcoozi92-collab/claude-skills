@@ -2400,3 +2400,88 @@ Browser-Diagnose, CPU-Inferenz-Realitaet) weiter gelten; die Dienste selbst sind
   Läufe bekamen abgeschnittene Pfade und meldeten allesamt „FEHLGESCHLAGEN".
 - Das kostete eine komplette Messrunde und führte fast zu einer falschen Schlussfolgerung über die
   GPU. **Testfallnamen ohne Sonderzeichen** (`a_512_zu_2048`) und Variablen in Pfaden immer quoten.
+
+### 2026-08-16 — Caddy loggt nur WARN, Backup sicherte die verwaiste DB, Docker-Boot-Race
+
+**🔴 `caddy-ha-proxy` loggt mit `level WARN` — erfolgreiche Anfragen erscheinen NIE im Log**
+- Im `Caddyfile` steht `log { output stderr, level WARN }`. Sichtbar sind damit nur 4xx/5xx und
+  Verbindungsfehler. Zwölf erfolgreiche Testanfragen erzeugten **null** Logzeilen.
+- Daraus habe ich geschlossen, der Cloudflare-Tunnel umgehe den Reverse-Proxy und zeige direkt auf
+  Home Assistant — und daraus eine Handlungsempfehlung gebaut („Route im Zero-Trust-Dashboard auf
+  8124 ziehen"). Die Live-Route stand die ganze Zeit korrekt auf `192.168.22.90:8124`. Wäre sie
+  nach meiner Empfehlung geändert worden, hätte das eine funktionierende Konfiguration angefasst.
+- Der Trugschluss war stimmig, weil die 502-Meldungen der Handy-App tatsächlich im Log standen —
+  aber eben nur, **weil sie Fehler waren**. Erfolg ist in diesem Log unsichtbar.
+- **Regel:** Aus fehlenden Logzeilen nie auf fehlenden Verkehr schliessen. Erst das Log-Level der
+  Quelle lesen (`grep -A3 "log {" <Caddyfile>`), dann bewerten. Bei Cloudflare ist ohnehin die
+  **Live-Ingress-Konfiguration** massgeblich, nicht das lokale `config.yml` (Token-Modus) und erst
+  recht kein Proxy-Log:
+  ```bash
+  curl -sS -H "Authorization: Bearer $TOKEN" \
+    https://api.cloudflare.com/client/v4/accounts/<acct>/cfd_tunnel/<tunnel>/configurations \
+    | jq -r '.result.config.ingress[] | "\(.hostname // "catch-all") -> \(.service)"'
+  ```
+- Merke zum Aufbau: Der Proxy ist im Pfad, **weil** HA einen leeren `Server`-Header sendet, den
+  strikte Cloudflare-Edges (beobachtet: LHR) mit 400 ablehnen. `header >Server "caddy"` behebt das.
+
+**🟡 Ein Änderungswerkzeug mit eingebauter Vorprüfung widerlegt notfalls den eigenen Befund**
+- Statt die Route von Hand zu ändern, entstand `cloudflared/fix-ha-route.sh`: Live-Config per GET
+  holen, sichern, **genau einen** Eintrag ändern, Plausibilität prüfen (Regelzahl unverändert,
+  catch-all bleibt letzte), PUT, Gegenprobe.
+- Beim ersten Lauf meldete es „Bereits auf `…:8124` — nichts zu tun" und beendete sich. Damit hat
+  das Werkzeug meinen Fehlbefund entlarvt, bevor irgendetwas verändert wurde.
+- **Regel:** Bei Eingriffen in fremdverwaltete Konfiguration (Cloudflare, Registry, Datenbank) kein
+  Blind-Schreiben, sondern ein Skript, das erst den Ist-Zustand liest und nur bei echter Abweichung
+  handelt. Es kostet zehn Zeilen mehr und ist zugleich die Verifikation.
+- ⚠ Weiterhin gilt: `cloudflared/api-upload-routes-v2.sh` **niemals** blind laufen lassen — es macht
+  ein PUT der kompletten Liste aus `config.yml` und setzt die im Dashboard korrigierten Routen
+  zurück. Additiv arbeiten (GET → eine Regel ändern → PUT).
+
+**🔴 `daily-backup.sh` sicherte drei Monate lang die FALSCHE Datenbank**
+- Das Skript dumpte per `pg_dump` eine Recorder-Datenbank aus `postgres-ha`. Home Assistant hat
+  jedoch **kein `db_url`** gesetzt und schreibt in `config/home-assistant_v2.db` (SQLite, ~138 MB,
+  aktives WAL). Letzter Recorder-Lauf in PostgreSQL: **2026-05-17**.
+- Gleichzeitig war die echte Datei ausdrücklich ausgeschlossen:
+  `--exclude="home-assistant/config/home-assistant_v2.db*"` und
+  `--exclude="home-assistant/config/backups/*"`. Die gesamte Historie existierte damit **nirgends**
+  als Kopie — und das Backup-Log meldete jede Nacht Erfolg.
+- **Regel:** Bei jedem Dienst mit eigener Datenbank vor dem Vertrauen ins Backup einmal fragen,
+  **welche** Datenbank er tatsächlich benutzt — nicht, welche im Backup-Skript steht. Zwei Zeilen
+  genügen:
+  ```bash
+  grep -rn "db_url" <config>                     # nichts gefunden = interner Standard
+  ls -l --time-style=+%F\ %H:%M <db-datei>*      # frisches WAL = die hier wird beschrieben
+  ```
+- SQLite konsistent sichern (läuft am laufenden Dienst, gemessen 1,7 s für 138 MB):
+  ```bash
+  sqlite3 "file:/pfad/db.sqlite?mode=ro" ".backup '/ziel/snapshot.db'"
+  ```
+  Ein `cp` ist wegen des aktiven WAL unbrauchbar. Danach `PRAGMA integrity_check;` gegenlesen.
+- Die verwaiste PostgreSQL-Entity wurde **nicht gelöscht**, sondern der Block im Skript als
+  veraltet gekennzeichnet — sonst verschwindet mit den Daten auch die Erklärung, warum es sie gab.
+
+**🔴 Docker startet nach einem Reboot nicht: `203/EXEC`, weil `/volume1` drei Sekunden zu spät kommt**
+- `/usr/bin/dockerd` ist nur ein Symlink auf `/volume1/@appstore/com.ugreen.docker/bin/dockerd` —
+  die Binärdatei liegt also auf dem **Datenvolume**. `/lib/systemd/system/docker.service` deklariert
+  dafür keine Mount-Abhängigkeit.
+- Zeitlicher Ablauf am 2026-08-15: Boot 22:37:39 → Startversuch 22:38:00 (`203/EXEC`) →
+  `volume1.mount` aktiv erst 22:38:03 → nach 7 Fehlversuchen 22:38:16 `service-start-limit-hit`.
+  Danach unternimmt systemd nichts mehr; **alle** Container bleiben weg.
+- Sofortmassnahme: `sudo systemctl reset-failed docker.socket docker.service && sudo systemctl start docker`.
+  Der Start dauert wegen btrfs rund **60 Sekunden**, `systemctl start` blockiert so lange.
+- Dauerhaft behoben per Drop-In `/etc/systemd/system/docker.service.d/wait-for-volume1.conf`
+  (`RequiresMountsFor=/volume1`, `After=volume1.mount`, `StartLimitBurst=10`). Das vorhandene
+  `override.conf` blieb unangetastet — Drop-Ins ergänzen sich, ein zweites ist sauberer als ein Umbau.
+- Diagnose-Reihenfolge bei „Docker weg": `systemctl status docker` (Exit-Code lesen!) →
+  `ls -la` auf das Symlink-Ziel → `systemctl show volume1.mount -p ActiveEnterTimestamp` gegen
+  `systemctl show docker.service -p ExecMainStartTimestamp` halten. `203/EXEC` heisst immer
+  „Binärdatei nicht ausführbar/auffindbar", nie „Konfigurationsfehler".
+- Nach einem solchen Ausfall ist `caddy-ha-proxy` kurz `unhealthy`, weil es schneller oben ist als
+  Home Assistant auf 8123. Das erledigt sich von selbst — nicht eingreifen.
+
+**🟡 Der Ausfall blieb unbemerkt, weil der Wächter im selben Docker läuft**
+- Uptime Kuma überwacht vier Dienste und meldet per Telegram — läuft aber selbst als Container auf
+  dieser NAS. Fällt Docker aus, fällt der Wächter mit aus: eine halbe Stunde Totalausfall ohne eine
+  einzige Meldung.
+- Wer Ausfälle dieser Klasse bemerken will, braucht einen Prüfer **ausserhalb** der Maschine
+  (externer Uptime-Dienst) oder einen Dead-Man's-Switch, der beim Ausbleiben einer Meldung anschlägt.
