@@ -1387,3 +1387,76 @@ gehört ein **neuer** Skill angelegt. Format exakt wie die bestehenden:
   spricht für Y, was gilt?") kosten einen Turn und ersparen einen Rückbau.
 - Nebenprodukt, wenn man es richtig macht: Der veraltete Standard wird korrigiert. Ein Guide, gegen
   den mehrfach unbemerkt verstossen wird, ist selbst der Fehler.
+
+### 2026-08-16 — Genannte Symptome sind der Einstieg, nicht der Auftragsumfang
+
+**🔴 „Das war eine Level-1-Antwort" — nach einer Änderung fehlte der Durchgang gegen die eigene Arbeit**
+- Diana nannte drei Beanstandungen an einer Sprachansage. Ich habe alle drei behoben, jede einzeln
+  gegen den Live-Zustand verifiziert, Konfiguration validiert, sauber dokumentiert — und aufgehört.
+  Ihre Antwort: eine ausdrückliche Aufforderung, nochmals intensiv zu prüfen.
+- Der zweite Durchgang fand **sieben** weitere Fehler: vier vorbestehende, die beim nächsten Lauf
+  gefeuert hätten (eine Doppelmeldung, „in 1 Tagen", „3.1 Millimeter" gesprochen als „drei Punkt
+  eins", ein falscher Plural) — und **drei in meiner eigenen Änderung**, darunter ein Schwellwert,
+  der nie erreicht worden wäre, und ein neuer Satz, der einem anderen widersprechen konnte.
+- Nichts davon brauchte neues Wissen. Es brauchte nur einen Durchgang, den ich nicht gemacht hatte.
+- **Nach jeder Änderung drei Fragen stellen, bevor gemeldet wird:**
+  1. *Was macht meine Änderung kaputt?* Widerspricht ein neuer Text einem bestehenden? Zählt eine
+     neue Bedingung Dinge mit, die in einer anderen Betriebsart gar nicht vorkommen?
+  2. *Ist jeder eingeführte Grenzwert überhaupt erreichbar?* Die Gegenfrage lautet: Wie oft hätte
+     die Bedingung in den letzten zwei Wochen zugetroffen? „Nie" heisst, der Wert ist falsch.
+     Das ist eine Messung von zehn Sekunden und ich habe sie übersprungen.
+  3. *Gibt es dieselbe Fehlerklasse noch woanders in der Datei?* Die gefundene Ursache einmal als
+     Muster formulieren und danach greppen — nicht nur die gemeldete Fundstelle beheben.
+- Erkennungsmerkmal für „Level 1": Die Antwort listet genau so viele Punkte, wie der Nutzer genannt
+  hat. Ein gründlicher Durchgang findet fast immer mehr, als gemeldet wurde — sonst hat er nicht
+  stattgefunden.
+- Anschluss an 2026-08-14 („eine Korrektur kann eine zweite, grössere Ursache verdecken") und an
+  2026-08-13 („selbst entdeckte Fehler sind eine eigene Signalklasse"): Beide sagen dasselbe aus
+  anderer Richtung. Die genannten Symptome sind der Einstiegspunkt in den Code, nicht die Grenze
+  des Auftrags.
+
+**🟡 Eigene Fehler im Bericht zuerst nennen, nicht am Ende relativieren**
+- Von den sieben Funden waren drei meine eigenen. Sie gehören an den **Anfang** der Antwort, mit
+  klarer Benennung — nicht in eine Fussnote nach den fremden Fehlern.
+- Grund ist nicht Zerknirschung: Der Nutzer muss wissen, welchen Teilen der vorherigen Meldung er
+  noch trauen kann. Eine Korrektur, die man selbst zuerst ausspricht, ist eine Information;
+  dieselbe Korrektur nach dem Eigenlob ist eine Ausrede.
+
+### 2026-08-16 — `ontology-pending`: Skript vor dem Ausführen auf Shell-Expansion prüfen
+
+**🔴 `eval` + `set -u` + Lektionstext mit Shell-Beispiel = Abbruch mitten im Lauf**
+- Die Warteschlangen-Datei `ws44-2026-08-13.sh` brach nach 7 von 13 `create`-Aufrufen ab:
+  `bash: line 25: f: unbound variable`.
+- Ursache: Der Beschreibungstext einer Lektion enthielt ein Shell-Beispiel (`rm -f \"\$f\"`). Weil
+  die Zeile als `eval "$O create … "` in doppelten Anführungszeichen steht, löst **bash** das `$f`
+  schon vor `eval` auf — und `set -u` macht daraus einen Abbruch.
+- Besonders tückisch: `create` und `relate` stehen in getrennten Abschnitten. Der Abbruch traf die
+  `create`s, die `relate`s liefen beim Reparaturlauf durch — Ergebnis war eine **tote Kante** auf
+  eine Entity, die es nicht gab. Genau die Fehlerklasse, vor der die Lektion vom 2026-06-01 warnt,
+  nur auf einem anderen Weg hineingeraten.
+- **Vor jedem Ausführen eines pending-Skripts:**
+  ```bash
+  grep -oE '\$[A-Za-z_{][A-Za-z_}0-9]*' <skript> | sort | uniq -c
+  ```
+  Erlaubt sind nur `$O` und echte Schleifenvariablen. Alles andere ist ein Lektionstext, der ein
+  Dollarzeichen enthält, und muss neutralisiert werden (`\\\$` statt `\\$`) — besser noch: solche
+  Beispiele ohne Sigil formulieren (`rm -f DATEI`).
+- **Beim Schreiben eines pending-Skripts:** kein `eval` für die `create`-Aufrufe. Der Umweg über
+  `eval` bringt nichts, das ein direkter Aufruf mit einfach gequotetem JSON nicht auch kann, und
+  fügt eine Expansionsebene hinzu, die genau solche Texte zerlegt.
+- **Nach dem Ausführen nicht auf „lief durch" verlassen** — den Graphen zählen lassen:
+  ```python
+  # Entities: alle erwarteten IDs vorhanden?
+  # Relationen: gibt es Kanten, deren Endpunkt fehlt?
+  ```
+  Hier meldete der Lauf keinen Fehler mehr, und trotzdem fehlte 1 von 13 Entities.
+  ⚠ `graph.jsonl` enthält **Leerzeilen** — beim Parsen `if not line.strip(): continue`, sonst
+  wirft `json.loads` und die ganze Prüfung sieht wie ein kaputter Graph aus.
+
+**🟡 Eine reparierte Warteschlangen-Datei gehört committet, bevor sie gelöscht wird**
+- Die Reparatur (`$f` neutralisiert) ist die Information, die den Fehler beim nächsten Mal
+  verhindert — sie darf nicht zusammen mit der Datei verschwinden.
+- **Reihenfolge: reparieren → Reparatur committen → ausführen → verifizieren → Datei löschen →
+  Löschung committen.** Zwei Commits, nicht einer. Wer beides zusammenfasst, zeigt im Diff nur eine
+  verschwundene Datei; der eigentliche Fix ist dann nirgends nachlesbar, und die nächste Instanz
+  baut ihn erneut ein.
