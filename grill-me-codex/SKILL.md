@@ -236,3 +236,78 @@ Diana hat mitten in der Konzeptarbeit um eine Fassung „für einen 12-Jährigen
 Themenwechsel, sondern eine Prüfung, ob die Sache selbst verstanden ist. Funktioniert hat: ein
 konkretes Bild aus dem Alltag (Regenschirmverleih vor dem Bahnhof), dann die drei Fragen daran
 entlanggeführt — ohne Fachbegriffe, aber ohne den Inhalt zu verkleinern.
+
+---
+
+## Zweite Betriebsart: Codex als PRÜFER (statt als Arbeiter)
+
+Der Ablauf oben lässt Codex **bauen**. Das Kernprinzip des Skills — *der Prüfer ist nie der
+Autor* — trägt aber auch ohne Implementierung. Verlangt der Nutzer eine Bewertung („was kann
+man verbessern"), und hat Claude zu demselben Gegenstand bereits eine Analyse geliefert, ist
+Codex als **unabhängiger Zweitprüfer** die passende Rolle.
+
+**Aufruf (read-only, kein Schreibzugriff auf das Produktivsystem):**
+
+```bash
+codex exec -s read-only --skip-git-repo-check -C <verzeichnis> \
+  "Lies die Auftragsdatei <pfad>/CODEX_TASK.md und arbeite sie ab."
+```
+
+**In den Auftrag gehört zwingend:**
+
+- „Du bist der Prüfer, nicht der Autor." Die eigene Analyse **bewusst zurückhalten** — sonst
+  bestätigt Codex sie, statt unabhängig zu suchen.
+- „Jede Feststellung mit `Datei:Zeile` belegen. Was du nicht gelesen hast, behauptest du nicht."
+- „Sei kritisch, nicht bestätigend. Drei belegte Befunde sind besser als zehn geratene."
+- Bei Produktivsystemen: „Gib niemals Inhalte aus `secrets.yaml`, `.env` oder `.storage/` wieder."
+- Ausgabeformat je Befund: `[SCHWERE] Datei:Zeile — Befund — konkrete Folge im Betrieb`
+
+### 🔴 `-s read-only` verträgt KEINEN Auftrag, der eine Datei verlangt
+
+Am 2026-08-16 stand im Auftrag „schreibe deine Analyse nach `…/codex-befunde.md`", während der
+Aufruf `-s read-only` gesetzt hatte. Codex konnte nicht schreiben — und verbrauchte einen seiner
+Befund-Slots dafür, genau das zu melden. Der Widerspruch war meiner, nicht seiner.
+
+**Regel:** Im Prüf-Modus kommt das Ergebnis über den **Rückgabetext**. Die Wortbegrenzung aus
+Phase 0 („maximal N Wörter zurückgeben") bleibt trotzdem wichtig, sonst flutet der Bericht den
+Architektenkontext. Eine Datei nur verlangen, wenn der Aufruf `workspace-write` hat.
+
+### 🔴 Die Modellangabe im Skill gegen `~/.codex/config.toml` prüfen, nicht übernehmen
+
+Dieser Skill nennt `gpt-5.6-luna` (Stand 2026-08-04). Am 2026-08-16 stand in der config
+tatsächlich `model = "gpt-5.5"` mit `model_reasoning_effort = "xhigh"` — das im Skill genannte
+Default `gpt-5.6-sol` existierte dort nicht mehr.
+
+**Regel:** Vor dem Aufruf einmal nachsehen:
+
+```bash
+codex --version; grep -iE "^model" ~/.codex/config.toml
+```
+
+Für reine Analyse ist das konfigurierte Default mit hoher Denkstufe meist die bessere Wahl als
+ein per `-m` erzwungenes Modell, dessen Verfügbarkeit man nicht geprüft hat. Ein `-m` auf einen
+Namen, den es nicht mehr gibt, lässt den ganzen Lauf scheitern.
+
+### 🟡 Der Ertrag liegt in der EBENEN-Differenz, nicht in der Menge
+
+Beleg vom 2026-08-16 (Home-Assistant-Stack): Von meinen vier Befunden waren **zwei falsch** —
+beide auf Infrastruktur-Ebene (Tunnel-Route zeige am Reverse-Proxy vorbei; zwei Connectors seien
+riskant). Beide zerfielen bei der Prüfung an der maßgeblichen Quelle.
+
+Codex, der dieselbe Codebasis ohne Kenntnis meiner Analyse las, lieferte **drei Befunde in der
+Logik** — alle drei an der Quelle bestätigt:
+
+| Befund | Folge im Betrieb |
+| ------ | ---------------- |
+| Ziel wird bei der Bestätigung neu gelesen statt beim Auswerten gemerkt | Messwert landet auf dem falschen Gaszähler, in der Abrechnungsgrundlage |
+| Serielle Cover-Aufrufe ohne `continue_on_error` | ein Cloud-Fehler bricht die Nachtabsenkung ab, Folgeräume bleiben offen |
+| Merker wird VOR dem Gerätebefehl gesetzt | System hält den Raum für geparkt, während der Heizkörper weiterheizt |
+
+**Lehre:** Wer ein System selbst betreibt, prüft zuerst die Ebene, die er am besten kennt — hier
+die Verkabelung. Die teuren Fehler sitzen in der Logik. Genau dafür lohnt der zweite Blick eines
+Modells, das die eigene Vorgeschichte nicht kennt.
+
+**Und die Verifikationspflicht gilt unverändert:** Alle sieben Codex-Befunde wurden an der
+Fundstelle nachgelesen. Zwei davon waren **keine** Handlungsempfehlung — einer beschrieb eine
+dokumentierte Nutzerentscheidung, einer eine bewusst gewählte Container-Konfiguration. Ein
+Prüfbericht ist Rohmaterial, kein Ergebnis.
