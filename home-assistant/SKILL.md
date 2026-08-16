@@ -3717,3 +3717,122 @@ zwei Regeln, die für jede so gebaute Ansage gelten.
   werden **nacheinander** gerendert und sehen die vorher gerenderten — „The rendering happens one at
   a time, with previous results influencing the next." Ein `ruhig`-Merker, der auf zuvor definierte
   Textbausteine schaut, ist damit zulässig.
+
+### 2026-08-16 — Beschattung: „Sonne scheint" ist weder eine Richtung noch ein Messwert
+
+User-Report in zwei Wellen: erst „Rollos gehen runter, auch nach manueller Bedienung", dann —
+nach dem ersten Fix — „das ist nicht richtig, weil es bewölkt ist". Zwei unabhängige Ursachen,
+beide im zentralen Beschattungs-Gate von `packages/rollos.yaml`.
+
+**🔴 Ein im Skill notierter offener Lösungsweg wurde übersehen — und ein untauglicher gebaut**
+- Zeile „Grenze: … physische Fernbedienung bräuchte eine zweite Heuristik (**kommandierte vs.
+  tatsächliche Position vergleichen**)" steht seit dem 2026-06-29 in diesem Skill. Sie beschreibt
+  exakt die Lösung, die heute nötig war.
+- Am 2026-08-15 wurde stattdessen ein **Nachlauf-Timer** gebaut: 2 Minuten nach jeder Automatik-
+  fahrt gilt jede kontextlose Positionsmeldung als „war die Automatik". Der Ansatz kann prinzipiell
+  nicht funktionieren — Handbedienung folgt einer unerwünschten Automatikfahrt **binnen Sekunden**,
+  liegt also immer im selben Fenster.
+- Belegt am 2026-08-16: 13:00:11 Automatik auf 36 → 13:00:23 Diana von Hand auf 100 (Pause startete
+  nicht, `failed_conditions` an genau dieser Bedingung) → 13:03:23 Automatik wieder auf 36.
+- **Merke:** Formulierungen wie „bräuchte", „wäre sauberer", „noch nicht abgesichert" sind **offene
+  Aufgaben**, keine Randnotizen. Wer das Thema erneut anfasst, liest sie zuerst — sonst kostet eine
+  bereits gefundene Lösung sechs Wochen später dieselbe Diagnose ein zweites Mal.
+
+**🔴 Ein Zeitfenster trennt Ursache und Reaktion nicht, wenn beide darin liegen**
+- Verallgemeinerung des Obigen für jede „war das der Nutzer oder wir?"-Heuristik: Ein Zeitfenster
+  taugt nur, wenn das fremde Ereignis **nicht** durch das eigene ausgelöst wird. Bei einer Korrektur
+  ist genau das aber der Regelfall.
+- Was trennt, ist der **Inhalt**: die Automatik schreibt vor jeder Fahrt ihr Ziel in einen Merker
+  (`input_number.rollo_ziel_*`), gesetzt aus einer Automation, die auf `event_type: call_service`
+  mit `event_data: {domain: cover}` hört. Meldet die Cloud danach diese Position (±3 wegen
+  Somfy-Rundung: 35 → 36, erneut 90 → 91), war es die Automatik; jede andere Position ist ein Mensch.
+- Dasselbe Event trennt zusätzlich nach Herkunft: **Fahrbefehl aus Dashboard/App/Skript trägt eine
+  `user_id`, einer aus einer Automatik nicht** → Handbedienung über HA pausiert sofort, ohne Umweg
+  über die verspätete Cloud-Rückmeldung. Das ersetzt die frühere Automation, die auf `last_triggered`
+  einer handgepflegten Automations-Liste hörte (musste bei jeder neuen Rollo-Automation nachgezogen
+  werden und wusste ohnehin nur *dass*, nicht *wohin*).
+- ⚠ **`for: "00:00:08"` am State-Trigger ist Pflicht.** Somfy meldet während der Fahrt laufend
+  Zwischenpositionen (gemessen 36 → 62 → 82 → 100 in sieben Sekunden). Ohne die Beruhigung hielte
+  der Zielvergleich jeden Zwischenwert für eine Abweichung und sperrte die Automatik bei jeder
+  eigenen Fahrt aus.
+
+**🔴 met.no taugt als Beschattungs-Gate nicht — unabhängig davon, welches Feld man liest**
+- Die Lektion vom 2026-07-02 sagte: `cloud_coverage` allein reicht nicht, zusätzlich den
+  Wetter-**Zustandstext** prüfen. Das greift zu kurz. Heute war der Zustandstext `partlycloudy` und
+  die Zahl **43 %** — tatsächlich war der Himmel zu (Open-Meteo: **98 %**). Beide Felder derselben
+  Quelle lagen daneben, ein dritter Prüfschritt auf derselben Quelle hätte nichts gebracht.
+- `weather.forecast_home` ist eine **Vorhersage-Kategorie**, kein Messwert. Für ein Gate, das
+  physisch etwas bewegt, braucht es eine physikalische Größe.
+- **Lösung:** `rest:`-Block auf Open-Meteo (kein API-Schlüssel, Koordinaten aus `zone.home`, Abruf
+  alle 10 min) → `sensor.wetter_direktstrahlung` (DNI in W/m²) + `sensor.wetter_bewolkung_gemessen`.
+  Einordnung: klarer Sommerhimmel ≈ 800–900 W/m², Schleierwolken ≈ 300–400, bedeckt < 100.
+- **Im Haus gibt es keinen einzigen Helligkeits- oder Strahlungssensor** (geprüft: kein
+  `device_class: illuminance`/`irradiance`). Vor „prüfe, ob die Sonne scheint" zuerst klären, ob
+  die Größe überhaupt gemessen wird — sonst optimiert man an einer geratenen Zahl herum.
+- ⚠ **Rückfall ist Pflicht, wenn ein Gate an einer externen API hängt.** Fehlt
+  `sensor.wetter_direktstrahlung` (API weg, HA frisch gestartet), greifen die Gates auf
+  Einfallswinkel + met.no zurück. Ohne diesen Zweig legt ein API-Ausfall die Beschattung still —
+  und das fällt erst am heißen Nachmittag auf. Das Dashboard weist den Rückfallbetrieb sichtbar aus
+  (Attribut `messung`).
+- Wer irgendwo Bewölkung anzeigt, liest `state_attr('binary_sensor.rollo_sonne_scheint','bewoelkung')`
+  — **nicht** erneut `weather.forecast_home`. Sonst steht der falsche Wert wieder da (passierte
+  prompt in der KI-Begründung und fiel erst bei der Endkontrolle auf).
+
+**🔴 „Warm + hoch + sonnig" ist keine Beschattungsbedingung — die Fläche muss getroffen werden**
+- Das Gate prüfte Außentemperatur, Sonnenhöhe und Bewölkung, aber nicht, ob die Sonne die betroffene
+  Fassade überhaupt trifft. Schlafzimmer und Bad hatten **gar keine** Richtungsprüfung; Gästezimmer
+  und Dachfenster je eine von Hand geschätzte Azimut-Grenze (`rollo_gz_azimut_max`,
+  `rollo_dach_azimut_max` — beide am 2026-07-25 hier dokumentiert, jetzt entfernt).
+- Ergebnis: am 2026-08-16 um 13:00 fuhren Schlafzimmer und Bad bei Azimut 168° (Süd) auf 35 % —
+  auf ihre **WSW-Fassade** fielen rechnerisch 13 % der Strahlung, also nichts.
+- **Ersetzt durch berechnete Flächen** (`binary_sensor.rollo_sonne_auf_{strassenseite,gartenseite,
+  dachflache}`), maßgeblich ist die **Sonnenlast in W/m²** = DNI × Einstrahlungsfaktor, Schwelle
+  `input_number.rollo_last_min` (250). Der Faktor ist cos(Einfallswinkel):
+  - senkrechte Wand: `cos(h) · cos(Az − A)`
+  - geneigte Fläche: `cos(h) · sin(β) · cos(Az − A) + sin(h) · cos(β)`
+  (h = Sonnenhöhe, Az = Sonnenazimut, A = Azimut der Flächennormalen, β = Neigung; negativ → 0).
+- Eine **feste Azimut-Grenze ignoriert die Sonnenhöhe** — dieselbe Himmelsrichtung trifft eine Wand
+  im Juni ganz anders als im Oktober. Deshalb sind die drei alten Grenzwerte ersatzlos entfallen
+  (auch aus der Entity-Registry: nach dem Entfernen aus dem YAML bleiben sie sonst als
+  `unavailable`-Karteileichen stehen, `ha_remove_entity` räumt sie weg).
+- Die **Fassadenrichtung steckt in EINEM Helfer** (`rollo_fassade_azimut_strasse`, 247° = WSW aus der
+  Hauspeilung 67° Gartenrichtung); die Gartenseite wird als −180° abgeleitet. Ein Reihenhaus hat
+  keine zwei unabhängigen Ausrichtungen — zwei Stellwerte werden irgendwann widersprüchlich.
+- Eine **geneigte Dachfläche folgt einer anderen Kurve** als eine senkrechte Wand: mittags bekam das
+  Dachfenster 60 %, während beide Fassaden leer ausgingen. Dort ist Beschatten also richtig, während
+  Schlafzimmer und Bad offen bleiben — ein Verhalten, das mit einer gemeinsamen Sonnenhöhen-Schwelle
+  gar nicht darstellbar ist.
+
+**🔴 HA-Jinja kennt kein `radians` — Grad müssen `* pi / 180` gerechnet werden**
+- `{{ (90 | radians) }}` wirft; `pi`, `sin`, `cos`, `tan` gibt es, sie erwarten **Bogenmaß**.
+- Gefährlich ist nicht der Fehler, sondern der Nicht-Fehler: `(52 | cos)` liefert klaglos einen
+  Wert (cos von 52 rad), und die Beschattung löst dann zur falschen Tageszeit aus, ohne dass
+  irgendwo etwas rot wird. Trigonometrie-Templates vor dem Einbau mit bekannten Stützstellen prüfen
+  (`cos 60° = 0.5`, `sin 30° = 0.5`).
+- Entity-IDs mit Umlaut/ß nicht raten, sondern rendern: `{{ 'Rollo Einstrahlung Dachfläche' | slugify }}`
+  → `rollo_einstrahlung_dachflache` (ä→a, ß→ss).
+
+**🟡 Ein Merker, der „Automatik aktiv" behauptet, darf nur gesetzt werden, wenn sie etwas getan hat**
+- `input_boolean.rollo_sonnenschutz_aktiv` wurde am Ende der Absenk-Automation **bedingungslos**
+  gesetzt — auch in Läufen, die kein einziges Rollo bewegt hatten. Die Gegenautomatik „Sonnenschutz
+  beenden" öffnete daraufhin später Rollos, die nie zugefahren worden waren (u. a. die
+  Nacht-Teilposition am Morgen).
+- Jetzt an eine `or`-Bedingung über die drei Flächen-Gates gehängt. Gleiche Bauart beim Löschen:
+  der Merker fällt erst, wenn **keine** Fläche mehr Sonne hat — sonst hebt die eine freie Seite die
+  Beschattung der anderen auf.
+- Verwandt mit der Heizungs-Lektion (2026-08-16, `heizung_schutz.yaml`): erst handeln, dann den
+  Merker setzen — und nur, wenn wirklich gehandelt wurde.
+
+**🟡 Beschattung beenden gehört fassadenweise, nicht global**
+- Die Beenden-Automation öffnete alle Räume gemeinsam und wurde dafür von einer Sonderregel
+  blockiert, solange die Westsonne stand → das Gästezimmer (Ostfassade, längst im Schatten) blieb
+  den ganzen Nachmittag unnötig zu. Jetzt entscheidet jede Fläche für sich; die Sonderregel entfällt.
+
+**🔵 Verifikation über den Automation-Trace statt über das Ergebnis**
+- Beweis, dass ein Gate greift, ist nicht „die Rollos sind oben geblieben" (das kann Zufall sein),
+  sondern der Trace des nächsten planmäßigen Laufs: `ha_get_automation_traces(..., sections="actions")`
+  zeigt pro `if`-Zweig `result: false` mit `state`/`wanted_state` — hier lief der 13:30-Lauf durch
+  alle sechs Zweige, ohne einen einzigen Cover-Befehl abzusetzen.
+- Nützlich auch andersherum: derselbe Trace zeigte, dass der 13:03-Lauf durch
+  `numeric_state sensor.wetter_temperatur_lokal above 24` ausgelöst wurde — die Temperatur pendelte
+  um die Schwelle (24,0/24,2) und triggerte außerhalb des `/15`-Rasters wiederholt neu.
