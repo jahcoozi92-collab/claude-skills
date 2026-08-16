@@ -3572,3 +3572,148 @@ Entitäten existierten — der Fehler lag am **Kartentyp selbst**.
 - Der Dashboard-Style-Guide führte sie bis 2026-08-14 unter „schlicht, kein card_mod". Sie war es
   nie: Advisor-Hero mit Farbverläufen, Mushroom-Kacheln, `card_mod` — von Anfang an.
 - Entscheidung Diana am 2026-08-14: als Detailseite geführt. Premium-Mittel sind dort erlaubt.
+
+### 2026-08-16 — Gesprochene Ansagen: Bausteine müssen allein stehen, Schweigen ist ein Ergebnis
+
+Umbau des Jarvis-Lageberichts (`packages/jarvis_lagebericht.yaml`) nach drei Beanstandungen von
+Diana. Der Bericht baut seinen Text aus Listen, aus denen **zufällig** gezogen wird — daraus folgen
+zwei Regeln, die für jede so gebaute Ansage gelten.
+
+**🔴 Jede Variante muss allein stehen können — das Subjekt gehört in den ERSTEN Satz**
+- Beim Schreiben hat man die ganze Liste vor Augen und ergänzt das Thema gedanklich mit. Gehört
+  wird aber nur der eine gezogene Satz, unmittelbar hinter einem Satz über ein anderes Thema.
+- Konkret: gezogen wurde „**Seit 10 Tagen unbenutzt.**" direkt nach dem Absatz über die
+  Messsteckdosen. Diana hörte eine Zahl ohne Gegenstand und meldete das als Fehler.
+- Ein Pronomen reicht **nicht** („sie", „die Maschine") — es zeigt auf das vorherige Thema zurück.
+  Fünf von zehn Varianten waren so gebaut, alle unauffällig, solange man die Liste liest.
+- Prüffrage beim Ergänzen einer Variante: *Verstünde ich diesen Satz, wenn er der einzige wäre?*
+
+**🔴 Ein Baustein ohne Folge schweigt — Vollständigkeit ist in einer Ansage kein Wert**
+- Diana: „ich möchte nicht jede einzelne Steckdose aufgezeigt bekommen. auch nicht den stand jedes
+  Rollos." Der Bericht ist eine Ansage, keine Tabelle.
+- Alles, was täglich gleich lautet („beide Klimaanlagen sind aus", „keine Updates offen",
+  „Restmüll in 8, Papier in 12, Gelber Sack in 19 Tagen"), wird nach drei Tagen überhört und
+  **verdeckt dabei das, worauf es ankommt**.
+- Ebenso wenig gehören Einzelstände hinein: kein Rollo mit Öffnungsgrad, keine Fußnote zur
+  Messtechnik, nicht alle vier Tonnen. Gemeldet wird, was eine Handlung nach sich zieht.
+  Räume statt Einzelgeräte, entdoppelt (zwei Rollos je Raum sonst zweimal genannt).
+- Umsetzung: stumme Bausteine geben einen Leerstring zurück; sind **alle** stumm, sagt ein
+  gesammelter Ruhesatz das einmal. Sonst springt der Bericht wortlos weiter und klingt kaputt.
+- Zwei Fallen genau dabei, beide selbst hineingebaut und erst im zweiten Durchgang gefunden:
+  - **Der Ruhesatz darf den immer sprechenden Bausteinen nicht widersprechen.** „Im Haus gibt es
+    nichts zu melden" stand potenziell direkt hinter „Offen ist das Fenster im Bad", weil Fenster,
+    Müll und Anwesenheit nicht mitgezählt waren. Der Satz muss ausdrücklich nur über die Bereiche
+    reden, die tatsächlich schweigen.
+  - **Eine Kurzfassung muss in die Stummheitsprüfung eingehen.** Zählt man Bausteine mit, die in
+    der Kurzfassung gar nicht gesprochen werden, unterdrückt eine laufende Klimaanlage den
+    Ruhesatz in einer Ansage, in der die Klimaanlage nicht vorkommt.
+- Nebenwirkung, die den Aufbau verbessert: Weil stumme Blöcke nichts mehr kosten, muss die
+  Kurzfassung nicht länger die Handlungspunkte weglassen (vorher fielen ausgerechnet Rollos,
+  Waschmaschine, Batterien und Heizung weg, während Wetter und Nachrichten blieben).
+
+**🔴 Zahlen fürs Ohr prüfen: Dezimaltrennzeichen, Plural, Zeitangaben, Aufzählungen**
+- Die Stimme liest `3.1` als „drei **Punkt** eins". **Diese Regel stand bereits in derselben Datei**
+  (bei den Raumtemperaturen: „ein Punkt wuerde als 'Punkt sieben' vorgelesen") — sie war nur nie auf
+  den Niederschlag übertragen worden. Fix: `(x | round(1)) | string | replace('.', ',')`.
+- Plural: „Es liegen **1 Updates** an", „**2 Heizung laeuft**" — beide standen live im Code.
+- Zeitangaben aus `loop.index`: „in **1 Tagen** kommt Regen" → `'morgen' if n == 1 else ...`.
+- Aufzählungen **nie** mit `join(' und ')`: bei drei Räumen entsteht „im Bad und im Gästezimmer und
+  im Schlafzimmer". Formel: `(l[:-1] | join(', ')) ~ ' und ' ~ l[-1]`, Sonderfall `length < 2`.
+- ⚠ **`regex_replace` mit Rückverweis ist dafür untauglich.** `regex_replace(',([^,]*)$', ' und\1')`
+  überlebt die Quotierungsebenen nicht — Jinja liest `\1` im Stringliteral als Steuerzeichen, und
+  bei zwei Geräten stand wörtlich „Vordach Beleuchtung und ␁" in der Ansage. Im Log unauffällig.
+- Merke allgemein: Was auf dem Bildschirm richtig aussieht, kann gesprochen falsch sein. Jede Zahl
+  und jede Aufzählung im Ausgabetext einmal laut mitlesen.
+
+**🔴 KORREKTUR einer früheren Aussage: `| float(0)` schützt NICHT vor einem fehlenden Schlüssel**
+- Weiter oben steht sinngemäß „jede Referenz braucht `| float(0)` als Fallback". Das gilt für einen
+  **unbrauchbaren Wert**, nicht für einen **fehlenden**.
+- `{}.temperature | float(0)` wirft trotz Vorgabewert einen Fehler: HAs float-Filter fängt
+  `ValueError` und `TypeError` ab — ein nicht vorhandener Wert ist in Jinja aber `Undefined` und
+  wirft `UndefinedError`. Verifiziert per `ha_eval_template`.
+- Sicher ist erst `| default(0) | float(0)`. **Die Reihenfolge entscheidet.**
+- Warum das mehr ist als ein Schönheitsfehler: In einem Skript beendet ein Template-Fehler nicht den
+  einzelnen Satz, sondern **die ganze Sequenz**. Eine ausgefallene Wetterquelle hätte den kompletten
+  Lagebericht verschluckt, ohne dass jemand die Ursache im Log gesucht hätte.
+- Bauweise, die die Falle unmöglich macht: die gebrauchten Werte **einmal** oben abgesichert als
+  Skalare ableiten (`heute_max`, `morgen_regen`, …) und unten nur noch diese verwenden.
+
+**🔴 `fc[0]` aus `weather.get_forecasts` ist nicht zwingend heute**
+- Wetterdienste lassen den laufenden Tag im Tagesverlauf aus der Tagesvorhersage fallen. Dann
+  verschiebt sich alles um einen Tag — der Bericht sagt morgen als heute an, die Hitzewarnung kommt
+  einen Tag zu spät — und **nichts davon sieht im Log nach einem Fehler aus**.
+- Nach dem Datum suchen statt die Position zu zählen:
+  ```jinja
+  {% set d = fc | selectattr('datetime','defined')
+       | selectattr('datetime','search', now().strftime('%Y-%m-%d')) | list %}
+  {{ d[0] if d | length > 0 else (fc[0] if fc | length > 0 else {}) }}
+  ```
+- `selectattr(..., 'search', ...)` funktioniert in HAs Sandbox (geprüft).
+- Zusätzlich einen `wetter_da`-Merker führen: ohne Vorhersage darf der Bericht **nichts** über
+  morgen behaupten. Sonst sagt er „Morgen nur noch 0 Grad", „Regen ist kein Thema" und „nichts am
+  Horizont" — drei erfundene Aussagen, die alle glaubwürdig klingen.
+
+**🟡 Schwellwerte aus der Recorder-Statistik holen, nicht schätzen**
+- Ich hatte „auffällige Last ab 400 W" gesetzt, ohne nachzumessen. Die Statistik über 14 Tage:
+  Mittel 2–10 W, Tagesmaximum meist 40–77 W, ein einziger Ausreißer bei 133 W. Der Satz wäre
+  **nie** gesprochen worden — toter Code, der wie eine Funktion aussieht.
+- Ursache der Fehleinschätzung: `sensor.total_power_consumption` summiert fünf Messsteckdosen, die
+  die großen Verbraucher gar nicht erfassen — beim Nachmessen liefen **beide Klimaanlagen**, der
+  Sensor stand bei 30 W.
+- Pflichtprüfung vor jedem numerischen Schwellwert:
+  ```
+  ha_get_history(source="statistics", entity_ids="sensor.x", start_time="14d",
+                 period="day", statistic_types=["mean","max"])
+  ```
+- Gegenfrage, die den Fehler sofort zeigt: *Wie oft hätte diese Bedingung in den letzten zwei
+  Wochen zugetroffen?* Lautet die Antwort „nie", ist die Schwelle falsch, nicht die Welt.
+
+**🟡 ERWEITERUNG der `state`-Trigger-Lektion vom 2026-08-14: `not_from` bei Cloud-Quellen**
+- Dort ging es um `platform: state` **ohne** `to:`, das bei jedem Poll auf Attributänderungen
+  feuert. Der Geschwisterfall: `to: "on"` **mit** Wert, aber ohne `not_from`, feuert auch bei
+  `unavailable -> on` — und nach jedem HA-Neustart mit wiederhergestelltem Zustand.
+- Gemessen an `binary_sensor.waschmaschine_lauft` (Home Connect): **26 `unavailable`-Aussetzer in
+  10 Tagen**. Eine Merker-Automation („wann lief das Gerät zuletzt") hinge damit an
+  Verbindungsabbrüchen statt am Ereignis.
+- **Gemeinsame Regel für beide Fälle:** Bei cloudgestützten Entitäten ist jeder `state`-Trigger
+  verdächtig. Immer beides festlegen — den Zielzustand (`to:`) **und** woher nicht (`not_from:
+  [unknown, unavailable]`).
+  ```yaml
+  - trigger: state
+    entity_id: binary_sensor.x
+    to: "on"
+    not_from: ["unknown", "unavailable"]
+  ```
+- Belegen lässt sich der Verdacht ohne Codelesen:
+  `ha_get_history(entity_ids="...", start_time="10d", significant_changes_only=false)` — häufen
+  sich `unavailable`-Paare, ist der Filter Pflicht.
+
+**🟡 Ein Wächter, der nur per Push meldet, ist unsichtbar, wenn die Push-Nachricht untergeht**
+- `geraete_watchdog.yaml` überwacht 16 Geräte und stellt zwei fertige Sensoren mit einem
+  `offline`-Attribut bereit (Text, kein Array; bei null Ausfällen „alle online"). Der Lagebericht
+  wertete sie nicht aus — beim Nachmessen war **tatsächlich einer offline**, ohne dass irgendeine
+  Ansage es erwähnt hätte.
+- Regel: Wenn ein Wächter existiert, gehört sein Ergebnis in den regelmäßigen Bericht, nicht nur in
+  eine Benachrichtigung. Der Wächter wurde gebaut, weil ein Sensor **still** gestorben war.
+- Gerätenamen aus `friendly_name` sind für Technik gemacht, nicht zum Vorlesen
+  („Lanyard/mini hygrometer 1E27 Temperature"). Schrägstrich ersetzen, Suffixe strippen — oder
+  die Entität in HA umbenennen, was der sauberere Weg ist.
+
+**🟡 Zwei Prüfwerkzeuge für große Template-Packages (beide ohne Wirkung im Haus)**
+- **`ha_eval_template`** (HA-MCP) rendert Bausteine mit echtem Zustand, ohne die Ansage abzuspielen.
+  Das Skript selbst aufzurufen kostet ElevenLabs und weckt das Haus. Anschluss an die Lektion vom
+  2026-08-13: „die sichtbare Wirkung prüfen" heisst nicht „die Wirkung auslösen".
+- **Statische Variablenprüfung** für Dateien mit vielen `variables:`-Einträgen — fängt Tippfehler
+  und falsche Reihenfolge, die `check_config` durchlässt:
+  ```python
+  # YAML laden, je variables-Block in Definitionsreihenfolge:
+  # jinja2.meta.find_undeclared_variables(env.parse(tpl)) gegen die bisher bekannten Namen
+  ```
+  ⚠ Zwei Stolpersteine: (1) in `{% if %}`-Zweigen gesetzte Namen meldet die Analyse fälschlich als
+  undefiniert — `{% set %}`- und `{% for %}`-Ziele separat einsammeln. (2) Zusätzlich prüfen, ob
+  jeder definierte `*_text`-Baustein in der Ausgabe auch **referenziert** wird; ein neu angelegter
+  Block, der nie gesprochen wird, fällt sonst niemandem auf.
+- Belegt aus HAs Quelltext (`ScriptVariables.async_render`): Variablen eines `variables:`-Blocks
+  werden **nacheinander** gerendert und sehen die vorher gerenderten — „The rendering happens one at
+  a time, with previous results influencing the next." Ein `ruhig`-Merker, der auf zuvor definierte
+  Textbausteine schaut, ist damit zulässig.
