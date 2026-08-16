@@ -1460,3 +1460,20 @@ gehört ein **neuer** Skill angelegt. Format exakt wie die bestehenden:
   Löschung committen.** Zwei Commits, nicht einer. Wer beides zusammenfasst, zeigt im Diff nur eine
   verschwundene Datei; der eigentliche Fix ist dann nirgends nachlesbar, und die nächste Instanz
   baut ihn erneut ein.
+
+**🔴 `create` auf eine BESTEHENDE `--id` ersetzt die Properties stillschweigend**
+- Die Lektion vom 2026-08-06 sagt das für `update` („ersetzt die `properties` vollständig"). Für
+  `create` steht es nirgends — und es verhält sich genauso: kein Fehler, keine Warnung, der alte
+  Eigenschaftssatz ist weg.
+- Passiert hier mit `sw_jarvis_lagebericht`. Die Entity existierte seit dem 2026-08-13 mit einer
+  Begründung, die ich nie gelesen hatte („bewusst HA-Script statt Shell, weil Zustände direkt
+  vorliegen und kein API-Token nötig ist"). Mein `create` hat sie ersetzt.
+- **Relationen überleben** (sie sind eigene Log-Zeilen), die Beschreibung nicht.
+- **Regel:** Vor jedem `create` prüfen, ob die ID schon existiert — und wenn ja, die alte
+  Beschreibung lesen und zusammenführen statt zu überschreiben:
+  ```bash
+  grep -c '"id": "sw_x"' memory/ontology/graph.jsonl   # 0 = neu, sonst vorhanden
+  ```
+- Rettbar ist es, weil `graph.jsonl` ein **Append-Log** ist: alle früheren Fassungen stehen noch
+  drin, gefiltert nach `entity.id` plus `timestamp`. Wer den Verlust bemerkt, kann ihn rückgängig
+  machen — wer ihn nicht bemerkt, verliert die Begründung dauerhaft aus der Abfrage.
