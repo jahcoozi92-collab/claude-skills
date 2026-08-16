@@ -1477,3 +1477,43 @@ gehört ein **neuer** Skill angelegt. Format exakt wie die bestehenden:
 - Rettbar ist es, weil `graph.jsonl` ein **Append-Log** ist: alle früheren Fassungen stehen noch
   drin, gefiltert nach `entity.id` plus `timestamp`. Wer den Verlust bemerkt, kann ihn rückgängig
   machen — wer ihn nicht bemerkt, verliert die Begründung dauerhaft aus der Abfrage.
+
+### 2026-08-16 — Offene Aufgaben im Skill sind keine Randnotizen; nach dem Behebenden Nachbar-Automationen prüfen
+
+**🔴 „Bräuchte X" in einer Lektion ist ein TODO — beim nächsten Anfassen des Themas zuerst lesen**
+- Der `home-assistant`-Skill enthielt seit dem 2026-06-29 den Satz: „physische Fernbedienung
+  bräuchte eine zweite Heuristik (kommandierte vs. tatsächliche Position vergleichen)". Das war die
+  vollständige Lösung eines bekannten Problems — aufgeschrieben, aber nie umgesetzt.
+- Sechs Wochen später wurde für dasselbe Problem ein **anderer, prinzipiell untauglicher** Ansatz
+  gebaut (ein Zeitfenster, das Ursache und Reaktion nicht trennen kann). Heute musste dieselbe
+  Diagnose ein zweites Mal gestellt werden, bevor die längst notierte Lösung entstand.
+- Die Lektionen vom 2026-08-13/14 („vorhandene Memories lesen", „Fach-Skill vor dem Eingriff laden")
+  greifen hier zu kurz: Der Skill **wurde** gelesen. Übersehen wurde, dass eine seiner Zeilen keine
+  Beschreibung war, sondern ein offener Auftrag.
+- **Beim Lesen eines Fach-Skills gezielt nach diesen Formulierungen suchen**, bevor gebaut wird:
+  ```bash
+  grep -anE "bräuchte|wäre sauberer|noch nicht|ungelöst|offen:|TODO|Grenze:|Rest-Unschärfe" \
+       ~/.claude/skills/<skill>/SKILL.md
+  ```
+  Trifft eine davon das aktuelle Thema, ist sie die Ausgangslage — nicht das eigene erste Konzept.
+- **Beim Schreiben einer Lektion:** Wer eine Grenze dokumentiert und den Lösungsweg schon kennt,
+  markiert ihn als offen (`⚠ OFFEN:`), statt ihn in einen Fließtext-Halbsatz zu packen. Ein
+  erkannter, aber unmarkierter Lösungsweg ist fast wertlos — er wird beim Querlesen als
+  Zustandsbeschreibung gelesen.
+
+**🟡 Nach dem Fix prüfen, wer sonst noch dieselbe fehlerhafte Annahme trifft**
+- Das reparierte Gate war an fünf weiteren Stellen als Bedingung eingebaut. Zwei davon (Klimahilfe,
+  Bad-folgt-Schlafzimmer) hatten die Prüfung gar nicht — sie wären nach dem Fix der Hauptautomation
+  weiterhin falsch gefahren, und der User hätte dasselbe Symptom erneut gemeldet.
+- **Vorgehen:** Die Ursache einmal als grep-fähiges Muster formulieren (hier: der Name des
+  Gate-Sensors) und alle Fundstellen durchgehen — auch die, die der User nicht genannt hat.
+- Ergänzt die Lektion vom 2026-08-16 („genannte Symptome sind der Einstieg, nicht der
+  Auftragsumfang") um den konkreten Handgriff.
+
+**🔵 Zwei Wellen desselben Reports = zwei getrennte Ursachen, nicht ein unvollständiger Fix**
+- Nach dem ersten Fix kam „das ist trotzdem nicht richtig, weil …". Die Versuchung ist, am gerade
+  Gebauten nachzujustieren (hier: an der Schwelle zu drehen). Richtig war, die **neue** Begründung
+  des Users ernst zu nehmen — sie benannte eine zweite, unabhängige Ursache (falsche Datenquelle
+  statt fehlender Richtungsprüfung).
+- Merkmal: Nennt der User in der zweiten Welle einen **anderen Grund** als in der ersten, ist es
+  ein zweiter Fehler. Nennt er dasselbe Symptom ohne neuen Grund, war der erste Fix unvollständig.
