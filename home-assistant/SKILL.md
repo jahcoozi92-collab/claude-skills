@@ -3836,3 +3836,137 @@ beide im zentralen Beschattungs-Gate von `packages/rollos.yaml`.
 - Nützlich auch andersherum: derselbe Trace zeigte, dass der 13:03-Lauf durch
   `numeric_state sensor.wetter_temperatur_lokal above 24` ausgelöst wurde — die Temperatur pendelte
   um die Schwelle (24,0/24,2) und triggerte außerhalb des `/15`-Rasters wiederholt neu.
+
+### 2026-08-16 (2) — `initial:` frisst jede Verstellung, hassil-Optionalsyntax, Pipeline-Vorrang, Lautheit
+
+Auslöser: „das war zu leise", „du sagtest beide da — das stimmt nicht", dazu Grammatikprüfung,
+Dashboard und „die Sprachpipeline soll endlich reibungslos funktionieren". Vier Aufträge, aber
+die Ursachen lagen woanders, als die Symptome vermuten ließen.
+
+**🔴🔴 `initial:` bei `input_number` überschreibt den gespeicherten Wert bei JEDEM Start**
+- Nicht nur beim allerersten — das ist der verbreitete Irrtum, und er steht so ähnlich auch weiter
+  oben in diesem Skill (Abschnitt „Helper-Entities"). **Korrektur:** für `input_boolean`/
+  `input_number`/`input_select`/`input_text` schaltet `initial:` die Wiederherstellung ab; der
+  Wert wird bei jedem Start zurückgesetzt.
+- Belegt am 2026-08-16: `input_number.jarvis_echo_volume_tag` auf 0.55 gesetzt → HA-Neustart →
+  wieder 0.30. Nach dem Entfernen von `initial:` überlebt der Wert den Neustart. Ein
+  Neustart-Test ist der einzige verlässliche Nachweis; im laufenden Betrieb sieht alles richtig aus.
+- **Folge: Jeder Schieberegler auf dem Dashboard ist wirkungslos**, sobald sein Helfer ein
+  `initial:` trägt. Die Nutzerin verstellt ihn, es wirkt, und beim nächsten Neustart ist es weg —
+  ohne Meldung. Man sucht den Fehler dann in der Automatik, nicht im Helfer.
+- **Der ernste Fall waren die Gaszähler.** `zaehler_gas_*_aktuell/_basis` hatten `initial:` mit
+  fest verdrahteten Ständen. `zaehler_foto.yaml` schreibt dort die per Foto erfassten Werte hinein
+  — die hätten den nächsten Neustart nicht überlebt, still, in der Abrechnungsgrundlage. Genau die
+  Klasse Fehler, gegen die dieses Paket sonst so sorgfältig abgesichert ist. Entfernt bei den
+  sechs Gas-Helfern und bei `strompreis_ct_kwh`.
+- **Kein Sammel-Fix.** Von ~40 betroffenen Helfern wollen manche den Reset ausdrücklich, etwa die
+  `rollo_ziel_*`-Merker mit `initial: -1`. Die Frage ist pro Helfer: *Verstellt ein Mensch das?*
+  Dann weg. *Ist es ein Zustandsmerker?* Dann bleiben.
+- Bestandsaufnahme in einem Lauf:
+  ```python
+  # YAML je Package laden (Multi-Constructor fuer !secret/!include), dann
+  # alle input_* mit 'initial' auflisten und nach Typ/Namen bewerten
+  ```
+  ⚠ Beim Zaehlen mit `grep -c "initial:"` aufpassen: eigene Kommentare, die das Wort enthalten,
+  werden mitgezaehlt. `grep -cE "^\s+initial:"` zaehlt nur echte Schluessel.
+
+**🔴 `(wort){0,1}` ist KEINE Optional-Syntax in hassil — es ist eine Slot-Listen-Referenz**
+- Optional heisst `[wort]`. Geschweifte Klammern sind ausschliesslich Listennamen. `(bitte){0,1}`
+  wird deshalb als Liste `{0,1}` gelesen.
+- **Ein einziger solcher Satz legt die KOMPLETTE Spracherkennung lahm**, sobald eine Äusserung in
+  diesen Ausdruck hineinläuft: `hassil.errors.MissingListError: Missing slot list {0,1}` — und
+  danach schlägt jede weitere Erkennung fehl, auch „wie spät ist es".
+- Tückisch: die falschen Sätze können monatelang unauffällig sein. Sie brechen erst, wenn ein
+  Testwort ihren Präfix trifft und hassil in den Ausdruck absteigt. Fünf solcher Stellen lagen
+  hier seit dem 2026-08-13 im Bestand.
+- Erkennbar am Debug-Endpunkt: er antwortet mit `Unknown error`, die Ursache steht nur im HA-Log.
+- Bestandsprüfung + Reparatur:
+  ```bash
+  grep -rn "{0,1}" config/custom_sentences/
+  # (x){0,1} -> [x]
+  ```
+
+**🔴 `prefer_local_intents: False` schickt JEDE Äusserung an den LLM-Agenten**
+- Die bevorzugte Pipeline stand darauf. Damit gehen auch „mach das Licht an" und die eigenen
+  `custom_sentences` zuerst an ChatGPT: langsamer, kostenpflichtig, und bei leerem Guthaben tot.
+- Umstellen geht nur per WebSocket (`assist_pipeline/pipeline/update`, alle Felder ausser `id`
+  mitschicken), überlebt den Neustart.
+- Danach am Debug-Endpunkt gegenprüfen, dass die Sätze wirklich lokal greifen — `[builtin]` bzw.
+  `[custom: datei]` in der Antwort ist der Beleg.
+- Lohnende Ergänzungen, die sonst an den LLM gehen: **Uhrzeit und Datum**. Das ist die häufigste
+  Frage überhaupt, und das Modell kennt die Uhrzeit nicht — es rät sie. Wochentag/Monat dabei
+  NICHT über `strftime('%A')` bilden: die Container-Locale ist englisch, das liefert „Saturday".
+  Ausgeschriebene Listen über `now().weekday()` bzw. `now().month`.
+
+**🔴 Ein Override-Handschalter ohne Widerruf ist keine Übersteuerung, sondern eine Dauerlüge**
+- `input_boolean.bianca_zuhause_override` erzwang „zuhause" und wurde von **keiner** Automation je
+  zurückgesetzt. Er stand seit Tagen auf `on` (alle Einträge `user_id: null` = reine
+  Restore-Punkte), während Handy und Tracker `not_home` meldeten. Der Lagebericht sagte deshalb
+  „Ihr seid beide da".
+- Verallgemeinerung der Merker-Regel: **Wer einen Zustand behauptet, braucht jemanden, der ihn
+  widerruft.** Sonst überstimmt der Merker die Messung dauerhaft.
+- ⚠ **Der Widerruf darf NICHT bei Funkstille greifen** — genau dann ist der Schalter ja gemeint
+  (Handy leer, App tot). Verlangt werden zwei positive Gegenbelege gleichzeitig: Tracker meldet
+  ausdrücklich `not_home` UND das Gerät hängt in einem echten fremden Netz (Wert vorhanden,
+  ungleich Heim-SSID). `unknown`/`unavailable` zählen nicht.
+- Diagnose-Reihenfolge bei „Anwesenheit stimmt nicht": erst die Quellen einzeln lesen
+  (Tracker, `person.*`, WLAN-SSID), dann die Override-/Merker-Ebene. Und prüfen, wer den Merker
+  je schreibt: `grep -rn "<helfer>" --include=*.yaml .` — kommt nur die Bedingung zurück, ist er
+  ein reiner Handschalter.
+
+**🟡 „Zu leise": zuerst prüfen, ob die Automatik das Gerät HERUNTERregelt**
+- Der Echo stand im Alltag auf 0,50; das Ansage-Skript stellte für die Durchsage auf **0,30** und
+  danach zurück. Die Ansage war damit systematisch leiser als alles andere auf dem Gerät — die
+  Lautstärkelogik funktionierte einwandfrei, sie war nur falsch parametriert.
+- Vor jeder Ton-Optimierung deshalb: Ziel-Lautstärke der Automatik gegen die übliche
+  Gerätelautstärke halten (`state_attr(media_player, 'volume_level')`).
+
+**🟡 Lautheit einer TTS-Datei: Zweipass, und die Obergrenze ist das Amazon-Profil**
+- **Einpass-`loudnorm` trifft den Zielwert bei kurzen Dateien nicht** — gemessen: Ziel −13 LUFS,
+  Ergebnis −16,4 LUFS, dabei **True Peak +1,4 dBTP** (Übersteuerung). Der Filter arbeitet dynamisch
+  mit Vorausschau; bei ~7 s reicht das Messfenster nicht.
+- Zweipass ist deterministisch: messen (`print_format=json`), dann mit `measured_*` und
+  `linear=true` eine konstante Verstärkung anlegen. Kein Pumpen, exakter Zielwert, sauberer TP.
+- **Nach der Normalisierung KEINEN Limiter mehr anhängen** — er hebt die Spitzen wieder über den
+  von `loudnorm` gesetzten TP. Dynamik reduziert man **vor** der Messung (`acompressor`).
+- ⚠ **Die Gesamtlautheit der Datei ist nicht die Lautheit der Stimme.** Vor- und Nachlauf bestehen
+  nur aus dem weggeduckten Bett und ziehen den Integralwert nach unten; je länger der Vorlauf,
+  desto leiser wirkt derselbe Bericht. Deshalb am Ende der Kette normalisieren, nicht nur die
+  Stimme.
+- Realistische Obergrenze bei Amazons 24 kHz / 48 kb/s mono: **etwa −14 LUFS bei −1,5 dBTP**.
+  Darüber erzwingt der Sprachdynamikumfang Übersteuerung. Der grössere Hebel bleibt die
+  Gerätelautstärke.
+
+**🟡 Vorschau-Muster für Ansagen: dieselbe Sequenz, nur die letzte Aktion getauscht**
+- Feld `probe: true` am Skript; die gesamte Auswertung läuft normal, statt `jarvis_say_echo`
+  erzeugt ein `persistent_notification` den fertigen Text, danach `stop`.
+- 🔴 Der Text muss **vorher in eine Variable** gebaut und von beiden Wegen benutzt werden. Baut die
+  Vorschau ihn neu zusammen, zeigt sie genau die Fehler nicht, die man mit ihr sucht.
+- Auslesen ohne UI: WebSocket `persistent_notification/get` (Ergebnis ist eine **Liste**).
+- Damit ist Gegenlesen von Satzbau und Grammatik kostenlos und weckt niemanden — und genau so
+  sind in dieser Session vier Textfehler aufgefallen, darunter ein „sie" ohne Bezugswort, das im
+  Quelltext nicht auffällt, weil man „Klimaanlage" beim Lesen mitdenkt.
+
+**🟡 `button-card` v6.0.0: bestätigt, und ein Folgeschaden, den niemand sieht**
+- Version per `grep "BUTTON-CARD" www/community/button-card.js` verifiziert. Service-Calls lösen
+  weiterhin nicht aus.
+- Der eigentliche Schaden war nicht der tote Knopf, sondern dass die Karte **„▶ Tippen zum
+  Anwenden" anzeigte**. Eine Karte, die eine Handlung verspricht und nichts tut, ist schlimmer als
+  gar kein Knopf. Trennung: `button-card` bleibt Anzeige (nur sie rendert freies HTML),
+  die Aktion bekommt eine `mushroom-template-card` daneben.
+
+**🔵 `last_triggered` taugt nicht für „wann lief das zuletzt" — im eigenen Lauf**
+- HA setzt das Attribut beim **Start** der Ausführung. Wer es innerhalb desselben Laufs liest,
+  bekommt „jetzt", der Abstand ist immer null. Für „wir haben seit X Tagen nicht gesprochen"
+  braucht es einen eigenen `input_datetime`, der am **Ende** geschrieben wird — dieselbe Bauweise
+  wie beim Waschmaschinen-Merker.
+
+**🔵 Einordnung statt Messwert: Rekorde aus der Langzeitstatistik**
+- „26 Grad" ist eine Messung, „26 Grad, der wärmste Tag seit dem 3. Juli" eine Nachricht. Templates
+  kommen an die Historie nicht heran, `states` wird nach 30 Tagen gelöscht — die `statistics`-
+  Tabelle ist dauerhaft (hier bis 2026-05-24 zurück) und über einen `command_line`-Sensor lesbar.
+- Tagesextremwerte: `SELECT date(start_ts,'unixepoch','localtime'), max(max) ... GROUP BY tag`.
+  Mindestens ~14 Vergleichstage verlangen, sonst ist jede „Rekord"-Aussage Zufall.
+- Die Logik gegen **historische** Tage prüfen, nicht nur gegen heute: ein stummer Sensor ist von
+  einem kaputten sonst nicht zu unterscheiden. Hier bestätigt am 26.06. (37,9 °C = Allzeitrekord)
+  gegen heute (25,5 °C = zu Recht stumm).
