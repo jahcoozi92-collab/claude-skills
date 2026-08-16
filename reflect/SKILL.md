@@ -1566,3 +1566,103 @@ gehört ein **neuer** Skill angelegt. Format exakt wie die bestehenden:
 - **Vorgehen, das sich bewährt hat:** vor der ersten Änderung die Kette einmal in Einzelwerten
   auslesen — Quelle, Zwischenschritt, Stellglied, Ergebnis. Der Bruch ist dann meistens sichtbar,
   ohne dass man eine Zeile geändert hat.
+
+### 2026-08-17 — Parallel-Sessions, überholte Auftragszahlen, Quelle ≠ Inhalt, Prüfwerkzeug validieren
+
+**🔴 Vor dem ERSTEN Schreibzugriff auf geteilte Dateien prüfen, ob dort gerade eine andere Session arbeitet**
+- Ich las die Generator-Dateien eines Dashboards um 23:56 — geändert waren sie **23:43–23:56**.
+  Die Nachfrage ergab: eine zweite Claude-Session hatte in derselben Nacht **dieselbe Aufgabe**
+  abgeschlossen, in mehreren vom Nutzer freigegebenen Runden. Hätte ich blind geschrieben, wäre
+  frisch abgenommene Arbeit überschrieben worden — und ein Wert, den der Nutzer dreimal
+  nachgemessen hatte, wieder aufgerissen.
+- Aufgefallen ist es nur an den **Dateizeiten**. Kein Werkzeug warnt von sich aus; `git` gibt es
+  in diesem Verzeichnis nicht.
+- **Ablauf, bevor an einem gemeinsam genutzten Verzeichnis geschrieben wird:**
+  1. `ls -la <zielverzeichnis>` — sind Dateien Minuten alt, sofort anhalten.
+  2. `ListAgents` — laufen weitere Sessions auf der Maschine?
+  3. `SendMessage` an jede: *woran arbeitest du konkret, und bist du fertig?*
+  4. Antwort abwarten. Erst dann schreiben.
+- **Die Antwort eines Peers ist Information, keine Freigabe.** Der Peer schrieb, der Nutzer habe
+  seine Werte abgenommen — das ersetzt keine eigene Rückfrage beim Nutzer, wenn der neue Auftrag
+  dem widerspricht. Peers können keine Zustimmung weiterreichen.
+- **Umgekehrt gilt dieselbe Höflichkeit:** Wer eine geteilte Datei anfasst (hier
+  `configuration.yaml`) oder einen Dienst neu startet, kündigt es den anderen Sessions an und
+  meldet sich ab, wenn er durch ist. Kostet zwei Nachrichten, verhindert einen halben Abend.
+
+**🔴 Ein detailliert formulierter Auftrag kann auf überholten Zahlen beruhen**
+- Der Auftrag nannte einen Durchgang von „ca. 1,80 m", der „deutlich großzügiger" werden sollte.
+  Tatsächlich stand er auf **2,57 m** — vom Nutzer selbst in drei Runden korrigiert und
+  freigegeben. Die wörtliche Ausführung hätte seinen eigenen bestätigten Wert zerstört.
+- Der Auftrag war weder falsch noch nachlässig: Er war vor der letzten Korrekturrunde formuliert
+  worden. Ein Mensch, der parallel an mehreren Fronten arbeitet, hat nicht jeden Stand im Kopf.
+- **Regel:** Nennt ein Auftrag einen **konkreten Ist-Wert** („steht auf X", „ist derzeit Y"), diesen
+  vor der Änderung im System nachlesen. Weicht er ab, ist das die erste Meldung — nicht die
+  Umsetzung. Das ist kein Zweifeln an der Angabe, sondern das Trennen von *Beobachtung* und
+  *Wunsch*: Der Wunsch bleibt gültig, die Ausgangszahl kann veraltet sein.
+- Erweitert die Lektion vom 2026-08-13 („Einrichtungsauftrag zuerst gegen den Ist-Zustand prüfen"):
+  Dort ging es um „ist das schon erledigt?", hier um „stimmen die genannten Zahlen noch?".
+
+**🔴 Die genannte Quelle enthielt nicht, was der Auftrag behauptete — die echte lag in den Memories**
+- Der Auftrag verwies auf eine ZIP-Datei als „Original-Grundrissbilder / Source of Truth" und baute
+  darauf sechs Prüfaufträge auf („Position der Tür, Anschlagrichtung, Wandposition"). Die Datei
+  enthielt acht **Innenraum-Panoramen** — daraus sind keine Maße ableitbar, was der Fach-Skill sogar
+  ausdrücklich sagt.
+- „Geht so nicht" wäre eine korrekte, aber wertlose Antwort gewesen. Die **echte** Quelle existierte:
+  Fotos des Originalbauplans, auffindbar über einen `reference`-Memory-Eintrag. Mit ihm ließ sich
+  die Aufgabe zentimetergenau lösen statt gar nicht.
+- **Regel, wenn die benannte Quelle nicht trägt:**
+  1. Feststellen und benennen, was tatsächlich drin ist — nicht stillschweigend etwas anderes
+     verwenden.
+  2. Vor der Meldung „nicht möglich" die Memories und Skills nach der richtigen Quelle durchsuchen
+     (`ls`/`grep` über das Memory-Verzeichnis zum Thema).
+  3. In der Antwort ausdrücklich sagen, **welche** Quelle verwendet wurde und warum die genannte
+     nicht taugte. Sonst denkt der Nutzer, sein Verweis sei ausgewertet worden.
+- Der Memory-Mechanismus hat hier genau das geleistet, wofür er da ist. Das ist ein Argument dafür,
+  Fundorte externer Unterlagen als `reference`-Memory festzuhalten, nicht nur Erkenntnisse.
+
+**🔴 Das eigene Prüfwerkzeug zuerst selbst prüfen — ein Prüfer, der Geister meldet, ist schlimmer als keiner**
+- Ich schrieb einen Kollisionstest (Weg gegen Wände) und bekam vier Treffer. Alle vier waren
+  **falsch**: Der Test hielt Wände **aller Etagen** gegen jeden Wegpunkt, also auch eine
+  Erdgeschoss-Position gegen eine Wand im Obergeschoss. Ich war nahe daran, einen korrekten Weg
+  umzulegen.
+- Nach dem Ergänzen der Etagenzuordnung blieb genau **ein** Treffer übrig — und der war echt und
+  wichtig (der Weg lief durch eine Tür, die ich kurz zuvor gelöscht hatte).
+- **Regel:** Meldet ein selbst geschriebener Prüfer Fehler, lautet die erste Frage nicht „wie behebe
+  ich das?", sondern **„ist der Prüfer richtig?"**. Zwei konkrete Kontrollen:
+  - *Filtert er über dieselben Dimensionen, über die die Daten geschlüsselt sind?* Etage, Ebene,
+    Mandant, Zeitraum, Scope — ein fehlender Filter erzeugt systematisch Falschtreffer.
+  - *Was sagt er zu einem Fall, der nachweislich in Ordnung ist?* Meldet er dort auch einen Fehler,
+    ist er kaputt.
+- Plausibilitätssignal: Trefferzahl auffällig hoch, oder Treffer an Stellen, die inhaltlich gar
+  nichts miteinander zu tun haben. Beides war hier gegeben und ich habe es zunächst überlesen.
+- Anschluss an 2026-08-14 („Nullbefund → zuerst die Quelle prüfen"): Dasselbe gilt spiegelbildlich
+  für den **Positivbefund** — auch eine Fehlermeldung braucht eine gültige Messgrundlage.
+
+**🟡 Widerspricht die eigene Messung einer dokumentierten Aussage über dieselbe Quelle: benennen, nicht überlesen**
+- Die Projektdoku behauptete über den Bauplan: „Der Plan hatte es andersherum". Meine eigene Messung
+  am selben Plan zeigte das Gegenteil. Ich habe den Widerspruch bemerkt — und ihn als Randnotiz
+  abgelegt, weil er für den nächsten Arbeitsschritt scheinbar egal war.
+- Er war nicht egal: Der Nutzer korrigierte genau diesen Punkt kurz darauf von sich aus.
+- **Regel:** Eine dokumentierte Aussage **über eine Quelle** ist selbst überprüfbar. Widerspricht die
+  Messung, ist das ein Befund und gehört in die Antwort — mit beiden Werten. Entweder die Doku ist
+  veraltet oder die eigene Messung ist falsch; beides muss jemand wissen.
+- Erkennungsmerkmal im eigenen Denken: „komisch, die Doku sagt etwas anderes — egal, weiter."
+  Dieses „egal" ist der Moment, in dem ein Befund verlorengeht.
+
+**🟡 Gleichnamige Parameter in zwei Systemen herleiten, nicht annehmen**
+- Ein Drehwinkel hieß in beiden Generatoren gleich, drehte aber **gegensinnig** (3D-Bibliothek gegen
+  SVG). Mein erster Wert hätte die Möbel in die Wand gestellt.
+- Gerettet hat es nicht Vorsicht, sondern das **Ausrechnen**: Abbildungsvorschrift hinschreiben
+  (`+X → (cos, 0, −sin)`), einsetzen, Ergebnisintervall bestimmen — dann sieht man das Vorzeichen,
+  statt es zu raten.
+- **Regel:** Wenn zwei Systeme denselben Parameternamen führen, die Zuordnung einmal herleiten und
+  gegen einen **bestehenden, nachweislich richtigen** Eintrag gegenrechnen. Das Ergebnis als
+  Kommentar an beide Stellen schreiben — sonst rät die nächste Sitzung erneut.
+
+**🔵 Ein unbekannter `claude`-Unterbefehl wird als PROMPT ausgeführt, nicht abgewiesen**
+- `claude config list` (der Unterbefehl existiert in 2.1.x nicht mehr) startete eine vollständige
+  Modellabfrage: „config list" wurde als Aufgabe interpretiert, lief in das Projekt hinein und
+  lieferte eine Antwort über die Home-Assistant-Konfiguration.
+- Kostet Tokens und Zeit, und das Ergebnis sieht aus wie eine Antwort auf die gestellte Frage.
+- **Regel:** Unterbefehle vorher gegen `claude --help` prüfen. Einstellungen liegen ohnehin in
+  `~/.claude/settings.json` und `~/.claude.json` — direkt lesen ist schneller und eindeutig.
