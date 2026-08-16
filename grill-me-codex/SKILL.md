@@ -311,3 +311,89 @@ Modells, das die eigene Vorgeschichte nicht kennt.
 Fundstelle nachgelesen. Zwei davon waren **keine** Handlungsempfehlung — einer beschrieb eine
 dokumentierte Nutzerentscheidung, einer eine bewusst gewählte Container-Konfiguration. Ein
 Prüfbericht ist Rohmaterial, kein Ergebnis.
+
+## 2026-08-16 — Skill-Verweis in der Projekt-CLAUDE.md ist eine Ladeanweisung; Attrappen-Grenze; Gegenprobe
+
+**🔴 Ein Verweis auf `/grill-me-codex` in der Projekt-CLAUDE.md heißt: diesen Skill laden, bevor der
+erste Befehl läuft**
+- Die CLAUDE.md des Projekts sagte wörtlich „Ab Phase 7 gilt der Architekt-Arbeiter-Workflow
+  (`/grill-me-codex`)". Ich habe die Datei gelesen, den Workflow aus dem Gedächtnis gefahren — und
+  `codex exec --full-auto` aufgerufen. Dass es dieses Flag nicht gibt, steht in Phase 4 dieses Skills
+  seit dem 2026-08-02, samt korrektem `-s workspace-write`.
+- Folgekosten: Der Aufruf schlug still fehl (kein Output, Exit sofort). Ich habe die Blockade dem
+  Auto-Modus-Classifier zugeschrieben, dem Nutzer denselben falschen Befehl zum Selbstausführen
+  gegeben, und wir haben zwei Runden mit Auth- und Session-Diagnose verbracht, bis `codex exec --help`
+  die Wahrheit zeigte.
+- **Regel:** Nennt eine Projekt-CLAUDE.md einen Skill, ist das kein Hintergrundwissen, sondern eine
+  Ladeanweisung — auch und gerade dann, wenn man den Workflow zu kennen glaubt. Gedächtnis schlägt
+  hier systematisch fehl, weil genau die Flag-Details verlorengehen, die den Unterschied machen.
+- **Diagnose-Reihenfolge bei stillem CLI-Fehlschlag** (bevor „Classifier" oder „Auth" vermutet wird):
+  `<cli> <sub> --help | grep -E "flag1|flag2"` → Session-/Logverzeichnis auf einen neuen Eintrag
+  prüfen (`ls ~/.codex/sessions/<jahr>/<monat>/`) → erst dann Umgebung und Berechtigungen.
+  Kein neuer Session-Eintrag = der Aufruf hat nie begonnen = Argumentfehler, nicht Blockade.
+
+**🔴 Wird die Übergabe an Codex blockiert: roten Stand als eigenen Commit festhalten**
+- Der Skill beschreibt Phase 4 nur für den Fall, dass Codex läuft. Ist die Übergabe nicht möglich
+  (Berechtigung, Anbieter offline, kein Zugang), implementiert der Architekt selbst — dann fehlt aber
+  der strukturelle Beleg, dass die Tests vor der Implementierung standen.
+- **Vorgehen:** Tests schreiben, rot verifizieren, **committen** (`test: … (rot)`), erst danach
+  implementieren und als zweiten Commit grün stellen. Die Trennung ist damit im Verlauf nachweisbar,
+  nicht nur behauptet — und der Nutzer kann sie prüfen, ohne dem Bericht glauben zu müssen.
+- Im Auftragsdokument einen Erledigungsvermerk hinterlassen: wer implementiert hat, warum nicht Codex,
+  und dass die Testdateien unverändert blieben. Sonst liest die nächste Sitzung „Auftrag 02" und hält
+  ihn für offen.
+
+**🔴 Ein Test gegen eine Attrappe beweist nichts über die Grenze zu einem echten System**
+- Ich hatte einen SQL-Filter (`anlass = ANY($4::text[])`) über eine Attrappen-Ablage getestet: grün.
+  Die Attrappe hätte bei falschem SQL genauso grün gemeldet — sie führt das SQL nie aus.
+- Erst der Testlauf gegen eine echte Datenbank (hier PGlite, eingebettetes PostgreSQL ohne
+  Serverdienst) hat den Filter tatsächlich geprüft.
+- **Regel:** Für jede Grenze zu einem externen System (Datenbank, HTTP, Dateisystem, Zeit) mindestens
+  ein Test gegen das echte System. Attrappen prüfen die eigene Ablauflogik — nie die Schnittstelle.
+- Nützlich, wenn kein Server verfügbar ist: eingebettete Varianten (PGlite für PostgreSQL, SQLite
+  in-memory, MSW für HTTP). Sie kosten eine Entwicklungsabhängigkeit und ersetzen die Attrappe an
+  genau der Stelle, an der sie wertlos wäre.
+
+**🔴 Grüne Tests an sicherheitskritischen Stellen gegenproben — Schutz abschalten, muss rot werden**
+- Der Mandanten-Leckagetest war zuerst **falsch-positiv grün**: Die Kennung wurde per
+  `set_config(…, true)` gesetzt, das gilt nur für die laufende Transaktion und war bei der nächsten
+  Anweisung schon fort. Der Test lief also immer gegen eine leere Kennung und hätte auch bei völlig
+  fehlender Zugriffssteuerung bestanden.
+- Aufgefallen ist es nur, weil ein *anderer* Test derselben Gruppe fehlschlug. Danach habe ich die
+  Zeilensicherheit versuchsweise abgeschaltet und geprüft, ob der Test rot wird — erst damit war er
+  belegt.
+- **Regel:** Bei jedem Test, der eine Schutzeigenschaft behauptet (Zugriffstrennung, Signaturprüfung,
+  Rechteprüfung), einmal den Schutz entfernen und den Testlauf wiederholen. Bleibt er grün, prüft er
+  nichts. Der Aufwand ist ein Wegwerf-Durchlauf, der Ertrag ist der Unterschied zwischen Nachweis und
+  gutem Gefühl.
+- Erkennungsmerkmal für falsch-positive Tests: Sie prüfen auf **Abwesenheit** („liefert keine Daten",
+  „wirft nicht", „ist leer"). Abwesenheit stellt sich auch ein, wenn der Testaufbau kaputt ist.
+
+**🟡 Die Umgebung ist eine Testvariable — nicht nur die Laufzeitversion**
+- Ergänzung zur Node-18-gegen-24-Lektion aus Phase 5: Dort war die ABI der Unterschied. Hier war es
+  die **Systemzeitzone**. `fromZonedTime` aus `date-fns-tz` liest ein übergebenes `Date` in der
+  Systemzeitzone der Maschine, nicht in der angegebenen Zone — unter `Europe/Berlin` und `UTC`
+  unauffällig, unter `America/New_York` fielen 8 von 11 Tests um.
+- Der Fehler stammte aus einer früheren, für grün erklärten Codex-Runde und hätte im Betrieb den
+  Versandzeitpunkt verschoben, je nachdem wie der Server gestellt ist.
+- **Regel:** Bei allem, was Zeit, Zahl- oder Textformate berührt, die Suite unter mehreren
+  Umgebungswerten laufen lassen, bevor „grün" gemeldet wird:
+  ```bash
+  for tz in Europe/Berlin UTC America/New_York Australia/Sydney; do TZ=$tz npm test || break; done
+  ```
+  Dasselbe Muster gilt für `LC_ALL` (Dezimaltrenner, Sortierung) und Zeitumstellungstage.
+- Wenn eine solche Prüfung etwas findet, gehört sie als Skript in die Auslieferungsprüfung, nicht in
+  den Bericht.
+
+**🟡 „Testdateien unverändert" ist eine Messung, keine Annahme**
+- Der Satz „ändere das Design, nicht den Test" wirkt nur, wenn jemand nachsieht. Nach jedem Zyklus:
+  ```bash
+  git status --short -- '*test*' '*__tests__*'   # muss leer sein
+  git diff --stat HEAD -- <testverzeichnis>
+  ```
+- Das gilt für Codex-Runden **und** für selbst implementierte. Der eigene Griff zum Test ist
+  verführerischer, weil man die Spezifikation selbst geschrieben hat und sie „nur präzisieren" will.
+- Zulässig ist das Nachbessern von **Testinfrastruktur** (Hilfsfunktionen, Aufbau) — nicht von
+  Erwartungen. Ein Beispiel aus dieser Session: `set_config(…, true)` → `false` im Testaufbau war
+  richtig; die erwartete Zeilenzahl zu ändern wäre falsch gewesen. Die Grenze verläuft dort, wo die
+  Behauptung des Tests beginnt.
