@@ -1666,3 +1666,30 @@ gehört ein **neuer** Skill angelegt. Format exakt wie die bestehenden:
 - Kostet Tokens und Zeit, und das Ergebnis sieht aus wie eine Antwort auf die gestellte Frage.
 - **Regel:** Unterbefehle vorher gegen `claude --help` prüfen. Einstellungen liegen ohnehin in
   `~/.claude/settings.json` und `~/.claude.json` — direkt lesen ist schneller und eindeutig.
+
+**🔴 Nachtrag am selben Tag — `update`-Zeilen in `graph.jsonl` haben eine ANDERE Form als `create`**
+- Die Lektion vom 2026-08-09 beschreibt die Verschachtelung nur für `create` und `relate`. `update`
+  fehlt dort, und es verhält sich anders:
+  ```json
+  {"op":"create","entity":{"id":"sw_x","type":"Software","properties":{…}}}
+  {"op":"update","id":"sw_x","properties":{…}}          <-- id/properties auf OBERSTER Ebene
+  {"op":"relate","from":"sw_x","rel":"uses","to":"sw_y"}
+  ```
+- Folge: Ein Parser, der für `create` **und** `update` unter `entity` nachsieht, ignoriert jedes
+  `update` stillschweigend und liefert den **veralteten** Stand aus dem letzten `create`.
+- Mir passiert im selben Durchlauf, in dem ich die Lektion „das eigene Prüfwerkzeug zuerst selbst
+  prüfen" geschrieben habe: Mein Verifikationsskript meldete „Karte auf v24 aktualisiert: **False**",
+  obwohl das `update` sauber im Log stand. Ich war einen Schritt davon entfernt, ein
+  funktionierendes `update` als kaputt zu melden und erneut auszuführen.
+- **Korrekt gemergt wird so** (alle Zeilen in Reihenfolge, `update` überschreibt nur `properties`):
+  ```python
+  if d["op"] == "create":
+      e = d["entity"];  ents[e["id"]] = e
+  elif d["op"] == "update":
+      ents.setdefault(d["id"], {"id": d["id"], "type": None, "properties": {}})
+      ents[d["id"]]["properties"] = d["properties"]
+  ```
+- Der Existenz-Vorabcheck aus der Lektion vom 2026-08-16 (`grep -c '"id": "sw_x"'`) bleibt gültig:
+  `id` steht bei **beiden** Formen im Text, nur an unterschiedlicher Stelle.
+- Gegenprobe, die den Fehler sofort zeigt: eine Entity abfragen, die man gerade selbst per `update`
+  geändert hat. Steht dort der alte Text, ist der Parser falsch — nicht das Update.
