@@ -1693,3 +1693,107 @@ gehört ein **neuer** Skill angelegt. Format exakt wie die bestehenden:
   `id` steht bei **beiden** Formen im Text, nur an unterschiedlicher Stelle.
 - Gegenprobe, die den Fehler sofort zeigt: eine Entity abfragen, die man gerade selbst per `update`
   geändert hat. Steht dort der alte Text, ist der Parser falsch — nicht das Update.
+
+### 2026-08-18 — Ein sauberes Prüfergebnis ist begründungspflichtig; Korrekturen kommen als Kette
+
+**🔴 „0 Treffer" von einem selbstgeschriebenen Prüfer ist genauso verdächtig wie zu viele Treffer**
+- Die Lektion vom 2026-08-17 behandelt den Prüfer, der **Geister** meldet. Hier der Spiegelfall,
+  und er ist gefährlicher: Meine Wegpunkt-Prüfung meldete **„0 Treffer"** — während die Route
+  zweimal quer durch eine Wand lief, die ich Minuten zuvor selbst verschoben hatte.
+- Ursache: Der Prüfer testete nur die **Wegpunkte**. Die Wand lag *zwischen* zwei Punkten, also
+  auf der Strecke, und wurde von keinem Punkt getroffen. Erst die Abtastung jedes **Segments** in
+  2-cm-Schritten fand es.
+- Ich hatte das Ergebnis gemeldet und weitergearbeitet — der Fehler kam über den Nutzer zurück.
+- **Regel:** Ein Prüfer, der nichts findet, muss zeigen, dass er etwas finden **könnte**. Zwei
+  Kontrollen, bevor man „sauber" meldet:
+  - *Prüft er die richtige Geometrie?* Punkte gegen Flächen ist fast immer zu wenig — Strecken,
+    Zeiträume und Wertebereiche brauchen eine Abtastung, keinen Stichprobenpunkt.
+  - *Findet er einen absichtlich eingebauten Fehler?* Einen bekannten Verstoß kurz einbauen und
+    prüfen, ob er anschlägt. Zehn Sekunden Aufwand, danach ist das Ergebnis etwas wert.
+- Merksatz: Positiv- und Nullbefund brauchen dieselbe Skepsis. „Nichts gefunden" ist eine Aussage
+  über den Prüfer, bevor es eine über die Daten ist.
+
+**🔴 Korrekturen kommen als Kette — nach JEDER Änderung erneut prüfen, nicht einmal am Ende**
+- Der Ablauf dieser Session, jeder Schritt ausgelöst vom vorigen:
+  1. Wand verschoben (auf ausdrückliche Nutzerangabe hin),
+  2. → ein Möbel stand danach vor einer Tür und ließ 13 cm Durchgang,
+  3. → nach dem Verschieben dieses Möbels lagen zwei andere auf dem Weg,
+  4. → dabei fiel auf, dass ein Bett seit jeher **hinter seiner eigenen Zimmertür** stand, der
+     Raum also nie betretbar war.
+- Nur Schritt 1 stand im Auftrag. Die Schritte 2–4 hätte ich alle ausgeliefert, wenn ich nach dem
+  ersten Fix gemeldet hätte.
+- **Regel:** Nach einer strukturellen Änderung läuft die Prüfung in einer **Schleife**, bis die
+  Zählung wirklich null ist — nicht einmal am Schluss. Jede Korrektur ist selbst ein Eingriff und
+  erzeugt potenziell den nächsten Konflikt.
+- Praktisch: das Prüfskript so schreiben, dass es eine **Zahl** ausgibt („0 Wand-, 0 Möbeltreffer
+  bei 54 Segmenten"). Dann ist der Abbruchpunkt objektiv und man hört nicht auf, weil es „jetzt
+  gut aussieht".
+- Ergänzt 2026-08-16 („genannte Symptome sind der Einstieg") um die zeitliche Achse: Dort ging es
+  um die Breite des ersten Durchgangs, hier um die Wiederholung nach jeder eigenen Änderung.
+
+**🟡 Ein Nutzerbericht der Form „X ist unverändert" zeigt auf die Auslieferung, nicht auf den Inhalt**
+- *„der Rundgang ist noch nahezu unverändert"* — meine erste Reaktion war, den Inhalt zu prüfen
+  (stimmen die Daten?). Richtig war, die **Kette** zu prüfen: Was genau bekommt der Nutzer
+  ausgeliefert, und enthält das meine Änderung überhaupt?
+- Hier lagen zwei Ursachen übereinander: ein zweiter Renderer, den ich nie angefasst hatte, und
+  eine Datei, die ohne Cache-Query geladen wird. Beide sind Auslieferungsfragen, keine
+  Inhaltsfragen.
+- **Regel:** Bei „unverändert", „kommt nicht an", „sehe ich nicht" zuerst rückwärts von der
+  Anzeige zur Quelle gehen — welche Datei wird tatsächlich geladen, in welcher Fassung, von
+  welchem Code gelesen. Erst danach den Inhalt in Frage stellen.
+
+### 2026-08-18 — Prüfserver-Inhalt verifizieren; nach zwei Fehlversuchen eine Referenz erbitten; Zeit injizieren
+
+**🔴 Nach dem Start eines lokalen Prüfservers den INHALT verifizieren, nicht den Statuscode**
+- Für eine Gestaltungsaufgabe rendere ich Bildschirmfotos über einen kleinen HTTP-Server im
+  Arbeitsverzeichnis. Beim Wechsel auf einen neuen Versionsordner lief der alte Prozess weiter — und
+  lieferte weiter aus dem VORIGEN Ordner.
+- Folge: Ich habe gerendert, beurteilt und daraus Gestaltungsschlüsse gezogen — auf einer Fassung
+  ohne meine Änderungen. Zweimal in derselben Sitzung. Einmal war ich nahe daran, eine korrekte
+  Änderung als wirkungslos zu verwerfen.
+- `curl -o /dev/null -w "%{http_code}"` meldet dabei brav `200`. Der Statuscode sagt nur, dass
+  IRGENDETWAS ausgeliefert wird.
+- **Regel:** Nach jedem (Neu-)Start eines Servers, der versionierte Artefakte ausliefert, auf einen
+  Textmarker prüfen, den nur die neue Fassung enthält:
+  ```bash
+  curl -s http://127.0.0.1:PORT/datei.js | grep -c "MARKER_DER_NEUEN_FASSUNG"   # muss 1 sein
+  ```
+  Als Marker eignet sich ein Kommentar, den man ohnehin gerade geschrieben hat.
+- **Zweite Falle:** `pkill … ; sleep 1 ; nohup … &` in EINEM Befehl ist unzuverlässig — der neue
+  Prozess stirbt beim Beenden des Werkzeugaufrufs mit. Getrennte Aufrufe, und danach die
+  Inhaltsprüfung. Wenn der Server tot ist, rendert der Browser eine Fehlerseite, und die sieht im
+  Bildschirmfoto aus wie ein kaputtes Programm.
+- Verwandt mit 2026-08-17 („das eigene Prüfwerkzeug zuerst selbst prüfen"), aber ein anderer
+  Mechanismus: nicht der Parser war falsch, sondern die **ausliefernde Instanz** war eine andere als
+  gedacht.
+
+**🔴 Subjektive Gestaltung: nach dem ZWEITEN Fehlversuch eine Referenz erbitten**
+- Ich habe in einer Sitzung **vier grundverschiedene** Gestaltungen gebaut — Lichtfigur, Hautgesicht,
+  erzeugtes Foto, dunkle Glasskulptur. Trefferquote: null. Jede Runde kostete Stunden, weil jede
+  einen anderen Ansatz vollständig umsetzte.
+- Das eine Mal, wo Diana ein **Bild** schickte, wusste ich sofort, wohin: Frisur, Augenfarbe,
+  Hautton, Kopfhaltung, Lichtstimmung — alles in Sekunden ablesbar. Beschreibungen wie „elegant,
+  technologisch, weiblich, nicht kitschig" beschreiben dagegen hundert verschiedene Bilder.
+- **Regel:** Bei Aufgaben, deren Ergebnis über Geschmack entschieden wird (Gestaltung, Tonfall,
+  Textstil), nach dem zweiten Fehlversuch aufhören zu variieren und um eine Referenz bitten — ein
+  Bild, einen Beispieltext, einen Link. Das ist keine Kapitulation, sondern der schnellste Weg zum
+  Ziel.
+- **Bis die Referenz da ist:** mehrere Fassungen NEBENEINANDER lauffähig machen statt nacheinander
+  vorzuführen. Eine Vergleichsseite (bei Web-Artefakten: iframes, weil sonst gleichnamige
+  Komponenten kollidieren) macht die Auswahl zu einer Minute statt zu einer Runde.
+- **Und den Rückweg offenhalten:** Ich habe die erste Fassung, die spontan gefallen hatte, beim
+  Weiterbauen verloren — weil ich im selben Ordner weitergearbeitet statt kopiert habe. Sie
+  existierte nur noch in Bildschirmfotos. Wenn eine Variante gefällt, ist sie ein Zustand, den man
+  festhält (eigene Kopie, eigener Schalter), nicht ein Zwischenstand.
+
+**🟡 Zeit gehört in eine Zustandslogik hineingegeben, nicht hineingelesen**
+- Eine Zustandsmaschine las für eine Nachtruhe-Regel die Systemuhr (`new Date().getHours()`), obwohl
+  ihr an jeder anderen Stelle der Zeitpunkt übergeben wurde.
+- Folge: Nachts fielen 6 von 34 Prüfungen durch — mit korrektem Verhalten. Die Figur schlief
+  richtigerweise ein, während der Prüfling einen Vormittag simulierte. Das sieht wie ein Rückschritt
+  aus und kostet erst einmal Vertrauen in den Prüflauf.
+- **Regel:** Jede Logik, die von Uhrzeit, Datum oder Zufall abhängt, bekommt beides von aussen. Wer
+  selbst auf die Uhr sieht, ist nicht prüfbar — und was nicht prüfbar ist, ist früher oder später
+  kaputt, ohne dass es jemand merkt.
+- Erkennungsmerkmal beim Lesen eigener Prüfergebnisse: Fällt eine Prüfung nur zu bestimmten
+  Tageszeiten durch, ist nicht die Prüfung schuld.
