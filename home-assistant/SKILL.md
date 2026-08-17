@@ -3970,3 +3970,164 @@ die Ursachen lagen woanders, als die Symptome vermuten ließen.
 - Die Logik gegen **historische** Tage prüfen, nicht nur gegen heute: ein stummer Sensor ist von
   einem kaputten sonst nicht zu unterscheiden. Hier bestätigt am 26.06. (37,9 °C = Allzeitrekord)
   gegen heute (25,5 °C = zu Recht stumm).
+
+### 2026-08-18 — Grundriss: zwei Renderer, ein Datensatz — und ein Fenster auf der Innenwand
+
+**🔴 Der Rundgang ist ein EIGENER Renderer. Kartenverbesserungen landen dort nicht von selbst**
+- Diana nach drei Runden Arbeit: *„der Rundgang ist noch nahezu unverändert"*. Sie hatte recht.
+  `walkthrough-v*.js` und `grundriss-3d-card-v*.js` lesen dieselbe Geometrie, teilen aber **keinen
+  Code** — ich hatte nur die Karte angefasst.
+- Konkret hinkte der Rundgang zwei Features hinterher:
+  - `f.y` (Möbelhöhe über dem Boden, in der Karte seit v28): fehlte ganz. Hängeschränke,
+    Dunstabzug und der Wand-Fernseher standen auf dem Estrich — **und blockierten als
+    Kollisionskörper den Weg**, weil `addSolid` dieselbe Basis benutzt wie das Mesh. Ein
+    Darstellungsfehler wird hier automatisch zum Begehbarkeitsfehler.
+  - `ry` (Sofa-Drehung, in der Karte seit v24): fehlte ebenfalls, also zeigte dort jedes Sofa
+    nach Süden.
+- **Regel:** Wer an einer der beiden Ansichten etwas am *Verhalten* ändert (nicht an der
+  Geometrie), prüft die andere mit. Geteilte Daten sind kein geteiltes Verhalten.
+  ```bash
+  grep -c "f\.y\|f\.ry" grundriss-3d-card-v*.js walkthrough-v*.js   # Feature-Parität
+  ```
+
+**🔴 `walkthrough-v*.js` wird per `import` OHNE Cache-Query geladen — Dateiname hochzählen**
+- Am `?v=` hängen nur `walkthrough.html` und `walkthrough-geometry.json`. Die JS-Datei kommt über
+  ein nacktes `import './walkthrough-v4.js'` — dort greift der volle 31-Tage-Cache auf `/local/`.
+- Eine Änderung an dieser Datei braucht deshalb einen **neuen Dateinamen** (`-v5.js`) plus die
+  Anpassung des `import`. Sonst liefert `curl` die neue Fassung und der Browser führt die alte aus.
+- Dieselbe Regel gilt sinngemäß für jede Datei, die per `import`/`<script src>` ohne Query kommt.
+
+**🔴 Fassadenmaße gegen den Grundriss prüfen — eine Homographie sieht keine Innenwände**
+- Das linke Schlafzimmerfenster lag bei x 2,000–2,680 und damit **auf** der Trennwand zum Bad
+  (x 2,207–2,293) — halb in jedem Raum. Von innen sah es aus, als habe das Schlafzimmer **drei**
+  Fenster; genau so hat Diana es gemeldet.
+- Die Position stammte aus einer entzerrten Street-View-Aufnahme. Die Messung war nicht falsch —
+  sie kann Innenwände prinzipiell nicht sehen.
+- **Regel:** Jede aus einer Fassadenaufnahme gewonnene Öffnungsposition einmal gegen die
+  Innenwände desselben Geschosses halten, bevor sie ins Modell geht:
+  ```python
+  # liegt die Öffnung [x, x+w] vollständig in genau einem Raum?
+  ```
+- Folgefehler beachten: Nach dem Verschieben ragte ein Fenster aus der Gaube. Wenn die Doku sagt
+  „die Gaube endet nach dem dritten Fenster", **wandert die Gaube mit** — sie ist an die Fenster
+  gekoppelt, nicht umgekehrt.
+
+**🔴 `roofTopAt` kannte die Gauben nicht — Wände bekamen Schrägen, die es nicht gibt**
+- DG-Wände werden unter der Dachhaut gekappt. Die Funktion rechnete aber immer mit der Schräge des
+  **Haupt**dachs. Eine Wand, die vollständig in einer Gaube steht, bekam dadurch eine Schräge —
+  sichtbar an der Wand zwischen Bad und Schlafzimmer, von Diana im Rundgang gemeldet.
+- Sie nimmt jetzt zusätzlich `x` und liefert im Gaubenbereich `Kniestock + Gaubenhöhe`. Die
+  Aufrufer müssen die x-Position mitgeben: bei Wänden entlang z die Wandmitte, bei horizontalen
+  Wänden die Mitte des Abschnitts. **In BEIDEN Renderern.**
+
+**🟡 Möbel konnten gar nicht über dem Boden sitzen — fehlende Features sehen aus wie fehlende Daten**
+- Vor v28 setzte der `default:`-Zweig jedes Möbel auf `base`. Hängeschränke, Dunstabzug und ein
+  hängender Fernseher fehlten deshalb in allen Räumen — nicht aus Nachlässigkeit beim Erfassen,
+  sondern weil das Datenmodell sie nicht ausdrücken konnte.
+- **Regel:** Wenn eine ganze Klasse von Objekten in einem Modell fehlt, erst prüfen, ob der
+  Renderer sie überhaupt darstellen **kann**, bevor man die Datenquelle für unvollständig hält.
+
+**🟡 Ein Möbel kann nicht vor der einzigen Tür seines Raums stehen**
+- Das Gästezimmerbett stand längs an der Westwand — genau dort, wo die Zimmertür sitzt. Der Raum
+  war nie betretbar. Aufgefallen ist es nur, weil die Segmentprüfung des Rundgangs zweimal durch
+  das Bett lief.
+- Dasselbe Muster wie beim DG-Schlafzimmer am 2026-08-17. **Wenn sich keine kollisionsfreie Route
+  legen lässt, steht das Möbel falsch, nicht der Weg.**
+
+### 2026-08-18 — Versionsordner, sections-Breite, custom_templates-Reload, Avatar-Proportionen
+
+**🔴 Ändern IM bereits ausgerollten Versionsordner ist dasselbe wie gar nicht versionieren**
+- Die Lektion vom 2026-08-06 sagt, Karten-Dateinamen zu versionieren. Was sie nicht sagt: Was
+  passiert, wenn man NACH dem Ausrollen im selben Ordner weiterarbeitet.
+- Genau das habe ich getan. `presence/v2/` war als Ressource eingetragen und vom Browser geladen;
+  danach habe ich stundenlang die Dateien in `v2/` geändert. `/local/` wird 31 Tage gecacht — die
+  Änderungen kamen nie an, obwohl `curl` sie brav auslieferte.
+- **Regel:** Sobald eine Version ausgerollt ist, gilt sie als eingefroren. Jede weitere Änderung:
+  ```bash
+  cp -a presence/vN presence/vN+1        # kopieren
+  # in vN+1 ändern
+  # configuration.yaml: Ressourcen-URL auf vN+1
+  # HA neu starten
+  ```
+- Ein Ordner statt einzelner nummerierter Dateien ist dabei die bessere Einheit: Bei sieben Modulen,
+  die sich gegenseitig per `import` laden, wäre jede Datei einzeln zu nummerieren; ein Ordner ist
+  eine Nummer statt sieben. `karte.js` bleibt der einzige Ressourcen-Eintrag, die Nachbarn kommen
+  über relative Importe mit.
+
+**🔴 `type: sections` begrenzt die Spaltenbreite — vollflächige Karten brauchen `panel`**
+- Ich hatte einen View von `panel` auf `sections` umgestellt, um unter einer bildschirmfüllenden
+  Karte einen Knopf unterzubringen. Ergebnis: Die Karte schrumpfte auf etwa ein Drittel der Fläche.
+- Ein Sections-View legt jede Sektion in eine Spalte fester Maximalbreite (auch bei
+  `max_columns: 1` und `column_span`). Für eine Karte, die die Wand füllen soll, ist das die falsche
+  Betriebsart.
+- **Auflösung, ohne auf den Knopf zu verzichten:** `panel` zeigt genau EINE Karte über die volle
+  Breite — und diese eine Karte darf ihrerseits mehrere enthalten:
+  ```yaml
+  type: panel
+  cards:
+    - type: vertical-stack
+      cards:
+        - type: custom:meine-vollflaechige-karte
+        - type: custom:mushroom-template-card   # der Knopf darunter
+  ```
+- Merke: `panel` = eine Karte, nicht ein Element. Der Stapel ist die Antwort auf „ich brauche zwei
+  Dinge, will aber die volle Breite".
+
+**🔴 Änderungen an `custom_templates/` brauchen `homeassistant.reload_custom_templates`**
+- Ich hatte ein Jinja-Makro in `custom_templates/jarvis_lage.jinja` korrigiert und über die
+  Template-API gegengeprüft — das alte Ergebnis kam zurück. Die Korrektur sah wirkungslos aus, und
+  ich war nahe daran, sie für falsch zu halten und weiterzusuchen.
+- Makros aus `custom_templates/` werden beim Start eingelesen und **zwischengespeichert**. Weder ein
+  Template-Reload noch das Neuladen von Automationen erreicht sie.
+  ```bash
+  curl -X POST -H "Authorization: Bearer $TOKEN" \
+    http://<ha>:8123/api/services/homeassistant/reload_custom_templates
+  ```
+- Danach liefert `/api/template` sofort den neuen Stand. Bei jeder Änderung an `custom_templates/`
+  ist dieser Aufruf Teil der Verifikation, nicht ein optionaler Zusatz.
+
+**🟡 Avatar (`jarvis-presence-card`): was ein gezeichnetes Gesicht lesbar macht**
+Aus einem langen Gestaltungsdurchlauf; die Zahlen beziehen sich auf das Kopfmodell mit
+`y = -1` (Scheitel) bis `y = +1` (Kinn) und `x` als halbe Kopfbreite.
+
+- **Die Proportionen entscheiden mehr als jede Zeichentechnik.** Zwei Befunde, beide messbar:
+  - *Höhenlage:* Augenlinie auf halber KOPFhöhe (nicht halber Gesichtshöhe), Nasenbasis auf halber
+    Strecke Augenlinie→Kinn, Mundlinie ein Drittel der Strecke Nasenbasis→Kinn. Nase und Mund saßen
+    0,3 Einheiten zu hoch — alle Züge drängten sich oben, darunter lag eine leere Kinnfläche. Das
+    ist die Verschiebung, mit der Zeichner Ausserirdische von Menschen unterscheiden.
+  - *Größe:* Der Mund war 0,231 breit bei 0,278 Augenbreite — schmaler als ein einzelnes Auge, also
+    Kleinkind-Proportion. Erwachsen sind rund **1,3 Augenbreiten** (die Lehrbuchregel „1,5" gilt für
+    die Gesichtsbreite auf Augenhöhe; auf Mundhöhe ist das Gesicht schmaler). Weitere
+    Kindchenschema-Marker, die alle gleichzeitig zutrafen: große Iris, runde statt mandelförmiger
+    Lidspalte, hohe Brauen, schmale Nase, rundes Gesicht (1:1,31 statt 1:1,38).
+- **Form entsteht aus SCHATTEN, nicht aus Licht.** Die wirksamsten Einzelmaßnahmen waren dunkle
+  Flächen, nicht helle: der Schatten unter der Nasenspitze (ohne ihn klebt die Nase auf dem
+  Gesicht), der Schatten unter der Unterlippe, die Wangenmulde, der Kieferschatten, die
+  Schläfengruben. Ein Grat besteht immer aus Licht OBEN und Schatten DARUNTER — erst das Paar macht
+  ihn zur Kante.
+- **Durchgehende Kanten statt verstreuter Flecken.** Sechs unabhängige Glanzflecken beschreiben
+  keine Form; sie sehen aus wie Tupfen. EINE Linie von der Stirn über Schläfe und Wangenknochen zum
+  Kinn beschreibt die ganze Wölbung. Als drei übereinandergelegte Striche zeichnen (breit-schwach,
+  mittel, schmal-hell) und an beiden Enden ausblenden, damit sie als Licht ausläuft statt als
+  Kontur zu enden.
+- **Gefüllte Umrisse statt Striche.** Lippen als Linien mit Breite ergeben zwangsläufig einen
+  Balken. Eine Lippe hat veränderliche Dicke (Oberlippe in der Mitte am dünnsten wegen des
+  Amorbogens, Unterlippe in der Mitte am vollsten) — das entsteht nur, wenn man den Umriss zeichnet
+  und füllt.
+- **Winkelgrenzen an der seitlichen Lage festmachen, nicht am Winkel.** Für einen Bob mit gerader
+  Ponykante war die Grenze zwischen Pony und Länge zuerst über `sin u` definiert — das blendet weich
+  über, und schon 50 Grad neben der Mitte fiel volle Strähne übers Auge. Richtig ist `|cos u|`, weil
+  sich das über `x = rx · cos u` in eine echte Breite übersetzt.
+- **Beleuchtete Haut und dunkles Material vertragen NICHT dieselbe Dosierung.** Eine Lichtkante auf
+  Schwarz darf kräftig sein; dieselbe Kante auf beleuchteter Haut ist eine Aufhellung und wird sonst
+  zum aufgemalten Streifen. Faustregel aus dieser Session: auf Haut etwa halbe Deckkraft, doppelte
+  Breite.
+- **Was NICHT funktioniert hat, damit es niemand erneut versucht:**
+  - Waagerechte Konturbänder („Höhenlinien") auf der Kopfform: Frontal projizieren sie sich als
+    waagerechte GERADEN und lesen sich als Jalousie über dem Gesicht.
+  - Haar als Punktwolke: ergibt einen Glitzerkranz, nie eine Frisur. Haar ist RICHTUNG — Strähnen,
+    die vom Ansatz nach unten verlaufen.
+  - Ein Lichtgrat über den ganzen Nasenrücken: ein heller Balken quer durchs halbe Gesicht. Frontal
+    beleuchtet zeigt eine Nase keinen durchgehenden Lichtstrich.
+  - Photorealistische Haut aus Verläufen: grundsätzlich unerreichbar. Verläufe können eine Fläche
+    nur GLÄTTEN, und Glätte ist genau das, was als „keine Haut" gelesen wird.
