@@ -222,6 +222,31 @@ Auf moltbot (Debian-VM ohne GPU): CPU-only-Rendering mit SwiftShader/Software-Op
 
 **Praxis-Empfehlung**: Vorschau-Renders mit `bpy.ops.render.opengl(animation=True)` (Workbench/Viewport-Engine, schnellste). Cycles nur für finale Renders auf einer GPU-Maschine.
 
+⚠ **„Cycles nur auf GPU" ist zu pauschal — für kurze Bildfolgen trägt die CPU-VM sehr wohl
+(gemessen 2026-08-17).** 36 Standbilder eines Fahrzeug-Turntables, 1280 × 720, 128 Abtastungen:
+**52 Minuten gesamt**, also ~87 s je Bild. Das liegt in der Tabellenzeile oben, ist aber kein
+„mehrere Stunden" — die Zeile beschreibt eine 840-Bild-Animation, und für ein Dutzend bis
+einige Dutzend Bilder ist Cycles hier eine reale Option statt eines Ausschlusskriteriums.
+- **Entscheidend ist der Compositor-Denoiser, und der ist auch dann da, wenn Cycles keinen hat.**
+  `scene.cycles.denoiser` meldet auf dieser VM eine **leere Auswahl** (kein OptiX, kein OpenImageDenoise
+  im Render-Zweig) — daraus folgt aber nicht, dass entrauscht werden muss über Abtastungen. Der
+  **Compositor**-Knoten `CompositorNodeDenoise` existiert unabhängig davon und erledigt es nach dem
+  Rendern. Damit reichen 128 statt ~400 Abtastungen: Faktor 3 in der Laufzeit.
+  ```python
+  # im Compositor, NICHT in scene.cycles
+  den = tree.nodes.new('CompositorNodeDenoise')
+  ```
+- ⚠ **Reihenfolge: Denoise ZUERST, Glare danach.** Überstrahl ist ein Kamera-, kein Szeneneffekt —
+  Cycles allein bringt LEDs nicht zum Leuchten, das macht `CompositorNodeGlare` (`FOG_GLOW`).
+  Steht der Glare vor dem Denoiser, rechnet dieser den Schein als Rauschen wieder weg.
+- Zwei Umgebungsfallen auf dieser VM, beide kosten sonst einen Fehlversuch je Lauf:
+  - **numpy fehlt in Blenders Python.** Es liegt unter `~/.local/lib/python3.13/site-packages`
+    bzw. `/usr/lib/python3/dist-packages` und muss im Skript in `sys.path` nachgeschoben werden.
+  - Der AgX-Look heißt **`'AgX - Base Contrast'`**, nicht `'Medium Contrast'` — ein falscher Name
+    wirft nicht, er wird still ignoriert.
+- Vollständiges Beispielskript samt dieser Fallen liegt beim Verbraucher, nicht hier:
+  `/volume1/docker/home-assistant/config/scripts/turntable.py` + `README_turntable.md`.
+
 **OpenGL-Render-Blockade**: Während `bpy.ops.render.opengl()` läuft, blockt Blender 30+ Minuten — MCP-Calls **timeouten** im Gateway, aber **Blender rendert weiter im Hintergrund**. Output-Datei wächst sukzessive. Beim Polling der File-Größe (`stat -c %s`) den Fortschritt verfolgen. Erst wenn die Datei stabil ist, ist der `moov`-Atom geschrieben und MP4 abspielbar.
 
 ---
