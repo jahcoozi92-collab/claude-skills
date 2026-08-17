@@ -1847,3 +1847,32 @@ gehört ein **neuer** Skill angelegt. Format exakt wie die bestehenden:
 - **Regel:** Solange ein Fehler ungeklärt ist, wird nur das geändert, was der Hypothese dient.
   Aufräumen ist ein eigener Arbeitsschritt danach — sonst weiß man am Ende nicht, welche
   Änderung welche Wirkung hatte.
+
+### 2026-08-18 — Anhängen und Committen gehören in EINEN Aufruf
+
+**🔴 Bei parallelen Sitzungen reichen 30 Sekunden, um in einem fremden Commit zu landen**
+- Ich habe einen Lektionsblock an `home-assistant/SKILL.md` angehängt und den Commit in einen
+  zweiten Werkzeugaufruf gelegt. In der Lücke dazwischen hat eine andere Sitzung
+  `git add home-assistant/SKILL.md` ausgeführt — meine 90 Zeilen stecken jetzt in ihrem Commit
+  („Rundgang ist eigener Renderer …"). Dasselbe eine Sekunde später mit `reflect/SKILL.md`.
+- Kein Datenverlust, aber die Historie führt in die Irre: Wer per `git log` sucht, wo eine Lektion
+  herkommt, findet eine Nachricht über ein anderes Thema. Und `git log -S` ist dann die einzige
+  Möglichkeit, die Herkunft zu klären.
+- Das ist die **Spiegelseite** der Lektion vom 2026-08-06: Dort habe ich fremde uncommittete Reste
+  eingesammelt, hier wurden meine eingesammelt. Beide Male war die Ursache dieselbe — ein offenes
+  Zeitfenster zwischen Schreiben und Committen.
+- **Regel:** `cat >> …/SKILL.md << 'EOF' … EOF` und `git add <datei> && git commit` gehören in
+  **einen** Aufruf. Bei vier Sitzungen auf einer Maschine ist jede Lücke lang genug.
+- **Historie NICHT nachträglich zurechtrücken.** Ein Rewrite auf einem Branch, an dem mehrere
+  Sitzungen hängen, richtet mehr Schaden an als eine schiefe Commit-Nachricht. Stattdessen dem
+  Peer sagen, was passiert ist — er sucht sonst nach einem Konflikt, den es nicht mehr gibt.
+
+**🟡 Auf die Meldung eines Peers erst den eigenen Zustand messen, dann antworten**
+- Der Peer meldete uncommittete Zeilen und fragte, ob sie von mir seien. Die naheliegende Antwort
+  („nein, das war ich nicht") wäre richtig und trotzdem nutzlos gewesen: Er wartete darauf, dass die
+  Datei frei wird.
+- Zwei Befehle (`git status --short`, `git log -S "<eigener Text>"`) zeigten die eigentliche Lage —
+  bereits committet, durch ihn und eine dritte Sitzung. Damit war seine Blockade gegenstandslos.
+- **Regel:** Vor der Antwort an einen Peer den fraglichen Zustand selbst messen, nicht aus dem
+  Gedächtnis antworten. Zwischen seiner Nachricht und meinem Lesen können Minuten liegen — und bei
+  parallelen Sitzungen ändert sich in Minuten viel.
