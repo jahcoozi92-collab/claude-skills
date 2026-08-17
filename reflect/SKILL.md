@@ -1876,3 +1876,19 @@ gehört ein **neuer** Skill angelegt. Format exakt wie die bestehenden:
 - **Regel:** Vor der Antwort an einen Peer den fraglichen Zustand selbst messen, nicht aus dem
   Gedächtnis antworten. Zwischen seiner Nachricht und meinem Lesen können Minuten liegen — und bei
   parallelen Sitzungen ändert sich in Minuten viel.
+
+**🟡 Nach dem Commit hart prüfen, ob man jemanden mitgenommen hat — nicht über das Zeitfenster plausibilisieren**
+- Ergänzung aus der Abstimmung mit der Parallel-Sitzung, die denselben Vorfall von der anderen Seite
+  erlebt hat: Ein enges Fenster senkt die Wahrscheinlichkeit, beweist aber nichts. Ein Aufruf nach
+  dem Commit beantwortet die Frage hart:
+  ```bash
+  git show --stat HEAD | tail -3        # wie viele Dateien, wie viele Zeilen?
+  ```
+- **Die Zeilenzahl ist das verlässliche Signal.** Sie muss zu dem passen, was man selbst geschrieben
+  hat. „1 file changed, 29 insertions" bei einem 29-Zeilen-Block ist eindeutig; „161 insertions" bei
+  einem 90-Zeilen-Block ist der Alarm.
+- **Ein Stichwort-`grep` auf fremde Themen ist nur die Gegenprobe — und er liefert Falschtreffer,
+  sobald der eigene Text die fremde Commit-Nachricht ZITIERT.** Genau hier passiert: Meine Lektion
+  über den Vorfall nennt den fremden Commit beim Namen, also traf das Stichwort in meinem eigenen
+  Block. Bei einem Treffer deshalb erst nachsehen, ob er im eigenen oder im fremden Abschnitt steht,
+  bevor man von Fremdinhalt ausgeht.
