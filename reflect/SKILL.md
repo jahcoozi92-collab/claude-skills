@@ -1797,3 +1797,53 @@ gehört ein **neuer** Skill angelegt. Format exakt wie die bestehenden:
   kaputt, ohne dass es jemand merkt.
 - Erkennungsmerkmal beim Lesen eigener Prüfergebnisse: Fällt eine Prüfung nur zu bestimmten
   Tageszeiten durch, ist nicht die Prüfung schuld.
+
+### 2026-08-17 — Wiederholte Korrekturen auf derselben Achse: die Technik prüfen, nicht den Regler
+
+**🔴 Diana musste am Ende selbst fragen „Wie würdest du es machen?" — das Signal hätte von mir kommen müssen**
+- Aufgabe: ein 3D-Fahrzeug im Dashboard soll besser aussehen. Über viele Runden habe ich am
+  Echtzeit-Renderer gedreht — Überstrahl, Kontaktschatten, Korn, Vignette, Helligkeit des Raums,
+  Helligkeit des Bodens, Kontrast zwischen Fahrzeug und Halle. Jede Runde war eine echte
+  Verbesserung, jede wurde angenommen, und trotzdem kam als Fazit: *„Es gefällt mir nicht, weil
+  es so gemalt aussieht. Wie würdest du es machen?"*
+- Der Grund war kein Parameter, sondern das Verfahren: Rasterung kennt keine Mehrfachreflexionen,
+  keine Lichtstreuung im Klarlack, keine echte Verdeckungsrechnung. Alles, was ich nachgereicht
+  habe, waren **Annäherungen an genau die Effekte**, die ein Pfadverfolger nebenbei erzeugt. Die
+  Obergrenze war strukturell und lag unter dem, was gefordert war.
+- **Erkennungsmerkmal, und es ist scharf:** Zeigen mehrere aufeinanderfolgende Korrekturen auf
+  **dieselbe Qualitätsachse** (hier: Realismus), obwohl jede einzelne Anpassung umgesetzt wurde,
+  dann ist die Technik die Ursache. Bei drei Runden am selben Regler gehört die Frage gestellt —
+  von mir, nicht vom Nutzer.
+- **Was die Frage praktisch heißt:** einmal ausschreiben, was das gewählte Verfahren
+  prinzipbedingt *nicht* kann, und welches Verfahren es könnte, mit Preis. Hier: pfadverfolgte
+  Standbilder statt Echtzeit — dafür entfallen freies Zoomen, Animationen und eine zweite
+  Ansicht. Das ist eine Nutzerentscheidung, und sie war in zwei Sätzen getroffen.
+- Anschluss an 2026-08-16 („genannte Symptome sind der Einstieg, nicht der Auftragsumfang"):
+  dort ging es um den Umfang, hier um die **Ebene**. Manchmal ist die richtige Antwort auf eine
+  Detailkorrektur nicht das Detail, sondern der Vorschlag, das Fundament zu wechseln.
+
+**🔴 Etwas Abgeschaltetes ist eine ENTSCHEIDUNG, kein Versehen**
+- Beim Ausbauen einer Beleuchtung habe ich zwei Leuchtbänder wieder aktiviert, die eine frühere
+  Fassung ausdrücklich deaktiviert hatte. Ergebnis: *„Aber das Ambilight ist viel zu breit und
+  auch nur auf der Fahrerseite"* — dieselbe Beanstandung, die zu der Abschaltung geführt hatte,
+  ein zweites Mal.
+- Ich hatte die Abschaltung gesehen und als unfertig gelesen: als etwas, das noch fehlt. Sie war
+  aber das Ergebnis einer Messung (das eine Band ist neunmal so hoch wie das andere).
+- **Regel:** Auskommentierter, deaktivierter oder herausgefilterter Code ist ein Befund, kein
+  Rückstand. Vor dem Reaktivieren die Frage beantworten: *warum steht das aus?* Steht es nicht
+  daneben, sucht man es — Versionsverlauf, Kommentar darüber, Dateikopf. Findet man nichts,
+  fragt man, statt es einzuschalten.
+- Spiegelbild zur Lektion vom 2026-08-16 („‚bräuchte X' im Skill ist ein TODO"): Dort wird eine
+  Notiz fälschlich als Beschreibung gelesen, hier eine Entscheidung fälschlich als Lücke. Beide
+  Male hilft dieselbe Frage — **ist das ein Zustand oder ein Vorsatz?**
+
+**🟡 Keine Nebenverbesserung im selben Schritt wie eine Fehlersuche**
+- Während einer Fehlersuche habe ich nebenbei etwas „sauberer" gemacht, das für sich vertretbar
+  war (einen Hintergrund auf `null` statt auf Schwarz). Genau das legte einen bis dahin
+  verdeckten Fehler frei — einen milchigen Schleier, den ich anschließend gesucht habe, ohne zu
+  wissen, dass ich ihn selbst ausgelöst hatte.
+- Besonders tückisch, weil er **nur im eingebetteten Fenster** auftrat, nicht beim direkten
+  Aufruf. Die Fehlersuche lief also erst in Richtung Einbettung, dann in Richtung Zwischenspeicher.
+- **Regel:** Solange ein Fehler ungeklärt ist, wird nur das geändert, was der Hypothese dient.
+  Aufräumen ist ein eigener Arbeitsschritt danach — sonst weiß man am Ende nicht, welche
+  Änderung welche Wirkung hatte.
