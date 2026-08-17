@@ -4131,3 +4131,79 @@ Aus einem langen Gestaltungsdurchlauf; die Zahlen beziehen sich auf das Kopfmode
     beleuchtet zeigt eine Nase keinen durchgehenden Lichtstrich.
   - Photorealistische Haut aus Verläufen: grundsätzlich unerreichbar. Verläufe können eine Fläche
     nur GLÄTTEN, und Glätte ist genau das, was als „keine Haut" gelesen wird.
+
+### 2026-08-17/18 — Fahrzeug-Dashboard: card_mod-Falle, die Grenze von Echtzeit-3D, Foto-Turntable
+
+**🔴 `config.entity` in card_mod trägt hier NICHT — der Skill hat es zu lange als gesetzt geführt**
+- Ausführlich am Ort des Musters selbst korrigiert (Abschnitt *`config.entity` als DRY-Hebel in
+  card_mod*). Kurzfassung: in `custom:mushroom-template-card` innerhalb einer `custom:layout-card`
+  gab es pro Seitenaufbau zwölf `Template variable error: 'config' is undefined`, die Kacheln
+  blieben ungestylt — ohne jeden Hinweis in der Oberfläche.
+- **Merke allgemein:** Ein Muster, das im eigenen Skill steht, ist ein Vorschlag mit Vorgeschichte,
+  keine Garantie für den nächsten Kartentyp. Bei Jinja in `card_mod` nach dem ersten Deploy einmal
+  ins Protokoll sehen — dort steht der Fehler, im Bild sieht man nur „das Styling greift nicht".
+
+**🔴 `aspect_ratio` allein macht ein iframe in einer `sections`-View nicht hoch**
+- Die Karte blieb bei 248 px, egal welches Seitenverhältnis gesetzt war. In der `sections`-Ansicht
+  bestimmt das Raster die Höhe:
+  ```yaml
+  - type: iframe
+    url: /local/Tiguan/viewer_foto.html?v=4
+    grid_options: { columns: full, rows: 8 }   # <- ohne rows bleibt es flach
+  ```
+- Gilt für jede Karte, die eigene Höhe braucht (iframe, Bild, Canvas). `aspect_ratio` wirkt erst
+  innerhalb der vom Raster zugeteilten Fläche.
+
+**🔴 Echtzeit-WebGL kann „nicht gemalt aussehen" prinzipbedingt nicht leisten**
+- Nach vielen Runden an Überstrahl, Kontaktschatten, Korn und Raumhelligkeit lautete das Urteil:
+  *„Es gefällt mir nicht, weil es so gemalt aussieht."* Zu Recht — Rasterung kennt keine
+  Mehrfachreflexionen, keine Lichtstreuung im Klarlack und keine echte Verdeckungsrechnung. Alles,
+  was der Viewer aufbietet, sind Annäherungen an genau die Effekte, die ein Pfadverfolger nebenbei
+  erzeugt.
+- Gelöst mit **36 in Blender/Cycles gerechneten Standbildern** als Turntable
+  (`www/Tiguan/viewer_foto.html` + `studio/tg_000…035.webp`). 1280 × 720, 128 Abtastungen,
+  52 Minuten auf der VM; 31 MB PNG → **0,9 MB WebP** (24 KB je Bild — ein dunkles, gleichmäßiges
+  Motiv komprimiert extrem gut). Skript und Fallen: `config/scripts/turntable.py` +
+  `README_turntable.md`, Renderseite im `blender-mcp`-Skill.
+- ⚠ **Der Preis ist real und gehört genannt:** keine Dynamikblinker (eine halb aufgeleuchtete
+  Kette sähe im Standbild wie ein Defekt aus), kein freies Zoomen, keine Innenansicht.
+  `viewer3d.html` liegt unverändert daneben und kann alle drei — im Dashboard ist nur die
+  iframe-URL zu tauschen.
+- **Faustregel für die Wahl:** Wird Interaktion gebraucht (Zustände schalten, frei umsehen,
+  Live-Daten am Modell), führt an Echtzeit kein Weg vorbei. Geht es um **Aussehen**, ist eine
+  Bildfolge dem Echtzeit-Renderer auf dieser Hardware um Klassen überlegen und obendrein
+  billiger im Betrieb.
+
+**🔴 model-viewer: `emissiveStrength` ist nur LESBAR — Leuchtstärken gehören in die GLB**
+- `material.emissiveStrength.setEmissiveStrength(8.0)` wird **still geschluckt**. Gemessen: gesetzt
+  8,0, zurückgelesen 6. Kein Fehler, keine Warnung — die LEDs bleiben einfach zu dunkel, und man
+  sucht bei der Beleuchtung.
+- Der Wert gehört in die Datei, als `KHR_materials_emissive_strength` am Material. Die GLB lässt
+  sich dafür direkt bearbeiten: Binärformat aus JSON-Abschnitt + Datenabschnitt, der JSON-Teil ist
+  mit Python les- und schreibbar. Auf demselben Weg sind auch Knoten verschiebbar (Kennzeichen,
+  Embleme) oder neu einzuhängen — ohne Blender-Umweg.
+
+**🔴 `PMREMGenerator.fromScene()` hinterlässt die Clear-Color WEISS (Alpha 0,5)**
+- Gemessen mit `renderer.getClearColor()` direkt danach: `ffffff`. `setClearColor(0x000000, 0)`
+  muss deshalb **nach** dem Erzeugen der Umgebungsspiegelung stehen, nicht davor.
+- Das Symptom ist heimtückisch: beim direkten Aufruf der Seite sah alles dunkel aus, **im
+  Dashboard-iframe lag ein milchiger Schleier darüber**. Ich habe erst die Einbettung und dann den
+  Zwischenspeicher verdächtigt.
+- Verwandt: **Selective Bloom braucht einen schwarzen Hintergrund, nicht `null`.** Wer im
+  Bloom-Durchgang `scene.background = null` setzt, legt genau diese Clear-Color frei.
+
+**🔴 Das `load`-Ereignis feuert im Dashboard-iframe nicht verlässlich**
+- Im direkt aufgerufenen Fenster kam es, im eingebetteten je nach Ladereihenfolge nicht — Ergebnis:
+  *„Aktuell sehe ich nichts"*, obwohl alles vorhanden war.
+- Statt sich darauf zu verlassen, ein Wächter, der alle 250 ms prüft, ob die Voraussetzungen
+  erfüllt sind, und dann genau einmal startet. Kostet nichts und ist immun gegen Zeitfragen.
+
+**🟡 36 Vollbilder gleichzeitig im Dokument frieren den Renderer ein**
+- Erster Entwurf: alle Aufnahmen übereinander, Umschalten per Klasse. Der Browser setzt dann bei
+  jedem Wechsel 36 bildschirmfüllende Flächen neu zusammen, auch die unsichtbaren — die
+  Entwicklerschnittstelle lief in einen Zeitüberlauf.
+- Richtig ist **ein** `<img>`, dessen Quelle wechselt; die Bilder liegen im Zwischenspeicher, der
+  Wechsel kostet nichts. Vorgeladen wird über `new Image()` **außerhalb** des Dokuments.
+- ⚠ Dazu die Erstanzeige-Sperre prüfen: `if (n === aktuell && bereit) return;` blockierte
+  ausgerechnet das erste Bild, weil `bereit` eine Zeile vorher gesetzt wird und `aktuell` noch 0
+  ist. Alle Bilder geladen, keines sichtbar — sieht aus wie ein Ladefehler, ist eine Abkürzung.
