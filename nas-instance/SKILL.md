@@ -2485,3 +2485,37 @@ Browser-Diagnose, CPU-Inferenz-Realitaet) weiter gelten; die Dienste selbst sind
   einzige Meldung.
 - Wer Ausfälle dieser Klasse bemerken will, braucht einen Prüfer **ausserhalb** der Maschine
   (externer Uptime-Dienst) oder einen Dead-Man's-Switch, der beim Ausbleiben einer Meldung anschlägt.
+
+### 2026-08-18 — `pkill -f` trifft FREMDE Prozesse; headless-Renders hängen sporadisch
+
+**🔴 Auf dieser Maschine laufen Prozesse anderer Dienste unter fremden Nutzern**
+- Die Lektion vom 2026-05-26 warnt davor, dass `pkill -f '<pattern>'` die **eigene** Shell killt.
+  Das ist nur die halbe Gefahr: Ich setzte `pkill -9 -f "headless"` ab, um eigene Chrome-Reste
+  aufzuräumen — auf dem NAS laufen aber **acht Chrome-Prozesse unter `appuser`** (Playwright,
+  vermutlich Crawl4AI). Alle tragen `--headless` in der Kommandozeile.
+- Getroffen habe ich sie nur deshalb nicht, weil mein Bash-Nutzer (`Jahcoozi`) keine Rechte an
+  fremden Prozessen hat. Das ist Glück, keine Vorsicht — auf einer Maschine mit ~50 Containern ist
+  ein Musterkill über die volle Prozessliste grundsätzlich zu breit.
+- **Regel:** Vor jedem `pkill`/`killall` erst **anzeigen**, was getroffen würde, und den eigenen
+  Nutzer einschränken:
+  ```bash
+  pgrep -a -u "$(id -un)" -f "<muster>"     # nur eigene, mit voller Kommandozeile
+  pkill -u "$(id -un)" -f "<muster>"        # -u schützt fremde Dienste
+  ```
+  `pgrep -a` zeigt die Kommandozeile mit — daran erkennt man sofort, ob ein fremder Dienst
+  mitgemeint wäre (hier: `/home/appuser/.cache/ms-playwright/...`).
+- Bei sauber isolierbaren eigenen Läufen ist ein eigenes `--user-data-dir` je Lauf die bessere
+  Lösung als hinterher aufzuräumen.
+
+**🟡 Headless-Chrome-Renders hängen hier sporadisch — Retry statt Ursachensuche**
+- Beim Rendern von 3D-Ansichten (`google-chrome --headless --use-gl=swiftshader`) lief derselbe
+  Aufruf mal in 20 s durch und blieb mal bis zum Timeout hängen (Exit 143/144). Kein Muster in der
+  Kommandozeile, RAM war ausreichend frei (16 GB verfügbar).
+- Was zuverlässig funktioniert: denselben Aufruf nach ein paar Sekunden Pause wiederholen. Was
+  nicht half: `--disable-dev-shm-usage`, eigenes `--user-data-dir`, kleineres Fenster.
+- **Regel:** Für Render-Läufe einen Timeout setzen (`timeout 115`), das Ergebnis über die Datei
+  prüfen (`ls`), und bei Ausbleiben schlicht wiederholen. Die Fehlersuche lohnt hier nicht — der
+  Aufruf ist idempotent, und der zweite Versuch geht fast immer durch.
+- ⚠ Nicht am Ergebnis der vorherigen Ausgabe festmachen: Ein hängender Lauf kann die Datei
+  **trotzdem** geschrieben haben (Exit 143, Datei vorhanden). Immer den Zeitstempel prüfen, bevor
+  man ein altes Bild für das neue hält.
