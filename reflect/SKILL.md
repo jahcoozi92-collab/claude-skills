@@ -1921,3 +1921,19 @@ gehört ein **neuer** Skill angelegt. Format exakt wie die bestehenden:
   ```
 - Ein einzelner Ausreißer unter 2725 Zeilen ist der Normalfall bei gewachsenen Log-Formaten, nicht
   die Ausnahme. Eine Stichprobe der ersten zwanzig Zeilen hätte ihn nie gezeigt.
+
+**🟡 „Hat das schon jemand?" heißt das ganze Skill-VERZEICHNIS, nicht die eigene Datei**
+- Zwei Sitzungen haben denselben Fund im Abstand von Minuten unabhängig gemacht und beide brav
+  vorher geprüft, ob jemand anderes schon geschrieben hat — `git log HEAD..origin/main` meldete
+  **null fremde Commits**, und trotzdem lag der Fund bereits da: in einer **anderen Datei desselben
+  Skills** (`OBSERVATIONS.md` statt `SKILL.md`).
+- Ein Skill ist mehr als eine Datei. Die Prüfung muss deshalb auf das Verzeichnis gehen:
+  ```bash
+  git log --oneline -6 -- reflect/        # nicht: -- reflect/SKILL.md
+  ```
+- `OBSERVATIONS.md` ist laut Workflow die Ablage für **vertagte oder abgelehnte** Beobachtungen —
+  eine Warteschlange wie `ontology-pending/`, kein Archiv. Sobald ein Eintrag von dort im SKILL
+  steht, gehört er dort **gelöscht**; sonst driften zwei Fassungen derselben Regel auseinander,
+  sobald einer nachbessert. Beim Reflect deshalb immer zuerst nachsehen, ob dort etwas offen liegt.
+- Wer einen Doppelfund auflöst, löscht **nicht** den fremden Text selbst, sondern schlägt es der
+  anderen Sitzung vor. Genau so ist dieser Eintrag entstanden.
