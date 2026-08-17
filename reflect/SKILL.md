@@ -1892,3 +1892,32 @@ gehört ein **neuer** Skill angelegt. Format exakt wie die bestehenden:
   über den Vorfall nennt den fremden Commit beim Namen, also traf das Stichwort in meinem eigenen
   Block. Bei einem Treffer deshalb erst nachsehen, ob er im eigenen oder im fremden Abschnitt steht,
   bevor man von Fremdinhalt ausgeht.
+
+**🔴 Nachtrag zum Nachtrag: `update` gibt es in ZWEI Formen, und es gibt ein `delete`**
+- Die Lektion von gestern („`update`-Zeilen liegen flach") ist unvollständig, und ich bin ihr
+  **einen Tag später selbst auf die Nase gefallen**: mein Parser warf `KeyError: 'id'`.
+- Gemessene Verteilung über alle 2725 Zeilen (2026-08-18):
+  | op | Form | Anzahl |
+  |---|---|---|
+  | `create` | verschachtelt (`entity`) | 1354 |
+  | `relate` | flach (`from`/`rel`/`to`) | 1334 + 22 ohne `properties` |
+  | `update` | **flach** (`id`/`properties`) | 19 |
+  | `update` | **verschachtelt** (`entity`) | **1** |
+  | `delete` | flach (`id`) | 1 |
+- Ein Parser, der die Form am **`op`** festmacht, bricht an der einen abweichenden Zeile ab oder
+  liefert still den veralteten Stand. Robust ist die Fallunterscheidung am **Schlüssel**:
+  ```python
+  if op in ("create", "update"):
+      e = d["entity"] if "entity" in d else None      # nicht: if op == "create"
+      ident = e["id"] if e else d["id"]
+  elif op == "delete":
+      ents.pop(d["id"], None)                          # kommt vor, wenn auch selten
+  ```
+- **Die allgemeine Lehre ist nicht die Tabelle, sondern das Vorgehen:** Bevor man ein Format
+  parst, einmal die tatsächlich vorkommenden Formen zählen, statt sie aus einer Beschreibung
+  abzuleiten — auch aus der eigenen. Zwei Zeilen erledigen das und hätten mir den Abbruch erspart:
+  ```python
+  collections.Counter((d.get("op"), tuple(sorted(d.keys()))) for d in zeilen)
+  ```
+- Ein einzelner Ausreißer unter 2725 Zeilen ist der Normalfall bei gewachsenen Log-Formaten, nicht
+  die Ausnahme. Eine Stichprobe der ersten zwanzig Zeilen hätte ihn nie gezeigt.
