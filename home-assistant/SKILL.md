@@ -295,9 +295,91 @@ curl -X POST .../flow/<flow_id> -d '{"api_key":"sk-..."}'
 Subentries haben `llm_hass_api: ["assist"]` → Tool-Calling mit allen exponierten Entities ist automatisch aktiv.
 
 **HACS bleibt nötig für:**
-- ElevenLabs TTS (kein natives Integration bis HA 2026.4)
 - Spezial-Provider ohne offizielle Integration
 - Custom Community-Komponenten
+
+**Nicht mehr HACS:** ElevenLabs ist seit **HA 2024.8** eine Core-Integration (Domain `elevenlabs`,
+TTS **und** STT, Cloud Polling). Frühere Notiz „kein natives Integration bis 2026.4" war falsch.
+Setup: Einstellungen → Geräte & Dienste → ElevenLabs. Der API-Key braucht Rechte für Text-to-Speech,
+Speech-to-Text, Voices (read) und Models (read). Falls noch eine Custom-Variante unter
+`custom_components/` liegt: auf Core umstellen und die Custom-Komponente entfernen
+(HACS-Repo mit abräumen, siehe Zwei-Dateien-Regel unten).
+
+## HACS-Bestand, Kandidaten & bewusste Ablehnungen
+
+Stand 2026-08-19. Zweck: verhindern, dass alle paar Monate dieselben „Must-have"-Listen aus dem
+Internet neu durchgeprüft werden. **Vor jeder Neuinstallation** gegen die Ablehnungstabelle unten
+prüfen — dort steht auch, welche Bedingung eine Ablehnung wieder aufhebt.
+
+### Ist-Stand ermitteln (nicht raten)
+
+```bash
+docker exec homeassistant python3 -c "
+import json
+d=json.load(open('/config/.storage/hacs.data'))['data']['repositories']
+for kat,items in d.items():
+    print(f'--- {kat} ---')
+    for r in items: print(' ', r.get('full_name'), r.get('installed'))
+"
+docker exec homeassistant ls /config/custom_components/
+```
+
+Beide Quellen nötig: manuell installierte Forks (hier `hon`, gvigroux) stehen nur im Dateisystem,
+Karteileichen (Repo ohne Dateien) nur in der HACS-Storage.
+
+### Installierter Bestand
+
+| Kategorie | Komponenten |
+|---|---|
+| Integrationen (HACS) | `alexa_media_player`, `volkswagencarnet`, `ha_mcp_tools` |
+| Integrationen (manuell) | `hon` (gvigroux-Fork — taucht in HACS korrekt NICHT auf) |
+| Frontend | mushroom, bubble-card, button-card, card-mod, layout-card, mini-graph-card, apexcharts-card |
+| Nativ, kein HACS | matter, bosch_shc, shelly, philips_js, esphome, wyoming, openai/anthropic conversation, `mcp_server` (`elevenlabs` steht nativ bereit — Nutzung nicht verifiziert) |
+
+### Empfohlen — Begründung aus diesem Setup
+
+| Repo | Kategorie | Warum genau hier |
+|---|---|---|
+| `dummylabs/thewatchman` | Integration | Scannt Packages + Dashboards nach Referenzen auf nicht existierende Entities/Services. Direkt gegen die dokumentierte Dangling-Reference-Klasse („hey jarvis, Flurlicht an" zeigte auf gelöschtes `light.flur_eg` statt `switch.eg_flur_licht`). Bei 12 Packages sonst nur Zufallsfund. |
+| `frenck/spook` | Integration | Gegenstück von der Registry-Seite: verwaiste Entities/Devices/Areas als *Repairs* in der UI, statt sie bis zur nächsten Handaufräum-Session (01.08.: Matter-Node-1-Leichen, `update.*`-Waisen) anwachsen zu lassen. Bringt zusätzlich fehlende `homeassistant.*`-Services. |
+| `KartoffelToby/better_thermostat` | Integration | Drei Matter-TRVs **plus** passende Fensterkontakte je Raum (`binary_sensor.fensterkontakt*`) sind exakt der Anwendungsfall: Fenster auf → Ventil zu ohne eigene Automation, plus Kalibrierung gegen einen raumweit platzierten Sensor statt gegen die heizungsnahe Ventilmessung. Arbeitet auf der generischen `climate`-Entity → Matter ist abgedeckt. |
+| `agittins/bermuda` | Integration (Custom Repo) | Raumpräsenz aus BLE-Advertisements der vorhandenen Shelly-Gen2-Geräte (Flur, Bad, Schlafzimmer, Vordach). **Passiv reicht** — das ist der dokumentierte Shelly-Standardfall und widerlegt den Schluss aus der UniLED-Session („Proxys sind nur passiv, taugen nichts"; dort ging es um `connectable`, was nur UniLED brauchte). Ergebnis: `person.diana` bekommt einen Raum statt nur zuhause/abwesend. |
+| `music-assistant/*` | Integration + Server | Löst die dokumentierte Multi-Room-Lücke („nur via Multi-Room Audio in der Alexa-App, HA orchestriert das nicht") — synchrone Gruppen über Chromecast/AirPlay/DLNA. Zwei Vorbehalte: Server ist ein **eigener Container auf dem NAS**, und Echo-Support ist die schwächste Ecke (Play/Pause/Volume; mehr braucht eine API-Bridge). Über `media_player.55oled855_12` (Cast) sauber. |
+| `nielsfaber/scheduler-component` + `-card` | Integration + Frontend | Heizpläne je Raum per UI klicken statt YAML editieren + Restart — bei drei Thermostaten mit unterschiedlichen Rhythmen echte Bearbeitungszeit. |
+
+### Bewusst abgelehnt — nicht neu diskutieren
+
+| Kandidat | Grund | Ablehnung hinfällig wenn |
+|---|---|---|
+| Adaptive Lighting | Beleuchtung ist Shelly-**Schalter** (an/aus), nicht dimmbar. Steht auf jeder Must-have-Liste, bringt hier null. | WLED-Umbau steht (dimmbare/farbige Quellen vorhanden) |
+| Frigate | Keine Kameras im Setup | Kameras kommen dazu |
+| Nordpool / Tibber | Festtarif über `input_number.<anbieter>_arbeitspreis_netto` — dynamische Preisabfrage wäre Ballast | Wechsel auf dynamischen Stromtarif |
+| Powercalc | Shelly PM messen real. Schätz-Integration für den ungemessenen Rest lohnt den Pflegeaufwand nicht | Größere Verbraucher ohne Messung werden relevant |
+
+### Betriebsregel: Custom Components sind Wartungslast
+
+Die `hon`-Historie ist das Argument für Sparsamkeit — dreimal derselbe `ImportError` durch
+HACS-Datei-Drift, einmal verstärkt durch einen Cron-Wächter, der nachts die kaputte Datei
+zurückkopiert hat. Daraus:
+
+- **Risikoklassen trennen:** Watchman, Spook und Bermuda sind Diagnose bzw. lesend — die können den
+  Start nicht zerlegen. Better Thermostat greift in die Heizungssteuerung ein → **einzeln
+  installieren und einen Heiztag beobachten**, bevor der nächste dazukommt.
+- **Nie zwei Integrationen im selben Restart-Fenster** neu einführen: ein Traceback im Log ist dann
+  nicht mehr eindeutig zuzuordnen.
+- Nach jedem HACS-Update lokal gepatchter Integrationen die Patches gegenprüfen (siehe
+  „Lokale Patches an HACS-Integrationen").
+
+### Installation ohne SSH
+
+Ablauf per WebSocket + REST steht unter „Pattern: Integration installieren, wenn SSH zum NAS down
+ist": `hacs/repositories/add` → `hacs/repositories/list` (ID holen) → `hacs/repository/download`,
+danach Restart und Config-Flow per REST. Bermuda braucht dabei `category:"integration"` als
+**Custom Repository**, die übrigen stehen im Default-Store.
+
+**Deinstallation immer in beiden Storage-Dateien** (`hacs.repositories` UND `hacs.data`) plus
+Registry-Purge der verwaisten `update.<name>_update`-Entities — sonst bietet HACS das Repo weiter
+zum Update an und ein Klick installiert es zurück.
 
 ## Modern Action Syntax (HA 2024.8+)
 
@@ -1438,7 +1520,7 @@ Bei Scripts/Helpers reicht `script.reload` / `homeassistant.reload_config_entry`
 7. **Placeholder-Entities**: Automationen fuer nicht-existierende Geraete disablen
 8. **agent_id raten**: Conversation-Entity-ID != Integration-Title. "ChatGPT"-Integration hat `conversation.openai_conversation`, nicht `conversation.chatgpt`. Immer via `GET /api/states` prüfen.
 9. **Expose via REST-Service**: `homeassistant.expose_entity` existiert NICHT als Service-Call. Exposure (und Pipeline-Config) gehen NUR über WebSocket.
-10. **HACS-Reflex für OpenAI/Anthropic**: Beide Provider sind seit HA 2024+ nativ eingebaut. HACS nur noch für Nischen-Integrationen (z.B. ElevenLabs TTS).
+10. **HACS-Reflex für Standard-Provider**: OpenAI/Anthropic/Google sind seit HA 2024+ nativ eingebaut, ElevenLabs (TTS+STT) seit 2024.8. Vor jedem HACS-Griff prüfen, ob es die Integration inzwischen im Core gibt — die Custom-Variante kostet sonst dauerhaft Wartung.
 11. **check_config Zeilennummer direkt trauen**: Zeilen-Versatz 1-2 möglich. Immer mit `grep -n` verifizieren bevor sed-basiertes Fixen.
 12. **`sh -c` mit runden Klammern in Kommentaren**: `sh: syntax error: unexpected "("`. In SSH-Commands die durch `sh -c` laufen KEINE Klammern in Echo-Texten. Alternativen: eckige Klammern oder Bash (`bash -c` toleriert mehr).
 13. **Storage-mode Default-Dashboard aus YAML entfernen wollen**: Geht nicht — nur via HA-UI (siehe /config-Refactoring-Patterns).
