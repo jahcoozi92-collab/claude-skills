@@ -1415,6 +1415,58 @@ Padding-Faktor-Tuning:
 
 `camera-orbit="35deg 78deg"` = Hero-Shot-3/4-Ansicht. Bei `45deg` ist es klassische Press-Photo-Perspektive.
 
+### Lebendige Rotation statt `auto-rotate`
+
+`auto-rotate` dreht mit **konstanter** Winkelgeschwindigkeit um eine feste Achse, bei fester Höhe
+und festem Radius. Silhouette und Perspektive ändern sich dabei kaum — das Modell liest sich als
+Standbild, das geschoben wird (User-Wortlaut: „Standbild-Schubsen"). Dazu kommt der harte
+Wiederanlauf nach `auto-rotate-delay`: von 0 auf volle Geschwindigkeit ohne Rampe.
+
+Fertige Ablösung: `assets/orbit-cinematic.js` in diesem Skill. Neben die `viewer.html` legen,
+einbinden, und am `<model-viewer>` die Attribute `auto-rotate`, `auto-rotate-delay` und
+`rotation-per-second` **entfernen** — sonst laufen zwei Treiber auf derselben Kamera und es ruckelt.
+
+```html
+<script src="orbit-cinematic.js"></script>
+```
+
+Vier Entwurfsentscheidungen, die den Unterschied machen:
+
+1. **Dwell statt konstanter Drehung.** Die Geschwindigkeit moduliert über den Winkel:
+   `v(θ) = base · (1 − amp · cos(2(θ − θ_hero)))`. Damit bremst die Kamera an den beiden
+   3/4-Hero-Winkeln ab und zieht über die Seiten hinweg an — die Bewegung einer getragenen Kamera
+   statt eines Drehtellers. Der Mittelwert bleibt `base`, weil `cos` über die Periode 0 mittelt.
+   Nebenwirkung: die **volle Umdrehung dauert länger** als `360/base` (mehr Zeit in den langsamen
+   Sektoren) — bei `base = 10 deg/s` sind es ~44 s, nicht 36 s.
+2. **Drei teilerfremde Perioden.** Drehung (integriert), Nicken (31 s) und Dolly (19 s) laufen
+   unabhängig → die Gesamtbewegung wiederholt sich sichtbar erst nach ~10 min. Gleiche oder
+   ganzzahlig verwandte Perioden ergeben eine erkennbare Schleife.
+3. **Hart anhalten, weich anlaufen.** Beim Anfassen sofort Stopp (der Nutzer hat die Kontrolle),
+   danach Smoothstep-Rampe über 1,5 s. Nur das Wiederanlaufen muss weich sein.
+4. **Beim Loslassen nicht zurückspringen.** Basis wird per `getCameraOrbit()` neu gesetzt — Achtung:
+   liefert **theta/phi in RAD**, radius in Metern, und den *realtime* Wert (inkl. Interpolation),
+   nicht den gesetzten Attributwert. Die Oszillator-Uhr dabei auf 0 setzen, sonst springt der
+   Sinus-Offset. Der Nutzer behält so auch seinen Zoom.
+
+Weitere Fallen:
+
+- **Initialisierung erst ~350 ms nach `load`.** Vorher hat `fitCamera()` seine `cameraOrbit`-Zuweisung
+  noch nicht durch die Interpolation gebracht → man liest die alte Kamera als Basis. Und `load` kann
+  bereits durch sein, wenn das Script spät geparst wird → zusätzlich `mv.loaded` prüfen.
+- **`dt` clampen** (hier 50 ms). Nach Tab-Wechsel liefert der erste Frame sonst einen Riesenschritt
+  und das Modell springt.
+- **Nicht im Hintergrund rechnen** — `IntersectionObserver` + `document.hidden`. Das Fahrzeug-Dashboard
+  bleibt in der Companion-App oft offen; ohne das läuft die rAF-Schleife dauerhaft auf dem Handy.
+- **`prefers-reduced-motion`** respektieren: dann gar nicht starten, Modell bleibt stehen, wo
+  `fitCamera()` es hingestellt hat.
+- **Radius-Atmung klein halten** (±4 %). `fitCamera` setzt `min/maxCameraOrbit`; ±4 % um
+  `fitDist · 1.18` liegt sicher innerhalb, größere Amplituden klemmen an der Grenze und stottern.
+- Nach dem Deploy **Cache-Buster `?v=N` hochzählen** — sonst zeigt die App die alte Datei
+  (siehe Cache-Abschnitt: Datei-Änderungen ohne URL-Wechsel bleiben 31 Tage gecacht).
+
+Tuning-Einstiege in `CFG`: `baseSpeed` (Tempo), `dwellAmount` (0 = konstant wie vorher, 0.55 =
+deutlich spürbar, >0.8 = stockend), `phiAmp` (Nicken; >8 deg wirkt schaukelig), `radiusAmp`.
+
 ### GLB-Material-Tinting via JS
 
 Nach `load`-Event Materialien des GLB umfärben, z.B. Karosserie schwarz-metallic:
