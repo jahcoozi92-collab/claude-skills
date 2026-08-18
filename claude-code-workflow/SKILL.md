@@ -47,6 +47,10 @@ Für konkrete Prüfmuster lies [references/verification.md](references/verificat
 - Genannte Symptome sind der Einstieg; prüfe angrenzende Auswirkungen innerhalb des beauftragten Umfangs.
 - Wenn ein benötigtes Werkzeug fehlt, richte es innerhalb des erlaubten Umfangs ein oder benenne den echten Blocker.
 
+## Umgebungsgrenzen
+
+- Voice-Diktat (Leertaste halten, `/voice`) funktioniert nur, wenn die CLI auf der Maschine mit dem Mikrofon läuft. In SSH-Sessions und Remote-Umgebungen ist es laut offizieller Doku (code.claude.com/docs/en/voice-dictation) ausgeschlossen — die Meldung „hat nicht geklappt“ ist dann kein Paket-, Rechte- oder Treiberproblem, also nicht auf dem Server debuggen. Headless-Hosts wie das NAS haben zudem oft gar kein Aufnahmegerät (`arecord -l` prüfen: nur Playback-PCMs). Fix: Claude Code lokal auf einem Rechner mit Mikrofon starten (z. B. yoga7) und den Zielhost per SSH ansprechen.
+
 ## Lernen
 
 Nutze `reflect`, um neue Claude-Code-spezifische Muster hier thematisch einzubauen. Lege ausführliche Fallberichte in `references/` ab; halte diese Hauptdatei kurz und handlungsorientiert.
