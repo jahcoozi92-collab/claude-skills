@@ -1,0 +1,4 @@
+interface:
+  display_name: "Claude Code Workflow"
+  short_description: "Robuste Claude-Code-Arbeitsabläufe"
+  default_prompt: "Use $claude-code-workflow to prevent shared-state, Git, automation, or verification failures in this Claude Code task."
