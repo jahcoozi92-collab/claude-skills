@@ -343,8 +343,8 @@ Karteileichen (Repo ohne Dateien) nur in der HACS-Storage.
 | `dummylabs/thewatchman` | Integration | Scannt Packages + Dashboards nach Referenzen auf nicht existierende Entities/Services. Direkt gegen die dokumentierte Dangling-Reference-Klasse („hey jarvis, Flurlicht an" zeigte auf gelöschtes `light.flur_eg` statt `switch.eg_flur_licht`). Bei 12 Packages sonst nur Zufallsfund. |
 | `frenck/spook` | Integration | Gegenstück von der Registry-Seite: verwaiste Entities/Devices/Areas als *Repairs* in der UI, statt sie bis zur nächsten Handaufräum-Session (01.08.: Matter-Node-1-Leichen, `update.*`-Waisen) anwachsen zu lassen. Bringt zusätzlich fehlende `homeassistant.*`-Services. |
 | `KartoffelToby/better_thermostat` | Integration | Drei Matter-TRVs **plus** passende Fensterkontakte je Raum (`binary_sensor.fensterkontakt*`) sind exakt der Anwendungsfall: Fenster auf → Ventil zu ohne eigene Automation, plus Kalibrierung gegen einen raumweit platzierten Sensor statt gegen die heizungsnahe Ventilmessung. Arbeitet auf der generischen `climate`-Entity → Matter ist abgedeckt. |
-| `agittins/bermuda` | Integration (Custom Repo) | Raumpräsenz aus BLE-Advertisements der vorhandenen Shelly-Gen2-Geräte (Flur, Bad, Schlafzimmer, Vordach). **Passiv reicht** — das ist der dokumentierte Shelly-Standardfall und widerlegt den Schluss aus der UniLED-Session („Proxys sind nur passiv, taugen nichts"; dort ging es um `connectable`, was nur UniLED brauchte). Ergebnis: `person.diana` bekommt einen Raum statt nur zuhause/abwesend. |
-| `music-assistant/*` | Integration + Server | Löst die dokumentierte Multi-Room-Lücke („nur via Multi-Room Audio in der Alexa-App, HA orchestriert das nicht") — synchrone Gruppen über Chromecast/AirPlay/DLNA. Zwei Vorbehalte: Server ist ein **eigener Container auf dem NAS**, und Echo-Support ist die schwächste Ecke (Play/Pause/Volume; mehr braucht eine API-Bridge). Über `media_player.55oled855_12` (Cast) sauber. |
+| `agittins/bermuda` | Integration | Raumpräsenz aus BLE-Advertisements der vorhandenen Shelly-Gen2-Geräte (Flur, Bad, Schlafzimmer, Vordach). **Passiv reicht** — das ist der dokumentierte Shelly-Standardfall und widerlegt den Schluss aus der UniLED-Session („Proxys sind nur passiv, taugen nichts"; dort ging es um `connectable`, was nur UniLED brauchte). Ergebnis: `person.diana` bekommt einen Raum statt nur zuhause/abwesend. |
+| Music Assistant | **kein HACS** — Core seit HA 2024.12, nur Server-Container | Löst die dokumentierte Multi-Room-Lücke („nur via Multi-Room Audio in der Alexa-App, HA orchestriert das nicht") — synchrone Gruppen über Chromecast/AirPlay/DLNA. Die Integration ist eingebaut (Einstellungen → Geräte & Dienste), gebraucht wird nur der **Music-Assistant-Server als eigener Container auf dem NAS** (Integration verlangt Server ≥ 2.4). Vorbehalt: Echo-Support ist die schwächste Ecke (Play/Pause/Volume; mehr braucht eine API-Bridge). Über `media_player.55oled855_12` (Cast) sauber. |
 | `nielsfaber/scheduler-component` + `-card` | Integration + Frontend | Heizpläne je Raum per UI klicken statt YAML editieren + Restart — bei drei Thermostaten mit unterschiedlichen Rhythmen echte Bearbeitungszeit. |
 
 ### Bewusst abgelehnt — nicht neu diskutieren
@@ -355,6 +355,26 @@ Karteileichen (Repo ohne Dateien) nur in der HACS-Storage.
 | Frigate | Keine Kameras im Setup | Kameras kommen dazu |
 | Nordpool / Tibber | Festtarif über `input_number.<anbieter>_arbeitspreis_netto` — dynamische Preisabfrage wäre Ballast | Wechsel auf dynamischen Stromtarif |
 | Powercalc | Shelly PM messen real. Schätz-Integration für den ungemessenen Rest lohnt den Pflegeaufwand nicht | Größere Verbraucher ohne Messung werden relevant |
+
+### Beliebt im Ökosystem — hier noch nicht bewertet
+
+Damit die Ablehnungstabelle oben nicht so gelesen wird, als sei alles andere geprüft. HACS
+veröffentlicht **keine belastbaren Downloadzahlen** — „beliebt" heißt hier: taucht in fast jedem
+größeren Setup und in den einschlägigen Empfehlungslisten auf. Kein Ersatz für eine eigene Prüfung.
+
+| Kandidat | Kategorie | Anknüpfungspunkt in diesem Setup |
+|---|---|---|
+| `thomasloven/lovelace-auto-entities` | Frontend | Kartenlisten aus Filtern statt Hand-Aufzählung. Natürlicher Partner zu Watchman: eine Karte „alles gerade `unavailable`" pflegt sich nach Geräte-Umbauten selbst. **Kleinste sinnvolle nächste Installation** — reines Frontend, kann den Start nicht zerlegen. |
+| `brunosabot/streamline-card` | Frontend | Karten-Templates mit Variablen. **Nicht** `custom-cards/decluttering-card` nehmen — das ist der bekanntere Name, gilt aber als unmaintained; streamline-card ist der gepflegte Nachfolger mit demselben Konzept. Zielbild für die dokumentierte Wiederholung (530 Zeilen Mushroom-Buttons → 4 Template-Selects): ein Template, n Aufrufe mit anderen Entities. |
+| `flixlix/power-flow-card-plus` | Frontend | Animierte Energiefluss-Darstellung fürs Energie-Dashboard (Grid-Source ist via UI bereits konfiguriert) |
+| `MindFreeze/ha-sankey-chart` | Frontend | Aufteilung Erzeugung → Verbraucher als Sankey |
+| `nielsfaber/alarmo` | Integration | Ausbaustufe der vorhandenen `security.yaml` — Alarmlogik mit UI statt Automations-Geflecht |
+| `andrew-codechimp/HA-Battery-Notes` | Integration | Batterietyp + Wechseldatum je Gerät. Direkt an der dokumentierten Falsch-Positiv-Falle: `sensor.*_batterietyp*` = `Replace Batteries` ist das Matter-Enum „wechselbar", nicht „leer". |
+| `mampfes/hacs_waste_collection_schedule` | Integration | Abfuhrtermine direkt vom Entsorger. **Vorher klären, woher die Müll-Daten im Jarvis-Briefing aktuell kommen** — wenn handgepflegte Helper oder ein REST-Sensor, ist das die wartungsfreie Ablösung. |
+| SmartIR | Integration (**nicht** im Default-Store → Custom Repository) | Klima/TV über IR-Blaster, falls ein Gerät ohne WLAN dazukommt |
+
+Nicht in dieser Tabelle, obwohl auf jeder Beliebtheitsliste: **Frigate**, **Adaptive Lighting**,
+**Powercalc** — die stehen bereits begründet unter „Bewusst abgelehnt".
 
 ### Betriebsregel: Custom Components sind Wartungslast
 
@@ -374,8 +394,20 @@ zurückkopiert hat. Daraus:
 
 Ablauf per WebSocket + REST steht unter „Pattern: Integration installieren, wenn SSH zum NAS down
 ist": `hacs/repositories/add` → `hacs/repositories/list` (ID holen) → `hacs/repository/download`,
-danach Restart und Config-Flow per REST. Bermuda braucht dabei `category:"integration"` als
-**Custom Repository**, die übrigen stehen im Default-Store.
+danach Restart und Config-Flow per REST. Alle oben empfohlenen Integrationen stehen im
+**Default-Store** (gegen `https://raw.githubusercontent.com/hacs/default/master/{integration,plugin}`
+verifiziert) — Custom Repository braucht von den genannten nur SmartIR.
+
+**Repo-Slugs nie aus dem Gedächtnis übernehmen** — vorher gegen die HACS-Default-Listen prüfen:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hacs/default/master/integration | grep -i "<name>"
+curl -fsSL https://raw.githubusercontent.com/hacs/default/master/plugin      | grep -i "<name>"
+```
+
+Das beantwortet in einem Schritt beides: existiert der Slug so, und braucht es ein Custom
+Repository (= nicht in der Liste). Ein Treffer beweist zusätzlich, dass das Repo noch im
+Default-Store geführt wird — entfernte Integrationen fallen dort raus.
 
 **Deinstallation immer in beiden Storage-Dateien** (`hacs.repositories` UND `hacs.data`) plus
 Registry-Purge der verwaisten `update.<name>_update`-Entities — sonst bietet HACS das Repo weiter
