@@ -4207,3 +4207,54 @@ Aus einem langen Gestaltungsdurchlauf; die Zahlen beziehen sich auf das Kopfmode
 - ⚠ Dazu die Erstanzeige-Sperre prüfen: `if (n === aktuell && bereit) return;` blockierte
   ausgerechnet das erste Bild, weil `bereit` eine Zeile vorher gesetzt wird und `aktuell` noch 0
   ist. Alle Bilder geladen, keines sichtbar — sieht aus wie ein Ladefehler, ist eine Abkürzung.
+
+### 2026-08-19 — Jarvis-Lagebericht: Jinja-Kommentar-Fallen, deutsche Zahlen für LLMs, Formvarianz
+
+**🔴 Das Kommentar-Endezeichen niemals wörtlich in einem Jinja-Kommentar zitieren**
+- Ein `{#- … -#}`-Kommentar, der das eigene Endezeichen als Beispiel im Text trägt, endet an
+  genau dieser Stelle — der Rest des Kommentars wird Template-AUSGABE. In einer Sprachansage
+  stand dadurch der halbe Kommentartext als sprechbarer Satz. Dieselbe Fallenklasse wie der
+  Backtick im JS-Template-Literal (`jarvis-face-*.js`).
+- Konsequenz: Nach jeder Makro-Änderung das Makro per `ha_eval_template` RENDERN und die
+  Ausgabe ansehen — Draufschauen findet diesen Fehler nicht, weil die Datei korrekt aussieht.
+
+**🔴 Trimmende Jinja-Tags fressen benachbarten Leerraum — nötige Leerzeichen gehören IN den Ausdruck**
+- `wuerzen()` sollte laut Doku ein führendes Leerzeichen liefern; ein später eingefügter
+  `{#- … -#}`-Kommentar im Makro hat es mit seinem Minus-Ende weggekürzt. Hörbar als geklebte
+  Sätze („Output 0.Der Wächter meldet…") — und nur an Aufrufstellen, die selbst trimmen,
+  also nicht überall gleich.
+- Robust ist einzig `{{ ' ' ~ (ausdruck | trim) }}`: ein Leerzeichen im Ausdruck kann von
+  keinem Trim-Marker erreicht werden. Bloßer Leerraum vor `{{` ist Freiwild.
+- Verwandt dokumentiert: `custom_templates/`-Änderungen wirken erst nach
+  `homeassistant.reload_custom_templates` (siehe 2026-08-18) — in dieser Session erneut
+  bezahlt: der Fix sah wirkungslos aus, bis der Reload lief.
+
+**🔴 Deutsche Texte für ein SPRACHMODELL: Dezimalzahlen mit Komma — sonst Tausendertrenner-Lesart**
+- Bekannt war: TTS liest „3.1" als „drei Punkt eins". Neu: gpt-4o-mini machte aus dem Fakt
+  „1.6 Millimeter Regen" in der Ansage „**eintausendsechshundert** Millimeter" — der Punkt
+  wurde als deutscher Tausendertrenner interpretiert. Beide Konsumenten (Stimme UND Modell)
+  brauchen dieselbe Schreibweise: `(x | round(1)) | string | replace('.', ',')`.
+
+**🔴 LLM-Berichte auf Paraphrasen-Drift gegenlesen — das Modell ersetzt Fachbegriffe durch Beinahe-Synonyme**
+- Aus dem Fakt „Rollos noch offen: im Schlafzimmer" machte das Modell „die Fenster im
+  Schlafzimmer bleiben offen" — während alle Fensterkontakte zu meldeten. Kein erfundenes
+  Objekt (das verbietet der Prompt), sondern eine Wortersetzung, die die Aussage kippt.
+- Gegenmittel: verwechselbare Begriffspaare explizit im Prompt festnageln („Rollos und
+  Fenster sind VERSCHIEDENE Dinge, ersetze nie das eine Wort durch das andere") und beim
+  Gegenlesen gezielt auf solche Ersetzungen prüfen, nicht nur auf Erfindungen.
+
+**🟡 Abwechslung entsteht über die FORM, nicht über längere Wortlisten — auch beim LLM**
+- Ein Baustein-Bericht mit Millionen Wortlaut-Kombinationen klingt nach drei Tagen gleich,
+  wenn die Dramaturgie feststeht. Wirksam: Themen-Reihenfolge aus wenigen geprüften Plänen
+  würfeln (möglich, sobald jeder Baustein sein Subjekt selbst nennt und damit frei stellbar
+  ist), Einleitung gelegentlich ganz weglassen, Telegramm-Knappformen einstreuen.
+- Für LLM-Berichte gilt dasselbe verschärft: ein Modell variiert Formulierungen von selbst,
+  wiederholt aber seinen AUFBAU zuverlässig. Eine pro Lauf gewürfelte Bau-Anweisung im Prompt
+  („Tagesform": beginne mit dem Auffälligsten / knappes Protokoll / ein Thema vertiefen)
+  ändert Reihenfolge und Rhythmus, ohne die Fakten-Regeln anzutasten.
+
+**🟡 Würfel-Gates nicht mit drei Probeläufen beurteilen — isoliert über ~20 Ziehungen zählen**
+- Ein 55-%-Gate kann in drei Vorschau-Läufen zufällig dreimal gleich ausfallen; daraus folgt
+  weder „kaputt" noch „funktioniert". Das Gate isoliert per `ha_eval_template` in einer
+  Schleife (`{% for i in range(20) %}` + Zähler) rendern und die Trefferquote gegen die
+  Erwartung halten — erst dann die Vollberichte als Integrationstest fahren.
