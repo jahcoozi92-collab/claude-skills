@@ -34,19 +34,30 @@
     rampMs:        1500,  // Einblenden der Bewegung nach Start/Loslassen
     idleMs:        2500,  // Ruhe nach der letzten Nutzer-Interaktion
     settleMs:      350,   // Warten, bis fitCamera + Interpolation gesetzt haben
-    respectReducedMotion: true
+    respectReducedMotion: true,
+    selector:      'model-viewer',  // erstes <model-viewer> der Seite; bei mehreren: '#tiguan'
+    // true  = dreht nur, solange das Attribut `auto-rotate` gesetzt ist. Richtig, wenn die
+    //         Seite selbst zwischen Modi umschaltet (innen/aussen, ?ruhe, feste Kamera).
+    // false = dreht immer. Umstellen, falls nach dem Einbau gar nichts rotiert — dann setzt
+    //         die Seite das Attribut beim Laden nie.
+    honorAutoRotateAttribute: true
   };
 
-  const mv = document.getElementById('m');
-  if (!mv) return;
+  const mv = document.querySelector(CFG.selector);
+  if (!mv) {
+    console.error('[orbit] kein Element fuer Selektor', CFG.selector, '- Rotation laeuft nicht');
+    return;
+  }
 
   const reduced = CFG.respectReducedMotion &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (reduced) return;   // Modell bleibt stehen, wo fitCamera es hingestellt hat
 
-  // model-viewers eigene Drehung abschalten – zwei Treiber auf derselben
-  // Kamera ergeben Ruckeln, nicht doppelte Geschwindigkeit.
-  mv.removeAttribute('auto-rotate');
+  // model-viewers eigenen Treiber neutralisieren, OHNE das Attribut anzufassen:
+  // mit rotation-per-second="0deg" addiert sein Tick 0 auf die Kamera. Damit bleibt
+  // `auto-rotate` als reines An/Aus-Signal fuer bestehenden Seiten-Code nutzbar
+  // (z.B. innen-Modus oder ?ruhe), ohne dass zwei Treiber gegeneinander schreiben.
+  mv.setAttribute('rotation-per-second', '0deg');
 
   const DEG = 180 / Math.PI;
   const TAU = Math.PI * 2;
@@ -89,6 +100,14 @@
     if (dt <= 0) return;
 
     if (!visible || document.hidden) return;
+
+    // Seiten-eigener An/Aus-Schalter. Aus = Kamera in Ruhe lassen und Basis nachfuehren,
+    // damit das Wiederanlaufen von der aktuellen Position aus weich startet.
+    if (CFG.honorAutoRotateAttribute && !mv.hasAttribute('auto-rotate')) {
+      ramp = 0;
+      reseed();
+      return;
+    }
 
     // Während und kurz nach der Interaktion: nichts schreiben, nur nachführen.
     // Harter Stopp beim Anfassen ist richtig — der Nutzer hat die Kontrolle.

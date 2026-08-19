@@ -1454,13 +1454,20 @@ und festem Radius. Silhouette und Perspektive ändern sich dabei kaum — das Mo
 Standbild, das geschoben wird (User-Wortlaut: „Standbild-Schubsen"). Dazu kommt der harte
 Wiederanlauf nach `auto-rotate-delay`: von 0 auf volle Geschwindigkeit ohne Rampe.
 
-Fertige Ablösung: `assets/orbit-cinematic.js` in diesem Skill. Neben die `viewer.html` legen,
-einbinden, und am `<model-viewer>` die Attribute `auto-rotate`, `auto-rotate-delay` und
-`rotation-per-second` **entfernen** — sonst laufen zwei Treiber auf derselben Kamera und es ruckelt.
+Fertige Ablösung: `assets/orbit-cinematic.js` in diesem Skill. Neben die `viewer.html` legen und
+vor `</body>` einbinden — mehr ist nicht nötig, die Attribute am `<model-viewer>` bleiben stehen:
 
 ```html
 <script src="orbit-cinematic.js"></script>
 ```
+
+**`auto-rotate` NICHT entfernen.** Zwei Treiber auf derselben Kamera ruckeln zwar tatsächlich, aber
+die Lösung ist `rotation-per-second="0deg"` (setzt das Script selbst): model-viewers Tick addiert
+dann 0 und ist wirkungslos, während das Attribut als reines **An/Aus-Signal** erhalten bleibt. Das
+ist wichtig, weil die `viewer.html` hier zur Laufzeit selbst umschaltet — Innenraum-Modus,
+`?ruhe`, gesetzte Kamera-Parameter setzen und entfernen `auto-rotate` per JS. Das Script liest den
+Zustand jeden Frame und hält die Kamera still, solange das Attribut fehlt. Wer es aus dem Tag
+entfernt, verliert genau diese Kopplung.
 
 Vier Entwurfsentscheidungen, die den Unterschied machen:
 
@@ -1481,6 +1488,15 @@ Vier Entwurfsentscheidungen, die den Unterschied machen:
    Sinus-Offset. Der Nutzer behält so auch seinen Zoom.
 
 Weitere Fallen:
+
+- **Die Element-ID muss stimmen — sonst passiert schweigend nichts.** Die Doku-Vorlage nutzt
+  `id="m"`, die reale Datei hier `id="tiguan"`. `getElementById('m')` liefert dann `null`, ein
+  frühes `return` und **keine Fehlermeldung**. Deshalb im Script `querySelector('model-viewer')`
+  plus `console.error`, wenn nichts gefunden wird. Bei mehreren Viewern auf einer Seite den
+  Selektor in `CFG.selector` auf die konkrete ID setzen.
+- **Wenn nach dem Einbau gar nichts rotiert**, setzt die Seite `auto-rotate` beim Laden nie
+  (es steht nur in einem Zweig, der erst bei einem Moduswechsel läuft). Dann entweder das bare
+  `auto-rotate` in den Tag zurückschreiben oder `CFG.honorAutoRotateAttribute = false` setzen.
 
 - **Initialisierung erst ~350 ms nach `load`.** Vorher hat `fitCamera()` seine `cameraOrbit`-Zuweisung
   noch nicht durch die Interpolation gebracht → man liest die alte Kamera als Basis. Und `load` kann
