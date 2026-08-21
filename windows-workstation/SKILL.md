@@ -583,7 +583,7 @@ Ergänzt den 2026-08-06-Eintrag zum selben Projekt (dort: reines PowerShell/GDI+
     2>&1 | Out-File -FilePath $log -Append -Encoding utf8
   ```
 - Prompt-Übergabe per **stdin-Pipe** (`Get-Content -Raw datei.md | claude -p ...`) statt als CLI-Argument — vermeidet Windows-Kommandozeilenlängenlimits bei langen, selbstständigen Auftragsdateien.
-- `New-ScheduledTaskPrincipal -LogonType Interactive` (statt S4U/gespeichertes Passwort) — kein Passwort nötig, Task läuft mit den bereits bestehenden Netzlaufwerk-Rechten des angemeldeten Users, Kompromiss: Task feuert nur, wenn der User zum Ausführungszeitpunkt angemeldet ist.
+- `New-ScheduledTaskPrincipal -LogonType Interactive` (statt S4U/gespeichertes Passwort) — kein Passwort nötig, Task läuft mit den bereits bestehenden Netzlaufwerk-Rechten des angemeldeten Users, Kompromiss: Task feuert nur, wenn der User zum Ausführungszeitpunkt angemeldet ist. **Überholt (2026-08-21):** Interactive öffnet ein sichtbares Konsolenfenster, dessen Schließen den Lauf mit 0xC000013A abbricht — seit 21.08.2026 läuft die Aufgabe mit LogonType Password, siehe Lektion 2026-08-21.
 
 **🟡 Pattern: unbeaufsichtigter Agent mit echten Personendaten — Pflicht-Guardrails**
 - Ein `claude -p`-Lauf ohne jede Konversationserinnerung braucht eine vollständig in-sich-geschlossene Auftragsdatei (hier `WOCHENAUFTRAG.md`) — Kontext, den eine interaktive Session „im Kopf" hat, existiert dort nicht.
@@ -601,7 +601,7 @@ Ergänzt den 2026-08-06-Eintrag zum selben Projekt (dort: reines PowerShell/GDI+
 **Aktive Scheduled Tasks (Ergänzung):**
 | Task-Name | Trigger | Zweck | Skript |
 |-----------|---------|-------|--------|
-| `AzubiUebersicht-Woechentlich` | Wöchentlich, Do 10:00, LogonType Interactive | Prüft `Auszubildende BZ+WP` auf neue Personen, aktualisiert `Azubi-Übersicht.html` (mit Backup) | `C:\AzubiUebersicht\run_weekly.ps1` |
+| `AzubiUebersicht-Woechentlich` | Wöchentlich, Do 10:00, LogonType Password (seit 21.08.2026, vorher Interactive) | Prüft `Auszubildende BZ+WP` auf neue Personen, Status-Ablauf, externe Einsätze, Ausbildungsende; aktualisiert `Azubi-Übersicht.html` (mit Backup) | `C:\AzubiUebersicht\run_weekly.ps1` |
 
 ---
 
@@ -714,3 +714,120 @@ Ergänzt den 2026-08-06-Eintrag zum selben Projekt (dort: reines PowerShell/GDI+
   `roster.json` von Hand nachtragen — hätte doppelte Pflege und garantierte Divergenz bedeutet.
 - Der Parser liest die Dokumente nur; geschrieben wird ausschließlich unter `C:\AzubiUebersicht\`.
   Wird eine Quelldatei umbenannt, meldet er einen Fehler, statt still veraltete Daten anzuzeigen.
+
+### 2026-08-21 — Aufgabenplanung ohne Anmeldung (SeBatchLogonRight), Abbruchcode 0xC000013A, Elevation per Arbeitsteilung, `!`-Präfix-Pfade, docx-Korrektur
+
+**🔴 Rückgabecode 3221225786 = 0xC000013A (STATUS_CONTROL_C_EXIT) einer Aufgabe heißt: Konsolenfenster geschlossen**
+- Der Wochenlauf vom 20.08. endete nach 41 s ohne Fehler im Transkript, ohne „Lauf beendet" im Log.
+  Aufgabenplanung meldete 201 „erfolgreich abgeschlossen" mit Rückgabecode 3221225786 — das ist
+  hex `0xC000013A`, der Code, mit dem ein Konsolenprozess endet, wenn sein Fenster geschlossen
+  (oder Strg+C gedrückt) wird. Kein Absturz, kein Anwendungsfehler.
+- Ursache war die Task-Konfiguration: `LogonType Interactive` + `Hidden False` → um 10:00 erscheint
+  ein sichtbares PowerShell-Fenster, das ~2 Minuten offen bleibt. Wer es zuklappt, tötet den Lauf.
+- **Diagnose-Reihenfolge** (hat alles geliefert, ohne etwas zu verändern):
+  1. `Get-ScheduledTaskInfo -TaskName …` → `LastRunTime`, `LastTaskResult` (dezimal → hex rechnen).
+  2. `Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-TaskScheduler/Operational'; StartTime=…}`
+     gefiltert auf den Task-Namen: Ereignis 100/200 = Start, 201 = Ende mit Code, 104/101 = Anmeldung
+     fehlgeschlagen (Fehlerwert im Text).
+  3. `logs\run_*.log` des Skripts und das headless-Transkript unter
+     `~/.claude/projects/C--AzubiUebersicht/<uuid>.jsonl` — zeigt, bis zu welchem Tool-Aufruf der
+     Agent kam (hier: Schritt 1 und 2 fertig, Abbruch 9 s nach dem letzten Tool-Ergebnis).
+  4. `Get-ScheduledTask … | % Principal` (`LogonType`, `RunLevel`) und `… | % Settings` (`Hidden`).
+
+**🔴 „Unabhängig von der Benutzeranmeldung" braucht SeBatchLogonRight — und die Aufgabenplanung vergibt es auf WS44 NICHT automatisch**
+- `Set-ScheduledTask -User … -Password …` stellt den Task zwar auf `LogonType Password` um, der Start
+  scheitert dann aber mit Ereignis 104/101, Fehlerwert `2147943785` = `0x80070569`
+  (ERROR_LOGON_TYPE_NOT_GRANTED): dem Konto fehlt „Anmelden als Stapelverarbeitungsauftrag".
+- Gilt auch, wenn ein **Administrator** den Task per `Set-/Register-ScheduledTask` registriert — die oft
+  zitierte automatische Rechtevergabe durch den Scheduler-Dienst fand hier nicht statt (verifiziert mit
+  `ARCHENOAH\Administrator`, zwei Versuche).
+- Rahmenbedingungen WS44: `D.Göbel` ist **kein** lokaler Admin (lokale Administratoren: `Administrator`,
+  `ARCHENOAH\Domänen-Admins`, `User`). Domäne `ARCHENOAH.LOCAL`, Logon-Server `\\SERVER2012R2`.
+  Im SYSVOL setzt nur die Default-Domain-Controllers-Policy `{6AC1786C-…}` das Recht — die gilt nur
+  für DCs, ein lokaler Eintrag auf WS44 bleibt also dauerhaft erhalten.
+- **Vergabe** (im Admin-Fenster): bestehende Zeile exportieren und die SID anhängen — nie die Zeile
+  ersetzen, sonst verlieren Administratoren/Sicherungs-Operatoren das Recht:
+  ```powershell
+  secedit /export /cfg C:\tmp\secpol.inf /areas USER_RIGHTS
+  $alt = (Select-String -Path C:\tmp\secpol.inf -Pattern '^SeBatchLogonRight').Line
+  @("[Unicode]","Unicode=yes","[Version]",'signature="$CHICAGO$"',"Revision=1","[Privilege Rights]","$alt,*<SID>") |
+    Out-File C:\tmp\grant.inf -Encoding Unicode
+  secedit /configure /db C:\tmp\grant.sdb /cfg C:\tmp\grant.inf /areas USER_RIGHTS
+  ```
+  SID des Kontos: `(New-Object Security.Principal.NTAccount("ARCHENOAH\D.Göbel")).Translate([Security.Principal.SecurityIdentifier]).Value`
+  (D.Göbel = `S-1-5-21-1945139634-1581995529-3686206778-2109`).
+- Danach `Set-ScheduledTask -User $cred.UserName -Password $pw` und **Testlauf unter demselben Konto**
+  (temporäre Aufgabe, `Start-ScheduledTask`, bis `State -ne 'Running'` pollen, `LastTaskResult` lesen,
+  Aufgabe löschen). Verifiziert: Sitzung 0, `[Environment]::UserInteractive = False`, Netzlaufwerk
+  lesbar, `claude` im PATH (`%AppData%\npm\claude.ps1`), `claude -p` antwortet — Credentials und
+  Benutzer-PATH sind im Passwort-Logon vorhanden (Profil wird geladen; S4U hätte keinen Netzzugriff).
+- Helfer liegen unter `C:\AzubiUebersicht\`: `set_task_unattended_admin.ps1` (muss eleviert laufen,
+  fragt das Kennwort per `Get-Credential` ab, stellt bei Testfehlschlag automatisch auf Interactive
+  zurück) und `test_unattended.ps1` (schreibt `logs\test_unattended.log`, ändert keine Daten).
+- Folge für die Zukunft: Bei Kennwortänderung des Kontos muss das Kennwort im Task neu hinterlegt werden.
+
+**🔴 Admin-Schritte sind Arbeitsteilung: Claude bereitet vor, der User führt im Admin-Fenster aus, Claude liest das Ergebnis aus Dateien**
+- Claude kann nicht elevieren, und das Kennwort darf nicht durch den Chat. Muster, das funktioniert hat:
+  1. Skript nach `C:\AzubiUebersicht\*.ps1` schreiben; Ergebnisse landen in `C:\AzubiUebersicht\logs\`.
+  2. Dem User EINEN Startbefehl geben, der UAC auslöst und das Fenster offen hält:
+     `powershell.exe -NoProfile -Command "Start-Process powershell.exe -Verb RunAs -ArgumentList '-NoExit -NoProfile -ExecutionPolicy Bypass -File C:\Pfad\skript.ps1'"`
+  3. Ergebnis selbst aus den Log-Dateien lesen, nicht auf gepastete Ausgabe warten.
+- **Befehle, die im Admin-Fenster laufen müssen, ausdrücklich so kennzeichnen** („im Admin-Fenster,
+  nicht hier im Chat"): Diana hat die Befehle zweimal in den Chat gepastet, weil nicht klar war, wo sie
+  hingehören. Vor dem Lesen der Ergebnisdateien prüfen, ob sie überhaupt existieren (`Test-Path`).
+- `gpresult /scope computer /h …` meldet auf WS44 selbst eleviert „Zugriff verweigert". Ersatz ohne
+  Admin: die GPO-Vorlagen direkt im SYSVOL durchsuchen —
+  `\\ARCHENOAH.LOCAL\SYSVOL\ARCHENOAH.LOCAL\Policies\*\MACHINE\Microsoft\Windows NT\SecEdit\GptTmpl.inf`
+  (UTF-16, `Get-Content -Encoding Unicode`, nach `SeBatchLogonRight` filtern).
+- Der Auto-Mode-Classifier blockte das Schreiben eines Skripts, das die lokale Sicherheitsrichtlinie
+  per `secedit` ändert, sowie das Editieren einer Zeile mit `--permission-mode bypassPermissions`.
+  Beides ist so gewollt: Richtlinienänderungen sind ein vom User ausgeführter Schritt (Befehle
+  vorbereiten, neutral beschreiben); ein `claude -p`-Test ohne Tools braucht gar keine
+  Permission-Flags — einfach weglassen.
+
+**🔴 `!`-Präfix in Claude Code ist eine Git-Bash: Windows-Pfade mit Backslashes zerfallen**
+- `! powershell.exe … -File C:\AzubiUebersicht\x.ps1` kam als `C:AzubiUebersichtx.ps1` an
+  („Das Argument … für den -File-Parameter ist nicht vorhanden").
+- Für alle Befehle, die man dem User für `!` gibt: Vorwärts-Schrägstriche (`C:/AzubiUebersicht/x.ps1`)
+  oder in einfache Anführungszeichen setzen. Gilt zusätzlich zur bekannten Backslash-Halbierung in
+  Bash-Heredocs/`python -c` (Lektion 2026-08-10) — beides derselbe Mechanismus, andere Stelle.
+
+**🟡 Zustandsbehaftete Änderungserkennung: nach einem Abbruch NICHT einfach neu starten**
+- `parse_einsaetze.py`/`parse_ausbildungszeit.py` melden `AENDERUNG: ja/nein` durch Vergleich mit der
+  **zuvor geschriebenen** JSON und überschreiben sie sofort. Bricht der Lauf nach diesem Schritt ab,
+  meldet ein Neustart „keine Änderung" und veröffentlicht nicht — die Änderung (hier: ein KH-Einsatz)
+  wäre bis auf Weiteres aus der Übersicht gefallen.
+- Vorgehen nach Abbruch: Transkript/Zeitstempel der JSON prüfen, was schon lief; dann die restlichen
+  Schritte von Hand (`build_uebersicht.py`, `build_manifest.py`, Protokolleintrag mit Abbruchvermerk).
+- Designhinweis für künftige Parser: Vergleichsbasis erst **nach** erfolgreicher Veröffentlichung
+  festschreiben (z. B. `*.json.new` schreiben, am Ende umbenennen) — dann ist ein Neustart idempotent.
+
+**🟡 docx in-place korrigieren ohne Word: zipfile → document.xml → eine eindeutige Stelle → ZIP neu schreiben → mit Word-COM prüfen**
+- Kopfzeile einer Tabelle (`01/26…12/26` → `01/27…12/27`) korrigiert, ohne Word zu öffnen: XML lesen,
+  Kopfzeile per Regex isolieren, `xml.count(head) == 1` sicherstellen, `re.subn` mit erwarteter
+  Trefferzahl (`assert n == 12`), `ET.fromstring` auf Wohlgeformtheit, alle anderen ZIP-Einträge
+  unverändert kopieren (`zout.writestr(item, data)`), `os.replace` über eine `.tmp`.
+- Vorher Sicherungskopie (hier nach `C:\AzubiUebersicht\backups\…_vor-Kopfzeilenkorrektur_<ts>.docx`);
+  Sperrdatei `~$<name>.docx` vorher prüfen (Datei in Word geöffnet?).
+- **Word-COM als Integritätstest** funktioniert auf WS44 und ist der beste Beleg, dass die Datei heil ist:
+  ```powershell
+  $w = New-Object -ComObject Word.Application; $w.Visible = $false
+  $d = $w.Documents.Open($pfad, $false, $true)        # ReadOnly
+  $d.Tables.Count; $d.Tables.Item(12).Cell(1,5).Range.Text
+  $d.Close([ref]0); $w.Quit()
+  ```
+- Die Datei wird kleiner (andere Kompression) — kein Datenverlust; `testzip()` und der Word-Open sind der Beleg.
+- Das ist eine Ausnahme von Grundregel 3 des Wochenauftrags („Netzlaufwerk-Dokumente nie ändern"):
+  nur im interaktiven Dialog mit Diana, mit Backup, nur die benannte Stelle.
+
+**🟡 Word-Jahrestabellen: der Ausbildungszeitraum steckt in der Zell-Füllfarbe, nicht im Text**
+- In den Azubi-Übersichten (`Auszubildende im Betreuungszentrum … 2026.docx` / `… Wohnpark … neu.docx`)
+  sind die Monatsspalten (`MM/YY`) leer; die Markierung ist `w:shd w:fill="FF0000"` (rot = sicher)
+  bzw. `D9D9D9` (grau = unsicher). Mit ET: `tc.iter('{ns}shd')`, Fill ≠ `auto`/`FFFFFF` = markiert.
+- Kopfzeilen-Jahre je Gruppe (PFK/PFAK) müssen aufsteigen — eine wiederholte Jahreszahl ist ein
+  Kopierfehler (WP-Übersicht, 20.08. korrigiert). Im Parser: Folgejahr annehmen **und** melden.
+- Markierung ab der ersten Spalte (01/2026) heißt „Beginn liegt vor der Übersicht" — Beginn dann leer
+  lassen, nicht `01.01.2026` ausgeben. Summenzeilen (`Gesamt`, Ziffern in Monatszellen) überspringen.
+- Ende = letzter Tag des letzten markierten Monats (`calendar.monthrange`). Namensvarianten der
+  Übersichten (`Kadukutty Soman`, `Saad, Draygi`, `Kannattu J. Amala`) über `namens_alias.json` plus
+  Fallback mit vertauschter Reihenfolge; Aliase nur bei gleichem Haus/Typ und eindeutiger Person.
